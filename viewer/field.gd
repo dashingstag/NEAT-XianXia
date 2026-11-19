@@ -61,6 +61,27 @@ var detail_buffer := PackedFloat32Array()
 const CELL := 64.0
 var palette := [Color("e5c985"), Color("90c99a"), Color("e2bb78"), Color("99c8d7"), Color("cbb1de"), Color("df9c78")]
 
+# Committed Xianxia textures (assets/parked). Loaded lazily; every call site
+# falls back to the procedural drawing when a file is missing.
+const TEX_DIR := "res://assets/parked/"
+const TREE_GLYPHS := ["tree-generic","pine","bamboo","willow","plum"]
+const PATCH_GLYPHS := ["berries","timber","stone","fish"]
+const MINE_GLYPHS := ["mine-gold","mine-iron","mine-iron","mine-iron"]
+var _tex_cache: Dictionary = {}
+
+func _tex(rel_path: String) -> Texture2D:
+	if not _tex_cache.has(rel_path):
+		_tex_cache[rel_path] = load(TEX_DIR + rel_path)
+	return _tex_cache[rel_path]
+
+func _glyph(rel_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	var t := _tex(rel_path)
+	if t == null:
+		return false
+	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false,
+		Color(1,1,1,alpha))
+	return true
+
 func _ready() -> void:
 	custom_minimum_size = Vector2(650, 480)
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -351,6 +372,9 @@ func _draw() -> void:
 		var trees := _tree_points(id,float(forest.radius))
 		for tree in range(0,trees.size(),3 if fidelity==1 else 1):
 			var at := centre+trees[tree]
+			var tree_glyph := "terrain-flora-xianxia/"+TREE_GLYPHS[(id*3+tree)%TREE_GLYPHS.size()]+".png"
+			if fidelity > 1 and _glyph(tree_glyph,at,22.0+float(tree%4)*2.0,22.0+float(tree%4)*2.0):
+				continue
 			draw_circle(at+Vector2(2,3),8.0,Color(0.12,0.22,0.10,0.22))
 			draw_circle(at,7.0+float(tree%4),Color("426540") if tree%2==0 else Color("3d603c"))
 	for clearing in world.get("urban",{}).get("cleared",[]):
@@ -371,20 +395,23 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,at-Vector2(40,float(zone.radius)+5),["RESIDENTIAL","COMMERCIAL","INDUSTRIAL"][int(zone.kind)],HORIZONTAL_ALIGNMENT_LEFT,-1,12,color)
 	for bank in world.get("banks",[]):
 		var at := Vector2(bank.x,bank.y)
-		var bank_color := Color("cbd2ad") if bank.ready else Color("b0a782")
-		draw_rect(Rect2(at-Vector2(15,9),Vector2(30,20)),bank_color,bool(bank.ready),-1.0 if bank.ready else 2.0)
-		if bank.ready:
-			draw_colored_polygon(PackedVector2Array([at+Vector2(-18,-9),at+Vector2(0,-21),at+Vector2(18,-9)]),Color("6d8666"))
-			for column in [-10,0,10]:
-				draw_line(at+Vector2(column,-6),at+Vector2(column,8),Color("f5e7bc"),3)
+		if not _glyph("site-glyphs-xianxia/bank.png",at,44,44,1.0 if bank.ready else 0.55):
+			var bank_color := Color("cbd2ad") if bank.ready else Color("b0a782")
+			draw_rect(Rect2(at-Vector2(15,9),Vector2(30,20)),bank_color,bool(bank.ready),-1.0 if bank.ready else 2.0)
+			if bank.ready:
+				draw_colored_polygon(PackedVector2Array([at+Vector2(-18,-9),at+Vector2(0,-21),at+Vector2(18,-9)]),Color("6d8666"))
+				for column in [-10,0,10]:
+					draw_line(at+Vector2(column,-6),at+Vector2(column,8),Color("f5e7bc"),3)
 		draw_string(ThemeDB.fallback_font,at+Vector2(-18,25),"Bank %s%%" % int(bank.rate_percent) if bank.ready else "Build bank",HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("f5e7bc"))
 	for building in world.get("urban",{}).get("buildings",[]):
 		var at := Vector2(building.x,building.y)
-		var color: Color = [Color("92c4de"),Color("e0bd6d"),Color("b89aca")][int(building.kind)]
-		draw_rect(Rect2(at-Vector2(11,8),Vector2(22,16)),color,bool(building.ready),-1.0 if building.ready else 2.0)
-		if building.ready:
-			draw_colored_polygon(PackedVector2Array([at+Vector2(-14,-8),at+Vector2(0,-18),at+Vector2(14,-8)]),color.darkened(0.25))
-			draw_rect(Rect2(at+Vector2(-2,0),Vector2(5,8)),Color("55493c"))
+		var glyph_name: String = ["home","shop","workshop"][int(building.kind)]
+		if not _glyph("site-glyphs-xianxia/"+glyph_name+".png",at,34,34,1.0 if building.ready else 0.55):
+			var color: Color = [Color("92c4de"),Color("e0bd6d"),Color("b89aca")][int(building.kind)]
+			draw_rect(Rect2(at-Vector2(11,8),Vector2(22,16)),color,bool(building.ready),-1.0 if building.ready else 2.0)
+			if building.ready:
+				draw_colored_polygon(PackedVector2Array([at+Vector2(-14,-8),at+Vector2(0,-18),at+Vector2(14,-8)]),color.darkened(0.25))
+				draw_rect(Rect2(at+Vector2(-2,0),Vector2(5,8)),Color("55493c"))
 		var caption: String = ["Home",["Clothes","Tools","Furniture","Butcher"][int(building.line)],["Hunter","Cobbler","Blacksmith","Carpenter"][int(building.line)]][int(building.kind)]
 		if not building.ready:
 			caption = "Clear site" if building.needs_clear else "Building"
@@ -411,15 +438,21 @@ func _draw() -> void:
 		var fraction: float = float(patch.stock) / maxf(1.0,float(patch.capacity))
 		var colors := [Color("a95d76"),Color("365a38"),Color("d0ccb1"),Color("bce1df"),Color("edc65d"),Color("c8d6df"),Color("ba7650"),Color("8d949b"),Color("d7d18b"),Color("aab7b0"),Color("aab7b0"),Color("aab7b0"),Color("aab7b0")]
 		var radius := (5.0 if kind != 1 else 9.0) * (0.45 + fraction * 0.55)
-		draw_circle(p+Vector2(2,3),radius,Color(0.1,0.2,0.1,0.18))
-		draw_circle(p,radius,colors[kind])
-		if kind in [4,5,6,7]:
-			draw_rect(Rect2(p-Vector2(10,7),Vector2(20,14)),Color("535448"))
-			draw_arc(p,9,PI,TAU,12,colors[kind],3)
-			if fidelity == 1:
-				draw_string(ThemeDB.fallback_font,p+Vector2(-30,22),["Gold mine","Silver mine","Copper mine","Iron mine"][kind-4],HORIZONTAL_ALIGNMENT_LEFT,-1,11,colors[kind])
-		if kind == 1 and fraction > 0.2:
-			draw_circle(p-Vector2(3,4),radius*0.7,Color("5d8750"))
+		var glyph_path := ""
+		if kind < PATCH_GLYPHS.size():
+			glyph_path = "terrain-flora-xianxia/"+PATCH_GLYPHS[kind]+".png"
+		elif kind in [4,5,6,7]:
+			glyph_path = "site-glyphs-xianxia/"+MINE_GLYPHS[kind-4]+".png"
+		if glyph_path == "" or not _glyph(glyph_path,p,2.2*radius*(0.6+0.4*fraction),2.2*radius*(0.6+0.4*fraction)):
+			draw_circle(p+Vector2(2,3),radius,Color(0.1,0.2,0.1,0.18))
+			draw_circle(p,radius,colors[kind])
+			if kind in [4,5,6,7]:
+				draw_rect(Rect2(p-Vector2(10,7),Vector2(20,14)),Color("535448"))
+				draw_arc(p,9,PI,TAU,12,colors[kind],3)
+			if kind == 1 and fraction > 0.2:
+				draw_circle(p-Vector2(3,4),radius*0.7,Color("5d8750"))
+		if kind in [4,5,6,7] and fidelity == 1:
+			draw_string(ThemeDB.fallback_font,p+Vector2(-30,22),["Gold mine","Silver mine","Copper mine","Iron mine"][kind-4],HORIZONTAL_ALIGNMENT_LEFT,-1,11,colors[kind])
 	for m in markets:
 		var p := Vector2(m.x,m.y)
 		draw_circle(p,42,Color(0.95,0.87,0.62,0.24))
@@ -431,8 +464,9 @@ func _draw() -> void:
 			var at: Vector2 = (p + _house_origin(j)).clamp(Vector2(5,5),Vector2(2670,1900))
 			if not view_rect.has_point(at):
 				continue
-			draw_rect(Rect2(at,Vector2(20,15)),Color("d1bf91"))
-			draw_rect(Rect2(at-Vector2(1,2),Vector2(22,5)),Color("a07153"))
+			if not _glyph("site-glyphs-xianxia/home.png",at+Vector2(10,8),26,26):
+				draw_rect(Rect2(at,Vector2(20,15)),Color("d1bf91"))
+				draw_rect(Rect2(at-Vector2(1,2),Vector2(22,5)),Color("a07153"))
 			if world.get("clock",{}).get("night",false):
 				draw_rect(Rect2(at+Vector2(2,2),Vector2(3,3)),Color("f4c77a"))
 		if world.get("clock",{}).get("night",false):
@@ -442,17 +476,19 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p-Vector2(70.0/zoom,160),str(int(m.population))+" people / "+str(int(m.get("stable_residents",0)))+" residents | "+str(m.stage),HORIZONTAL_ALIGNMENT_LEFT,-1,maxi(10,roundi(10.0/zoom)),Color("eef0cc"))
 	for school in world.get("schools",[]):
 		var p := Vector2(school.x,school.y)
-		draw_rect(Rect2(p-Vector2(16,10),Vector2(32,20)),Color("d8d4b6") if school.ready else Color("85765b"))
-		draw_rect(Rect2(p-Vector2(19,15),Vector2(38,8)),Color("526e9b"))
-		draw_line(p+Vector2(-5,2),p+Vector2(0,4),Color("f4ecd0"),2)
-		draw_line(p+Vector2(0,4),p+Vector2(5,2),Color("f4ecd0"),2)
+		if not _glyph("site-glyphs-xianxia/school.png",p,42,42,1.0 if school.ready else 0.55):
+			draw_rect(Rect2(p-Vector2(16,10),Vector2(32,20)),Color("d8d4b6") if school.ready else Color("85765b"))
+			draw_rect(Rect2(p-Vector2(19,15),Vector2(38,8)),Color("526e9b"))
+			draw_line(p+Vector2(-5,2),p+Vector2(0,4),Color("f4ecd0"),2)
+			draw_line(p+Vector2(0,4),p+Vector2(5,2),Color("f4ecd0"),2)
 		if fidelity>1:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-19,-22),"School" if school.ready else "Building school",HORIZONTAL_ALIGNMENT_LEFT,-1,11,Color("f4ecd0"))
 	for tavern in world.get("taverns",[]):
 		var p := Vector2(tavern.x,tavern.y)
-		draw_rect(Rect2(p-Vector2(15,10),Vector2(30,20)),Color("d9bc87") if tavern.ready else Color("85765b"))
-		draw_rect(Rect2(p-Vector2(18,14),Vector2(36,8)),Color("913f39"))
-		draw_circle(p+Vector2(7,2),3,Color("ecc864"))
+		if not _glyph("site-glyphs-xianxia/tavern.png",p,42,42,1.0 if tavern.ready else 0.55):
+			draw_rect(Rect2(p-Vector2(15,10),Vector2(30,20)),Color("d9bc87") if tavern.ready else Color("85765b"))
+			draw_rect(Rect2(p-Vector2(18,14),Vector2(36,8)),Color("913f39"))
+			draw_circle(p+Vector2(7,2),3,Color("ecc864"))
 		if fidelity>1:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-18,-20),"Tavern %s/32" % int(tavern.visitors) if tavern.ready else "Building tavern",HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("f7e2b2"))
 	for region in world.get("fertility",[]):
@@ -461,37 +497,41 @@ func _draw() -> void:
 	for farm in world.get("farms",[]):
 		var p := Vector2(farm.x,farm.y)
 		var color := Color("c8c15f") if farm.mature else Color("739550")
-		draw_rect(Rect2(p-Vector2(18,18),Vector2(36,36)),Color("5d8076"))
-		for row in range(6):
-			draw_line(p+Vector2(-15,-14+row*5),p+Vector2(15,-14+row*5),color,2)
+		if not _glyph("site-glyphs-xianxia/farm.png",p,44,44):
+			draw_rect(Rect2(p-Vector2(18,18),Vector2(36,36)),Color("5d8076"))
+			for row in range(6):
+				draw_line(p+Vector2(-15,-14+row*5),p+Vector2(15,-14+row*5),color,2)
 		if fidelity > 1:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-18,-22),"Rice / %s days" % int(farm.days_until_mature),HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("eee5b4"))
 	for board in world.get("job_boards",[]):
 		var p := Vector2(board.x,board.y)
-		draw_rect(Rect2(p-Vector2(6,5),Vector2(12,9)),Color("634b34"))
-		draw_rect(Rect2(p-Vector2(4,3),Vector2(8,5)),Color("ead7a6"))
-		draw_line(p+Vector2(-4,3),p+Vector2(-4,9),Color("634b34"),2)
-		draw_line(p+Vector2(4,3),p+Vector2(4,9),Color("634b34"),2)
+		if not _glyph("site-glyphs-xianxia/jobboard.png",p,24,24):
+			draw_rect(Rect2(p-Vector2(6,5),Vector2(12,9)),Color("634b34"))
+			draw_rect(Rect2(p-Vector2(4,3),Vector2(8,5)),Color("ead7a6"))
+			draw_line(p+Vector2(-4,3),p+Vector2(-4,9),Color("634b34"),2)
+			draw_line(p+Vector2(4,3),p+Vector2(4,9),Color("634b34"),2)
 		if int(board.nearby_bodies)>0:
 			draw_circle(p+Vector2(6,-5),3,Color("dd8a65"))
 		if fidelity == 1:
 			draw_string(ThemeDB.fallback_font,p+Vector2(7,12),"Jobs %s / %s c" % [int(board.vacancies),int(board.reward)],HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("f7e2b2"))
 	for graveyard in world.get("graveyards",[]):
 		var p := Vector2(graveyard.x,graveyard.y)
-		draw_rect(Rect2(p-Vector2(17,17),Vector2(38,38)),Color("858a70"))
-		draw_rect(Rect2(p-Vector2(18,18),Vector2(40,40)),Color("c2bca0"),false,1.5)
-		var graves := mini(int(graveyard.buried_count),64)
-		for j in range(graves):
-			var at := p+Vector2(float(j%8)*4.0-12,float(j/8)*4.0-12)
-			draw_rect(Rect2(at,Vector2(2,3)),Color("c3c9ba"))
+		if not _glyph("site-glyphs-xianxia/graveyard.png",p,44,44,1.0 if graveyard.ready else 0.55):
+			draw_rect(Rect2(p-Vector2(17,17),Vector2(38,38)),Color("858a70"))
+			draw_rect(Rect2(p-Vector2(18,18),Vector2(40,40)),Color("c2bca0"),false,1.5)
+			var graves := mini(int(graveyard.buried_count),64)
+			for j in range(graves):
+				var at := p+Vector2(float(j%8)*4.0-12,float(j/8)*4.0-12)
+				draw_rect(Rect2(at,Vector2(2,3)),Color("c3c9ba"))
 		if not graveyard.ready:
 			draw_line(p-Vector2(12,0),p+Vector2(15,0),Color("d0ad76"),2)
 		draw_string(ThemeDB.fallback_font,p+Vector2(-18,-23),"Graveyard %s/%s" % [int(graveyard.buried_count),int(graveyard.capacity)],HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("eee7d2"))
 	for shelter in world.get("shelters",[]):
 		if shelter.get("camp",false) and int(shelter.get("capacity",0))>0:
 			var p := Vector2(shelter.x,shelter.y)
-			draw_colored_polygon(PackedVector2Array([p+Vector2(-7,4),p+Vector2(0,-7),p+Vector2(7,4)]),Color("c6a87c"))
-			draw_line(p+Vector2(0,-4),p+Vector2(0,4),Color("614e3a"),1.5)
+			if not _glyph("site-glyphs-xianxia/shelter.png",p,24,24):
+				draw_colored_polygon(PackedVector2Array([p+Vector2(-7,4),p+Vector2(0,-7),p+Vector2(7,4)]),Color("c6a87c"))
+				draw_line(p+Vector2(0,-4),p+Vector2(0,4),Color("614e3a"),1.5)
 			if fidelity == 1:
 				draw_string(ThemeDB.fallback_font,p+Vector2(-15,16),"%s/%s beds" % [int(shelter.reserved),int(shelter.capacity)],HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("f6e6b9"))
 	var convoy_draw: Array = []
@@ -524,19 +564,25 @@ func _draw() -> void:
 		else:
 			var scale_animal := 0.6 if animal.young else 1.0
 			var bob := sin(animation_time*10.0+float(animal.id))*0.5 if fidelity==3 and int(animal.action)!=3 else 0.0
+			var species_col := int(animal.species)
+			var stance_row := 3 if int(animal.action)==3 else (1+(int(animation_time*10.0+float(animal.id))%2) if fidelity==3 and bob!=0.0 else 0)
+			var animal_tex := _tex("animal-table-xianxia/atlas.png")
 			draw_set_transform(offset+at*zoom,float(animal.heading),Vector2.ONE*zoom*scale_animal)
-			var deer := int(animal.species)==1
-			draw_circle(Vector2.ZERO,4.0 if deer else 2.8,Color("af8558") if deer else Color("e5ddc8"))
-			draw_circle(Vector2(3.5,0),2.0 if deer else 1.6,Color("ccaa78") if deer else Color("f4ecdc"))
-			if deer:
-				for side in [-1,1]:
-					draw_line(Vector2(1,side*2),Vector2(-2+bob,side*5),Color("65513c"),1)
-					draw_line(Vector2(4,side),Vector2(7,side*4),Color("705c42"),1)
-					draw_line(Vector2(5.5,side*2.5),Vector2(8,side*2.5),Color("705c42"),1)
+			if animal_tex != null and species_col < 9:
+				draw_texture_rect_region(animal_tex,Rect2(-9,-9,18,18),Rect2(species_col*64,stance_row*64,64,64))
 			else:
-				draw_line(Vector2(3,1),Vector2(7,2+bob),Color("eee3d0"),1.5)
-				draw_line(Vector2(3,-1),Vector2(7,-2+bob),Color("eee3d0"),1.5)
-			draw_circle(Vector2(4.2,-0.7),0.4,Color("302a24"))
+				var deer := int(animal.species)==1
+				draw_circle(Vector2.ZERO,4.0 if deer else 2.8,Color("af8558") if deer else Color("e5ddc8"))
+				draw_circle(Vector2(3.5,0),2.0 if deer else 1.6,Color("ccaa78") if deer else Color("f4ecdc"))
+				if deer:
+					for side in [-1,1]:
+						draw_line(Vector2(1,side*2),Vector2(-2+bob,side*5),Color("65513c"),1)
+						draw_line(Vector2(4,side),Vector2(7,side*4),Color("705c42"),1)
+						draw_line(Vector2(5.5,side*2.5),Vector2(8,side*2.5),Color("705c42"),1)
+				else:
+					draw_line(Vector2(3,1),Vector2(7,2+bob),Color("eee3d0"),1.5)
+					draw_line(Vector2(3,-1),Vector2(7,-2+bob),Color("eee3d0"),1.5)
+				draw_circle(Vector2(4.2,-0.7),0.4,Color("302a24"))
 			draw_set_transform(offset,0,Vector2(zoom,zoom))
 		if int(animal.id)==selected_animal:
 			draw_arc(at,8.0,0,TAU,20,Color("ffedaa"),1.0)
@@ -654,7 +700,8 @@ func _build_detail_renderer() -> void:
 	add_child(atlas_view)
 	detail_mesh = MultiMeshInstance2D.new()
 	detail_mesh.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	detail_mesh.texture = atlas_view.get_texture()
+	var packed_atlas: Texture2D = load(TEX_DIR + "villager-atlas-v2/atlas.png")
+	detail_mesh.texture = packed_atlas if packed_atlas != null else atlas_view.get_texture()
 	detail_mesh.multimesh = MultiMesh.new()
 	detail_mesh.multimesh.transform_format = MultiMesh.TRANSFORM_2D
 	detail_mesh.multimesh.use_custom_data = true

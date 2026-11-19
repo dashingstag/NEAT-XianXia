@@ -29,14 +29,15 @@ func check_ui() -> void:
 	await process_frame
 	var metadata := JSON.stringify(world).to_utf8_buffer()
 	var packet := PackedByteArray()
-	packet.resize(28+metadata.size())
+	packet.resize(32+metadata.size())
 	for k in range(4):
 		packet[k] = "XNS1".unicode_at(k)
-	packet.encode_u16(4,1)
+	packet.encode_u16(4,2)
 	packet.encode_u16(6,1)
 	packet.encode_u32(24,metadata.size())
+	packet.encode_u32(28,0)
 	for k in range(metadata.size()):
-		packet[28+k] = metadata[k]
+		packet[32+k] = metadata[k]
 	ui.last_inspector_ms = -1000
 	ui._decode(packet)
 	if not world.has("hill"):
@@ -135,6 +136,20 @@ func check_ui() -> void:
 		assert(picked.get("kind","")=="banks")
 		ui.site_selection=picked
 		assert(ui._site_text().contains("Annual lending rate"))
+		ui._centre_selection()
+	for market in world.get("markets",[]):
+		ui.site_selection = {"kind":"markets","id":int(market.id),"market":int(market.id)}
+		var description: String = ui._site_text()
+		assert(description.contains("GOODS held"))
+		for k in range(market.stock.size()):
+			var q: Dictionary = market.quotes[k]
+			if int(market.stock[k])==0 and int(q.offered)==0 and int(q.remaining)==0:
+				continue
+			assert(description.contains("%s: %s held" % [world.products[k],int(market.stock[k])]))
+			if int(q.offered)>0 or int(q.ask)>0:
+				assert(description.contains("%s @ %sc" % [int(q.offered),int(q.ask)]))
+			if int(q.remaining)>0 or int(q.bid)>0:
+				assert(description.contains("buys %s @ %sc" % [int(q.remaining),int(q.bid)]))
 		ui._centre_selection()
 	for level in [1,2,3]:
 		ui.field.set_fidelity(level)

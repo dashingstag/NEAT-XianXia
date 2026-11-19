@@ -10,4 +10,5 @@ neat-core = { path = "../neat-core" }
 serde.workspace = true
 serde_json.workspace = true
 rayon.workspace = true
+postcard.workspace = true
 

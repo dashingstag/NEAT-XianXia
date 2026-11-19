@@ -36,9 +36,15 @@ def snapshot(stream):
         data = frame(stream)
         if data[:4] != b"XNS1":
             continue
-        version, flags, tick, agents, visible, meta_len = struct.unpack_from("<HHQIII", data, 4)
-        assert version == 1 and len(data) == 28 + meta_len + visible * 16
-        meta = json.loads(data[28:28 + meta_len])
+        version, flags, tick, agents, visible, meta_len, animals = struct.unpack_from("<HHQIIII", data, 4)
+        assert version == 2 and len(data) == 32 + meta_len + (visible + animals) * 16
+        meta = json.loads(data[32:32 + meta_len])
+        at = 32 + meta_len + visible * 16
+        meta["wildlife"]["animals"] = [
+            dict(zip(("id", "x", "y", "species", "action", "health_young", "heading"),
+                     struct.unpack_from("<IffBBBB", data, at + i * 16)))
+            for i in range(animals)
+        ]
         meta["paused"] = bool(flags & 1)
         assert all(row["error"] == 0 for row in meta["accounts"])
         assert meta["wildlife"]["grass_account"]["error"] == 0
@@ -56,13 +62,13 @@ def check(stream):
     assert "schools" in first and "education" in first
     assert "taverns" in first and 0 <= first["selected"]["person"]["social_score"] <= 100
     assert first["map_width"] == 3072 and first["map_height"] == 1920
-    assert len(first["products"]) == 13 and len(first["sensors"]) == 42
-    assert len(first["selected"]["choices"][0]["inputs"]) == 42
+    assert len(first["products"]) == 13 and len(first["sensors"]) == 48
+    assert len(first["selected"]["choices"][0]["inputs"]) == 48
     assert len(first["selected"]["person"]["goals"]) <= 5
     send(stream,{"command":"select_animal","animal":0})
     animal=snapshot(stream)["selected_animal"]
-    assert animal["species"] == "Rabbit" and animal["genome_nodes"] >= 47
-    assert animal["choices"] and len(animal["choices"][0]["inputs"]) == 42
+    assert animal["species"] == "Rabbit" and animal["genome_nodes"] >= 53
+    assert animal["choices"] and len(animal["choices"][0]["inputs"]) == 48
     send(stream,{"command":"select","agent":0})
     send(stream, {"command":"time_of_day","hour":20.0})
     phase = snapshot(stream)

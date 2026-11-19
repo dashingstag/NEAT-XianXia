@@ -177,7 +177,7 @@ mod tests {
             w.agents.cargo_kind[i] = 1;
             w.agents.cargo[i] = 2;
             w.agents.action[i] = Action::Gather;
-            w.agents.dwell_cell[i] = 19;
+            w.agents.dwell_cell[i] = 3 + 4096;
             w.agents.target[i] = 0;
         }
         // Declare this fixture's transferred inventory as an initial endowment.
@@ -211,6 +211,39 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn distant_dwellers_do_not_fuse_into_one_founding_group() {
+        // Cells (3,1) and (19,0) both hash to 19 under `x/96 + 16*(y/96)`
+        // because the x range is wider than the multiplier. Eight gatherers
+        // that could found a camp alone must not be diluted by four others
+        // 1500 units away in a colliding cell.
+        let mut w = World::new(12, 42).unwrap();
+        for (i, (px, py)) in [(330.0, 180.0), (1850.0, 45.0)].iter().enumerate() {
+            w.patches[i].x = *px;
+            w.patches[i].y = *py;
+            let n = if i == 0 { 8 } else { 4 };
+            for j in 0..n {
+                let a = i * 8 + j;
+                w.agents.x[a] = px + 2.0;
+                w.agents.y[a] = *py;
+                w.agents.cargo_kind[a] = 1;
+                w.agents.cargo[a] = 2;
+                w.agents.action[a] = Action::Gather;
+                w.agents.target[a] = i as u32;
+            }
+        }
+        // Declare this fixture's transferred inventory as an initial endowment.
+        w.ledger.initial = w.stocks();
+        for _ in 0..140 {
+            w.tick += 1;
+            w.settlement_step();
+        }
+        assert_eq!(w.markets.len(), 4);
+        assert_eq!(w.stats.camps_founded, 1);
+        let camp = w.markets.last().unwrap();
+        assert!(dist(camp.x, camp.y, 330.0, 180.0) < 50.0);
+        w.check().unwrap();
+    }
+    #[test]
     fn insufficient_materials_cannot_create_a_settlement() {
         let mut w = World::new(8, 42).unwrap();
         w.patches[0].x = 330.0;
@@ -219,7 +252,7 @@ mod tests {
             w.agents.x[i] = 330.0;
             w.agents.y[i] = 180.0;
             w.agents.action[i] = Action::Gather;
-            w.agents.dwell_cell[i] = 19;
+            w.agents.dwell_cell[i] = 3 + 4096;
             w.agents.target[i] = 0;
             w.agents.dwell_ticks[i] = 200;
         }
@@ -538,7 +571,8 @@ impl World {
                 a.residence[i] = a.residence[i].saturating_add(1);
             }
             // Only sustained local workers, never passing or waiting convoys, can found a camp.
-            let cell = (a.x[i] / 96.0) as u32 + 16 * (a.y[i] / 96.0) as u32;
+            // Column stride must exceed the widest possible map so distant cells never share a key.
+            let cell = (a.x[i] / 96.0) as u32 + 4096 * (a.y[i] / 96.0) as u32;
             let eligible = a.convoy[i] == NONE
                 && a.action[i] == Action::Gather
                 && a.energy[i] > 20.0

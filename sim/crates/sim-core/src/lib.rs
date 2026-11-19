@@ -1,5 +1,5 @@
 //! Packed native agent state and an authoritative, integer-accounted economy.
-use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS};
+use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS, LEGACY_INPUTS};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, fs, io::Read, path::Path};
@@ -64,6 +64,10 @@ pub const PRODUCTS: [&str; GOODS] = [
 pub const WORLD_WIDTH: f32 = 3072.0;
 pub const WORLD_HEIGHT: f32 = 1920.0;
 const NONE: u32 = u32::MAX;
+// Wire frames pack action into 6 bits: IDs must stay below 64 and be
+// append-only (old saves and replays store the index). Reserved ranges:
+// 39-41 hunting/combat, 42-45 taming and husbandry, 46-49 guild quests,
+// 50-53 founding and migration, 54-57 qi and cultivation, 58-63 unassigned.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Action {
@@ -464,7 +468,7 @@ impl World {
             return Err("Population must be 1..1,200,000".into());
         }
         let mut w = Self {
-            format: 14,
+            format: 15,
             seed,
             rng: Rng(seed),
             tick: 0,
@@ -1954,7 +1958,7 @@ impl World {
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE14".to_vec();
+        let mut data = b"XXSAVE15".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -1969,7 +1973,8 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE14"
+            || (&data[..8] != b"XXSAVE15"
+                && &data[..8] != b"XXSAVE14"
                 && &data[..8] != b"XXSAVE13"
                 && &data[..8] != b"XXSAVE12"
                 && &data[..8] != b"XXSAVE11"
@@ -2054,7 +2059,7 @@ impl World {
             }
         }
         world.social.resize(world.agents.len(), 0.0);
-        world.format = 14;
+        world.format = 15;
         if &data[..8] != b"XXSAVE08"
             && &data[..8] != b"XXSAVE09"
             && &data[..8] != b"XXSAVE10"
@@ -2062,6 +2067,7 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.init_wildlife();
         }
@@ -2071,6 +2077,7 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2081,8 +2088,12 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.relocate_fertile_land();
+        }
+        if &data[..8] != b"XXSAVE15" {
+            world.migrate_brain_schemas();
         }
         world.sync_education();
         world.wildlife.rebuild()?;
@@ -2096,6 +2107,43 @@ impl World {
             .map(|g| g.compile())
             .collect::<Result<Vec<_>, _>>()?;
         Ok(world)
+    }
+    /// Widens pre-format-15 brains from the 42-sensor schema to the reserved
+    /// 48-sensor layout, shifting hidden and output node IDs consistently.
+    fn migrate_brain_schemas(&mut self) {
+        let delta = (INPUTS - LEGACY_INPUTS) as u32;
+        if delta == 0 {
+            return;
+        }
+        let mut migrated = false;
+        for g in &mut self.genomes {
+            if g.needs_input_migration() {
+                g.migrate_inputs(LEGACY_INPUTS);
+                migrated = true;
+            }
+        }
+        if migrated {
+            self.innovations
+                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
+        }
+        for c in &mut self.councils {
+            if c.genome.needs_input_migration() {
+                c.genome.migrate_inputs(LEGACY_INPUTS);
+                c.innovations.migrate_node_ids(LEGACY_INPUTS as u32, delta);
+            }
+        }
+        let mut wild = false;
+        for a in &mut self.wildlife.animals {
+            if a.genome.needs_input_migration() {
+                a.genome.migrate_inputs(LEGACY_INPUTS);
+                wild = true;
+            }
+        }
+        if wild {
+            self.wildlife
+                .innovations
+                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
+        }
     }
     fn validate(&self) -> Result<(), String> {
         let n = self.agents.len();
@@ -2140,7 +2188,7 @@ impl World {
             self.genomes.len(),
         ];
         self.hill.validate()?;
-        if self.format != 14
+        if self.format != 15
             || n == 0
             || n > 1_200_000
             || lengths.iter().any(|l| *l != n)
@@ -2249,6 +2297,11 @@ impl World {
             .map(|(i, _)| i)
             .collect();
         let mut metadata = self.snapshot_metadata();
+        // Animals travel as compact records after the people samples; the
+        // viewer rebuilds wildlife.animals from them. Full reports keep JSON.
+        metadata["wildlife"]
+            .as_object_mut()
+            .map(|w| w.remove("animals"));
         if let Some(board) = leaderboard {
             metadata["leaderboard"] = board.clone();
         }
@@ -2260,14 +2313,16 @@ impl World {
         }
         let json = serde_json::to_vec(&metadata).unwrap();
         let count = self.agents.len().min(limit);
-        let mut out = Vec::with_capacity(32 + json.len() + count * 16);
+        let animal_count = self.wildlife.animals.iter().filter(|a| a.alive).count();
+        let mut out = Vec::with_capacity(32 + json.len() + (count + animal_count) * 16);
         out.extend(b"XNS1");
-        out.extend(1u16.to_le_bytes());
+        out.extend(2u16.to_le_bytes());
         out.extend((paused as u16).to_le_bytes());
         out.extend(self.tick.to_le_bytes());
         out.extend((self.agents.len() as u32).to_le_bytes());
         out.extend((count as u32).to_le_bytes());
         out.extend((json.len() as u32).to_le_bytes());
+        out.extend((animal_count as u32).to_le_bytes());
         out.extend(json);
         let mut stride = (self.agents.len() / count.max(1)).max(1);
         while gcd(stride, self.agents.len()) != 1 {
@@ -2304,6 +2359,23 @@ impl World {
                     | if !self.is_adult(i) { 128 } else { 0 },
             );
             out.push(self.agents.home[i] as u8);
+        }
+        for (id, a) in self.wildlife.animals.iter().enumerate() {
+            if !a.alive {
+                continue;
+            }
+            out.extend((id as u32).to_le_bytes());
+            out.extend(a.x.to_le_bytes());
+            out.extend(a.y.to_le_bytes());
+            out.push(a.species);
+            out.push(a.action);
+            out.push(
+                a.health.clamp(0.0, 100.0) as u8 | if a.adult(self.tick) { 0 } else { 128 },
+            );
+            out.push(
+                (a.heading.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * 255.0)
+                    .round() as u8,
+            );
         }
         out
     }
@@ -2390,9 +2462,12 @@ mod tests {
         let w = World::new(300, 2).unwrap();
         let bytes = w.snapshot(25, Some(0), true);
         assert_eq!(&bytes[..4], b"XNS1");
+        assert_eq!(u16::from_le_bytes(bytes[4..6].try_into().unwrap()), 2);
         assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 25);
         let jsonlen = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
-        assert_eq!(bytes.len(), 28 + jsonlen + 25 * 16);
+        let animals = u32::from_le_bytes(bytes[28..32].try_into().unwrap()) as usize;
+        assert_eq!(animals, w.wildlife.animals.len());
+        assert_eq!(bytes.len(), 32 + jsonlen + (25 + animals) * 16);
     }
     #[test]
     fn each_agent_has_distinct_weights_and_valid_brain() {
@@ -2408,7 +2483,7 @@ mod tests {
         let metadata = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
         let mut counts = [0usize; 3];
         let mut seen = std::collections::BTreeSet::new();
-        for record in bytes[28 + metadata..].chunks_exact(16) {
+        for record in bytes[32 + metadata..32 + metadata + 50 * 16].chunks_exact(16) {
             counts[record[15] as usize] += 1;
             seen.insert(u32::from_le_bytes(record[..4].try_into().unwrap()));
         }

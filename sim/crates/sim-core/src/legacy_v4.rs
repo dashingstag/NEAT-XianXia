@@ -228,6 +228,7 @@ impl From<LegacyWorld> for World {
             watch: Default::default(),
             hill: Hill::default(),
             map: crate::WorldMap::classic(old.seed),
+            explored: crate::Exploration::default(),
         }
     }
 }

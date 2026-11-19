@@ -2,6 +2,24 @@
 agents = 10000
 seed = 42
 
+# Opt-in generated frontier worlds. `map` selects the preset
+# (classic|x4|x25|x100, side-length multipliers of the 3072x1920 map).
+# Launch with: python tools/dev.py play --scenario frontier-x4
+[frontier-x4]
+agents = 10000
+seed = 42
+map = "x4"
+
+[frontier-x25]
+agents = 10000
+seed = 42
+map = "x25"
+
+[frontier-x100]
+agents = 10000
+seed = 42
+map = "x100"
+
 [protocol]
 agents = 1000
 seed = 77

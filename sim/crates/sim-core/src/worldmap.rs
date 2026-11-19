@@ -75,6 +75,31 @@ impl MapSpec {
     pub fn homeland_radius(&self) -> f32 {
         self.width().min(self.height()) * HOMELAND_FRAC
     }
+    /// Open-land bounds (min_x, max_x, min_y, max_y): forests, mines,
+    /// resource placement. Classic keeps the historical constants.
+    pub fn land_bounds(&self) -> (f32, f32, f32, f32) {
+        if self.size == MapSize::Classic {
+            (20.0, 2670.0, 20.0, 1900.0)
+        } else {
+            (20.0, self.width() - 20.0, 20.0, self.height() - 20.0)
+        }
+    }
+    /// Farmable-land bounds. Classic keeps the historical constants.
+    pub fn field_bounds(&self) -> (f32, f32, f32, f32) {
+        if self.size == MapSize::Classic {
+            (30.0, 2650.0, 30.0, 1880.0)
+        } else {
+            (30.0, self.width() - 30.0, 30.0, self.height() - 30.0)
+        }
+    }
+    /// Wildlife roaming clamps.
+    pub fn wild_bounds(&self) -> (f32, f32, f32, f32) {
+        if self.size == MapSize::Classic {
+            (10.0, 2650.0, 10.0, 1890.0)
+        } else {
+            (10.0, self.width() - 10.0, 10.0, self.height() - 10.0)
+        }
+    }
 }
 
 /// One generated chunk: per-cell scalar layers. Cells are CELLS_PER_SIDE
@@ -259,6 +284,35 @@ impl WorldMap {
             Terrain::Grass
         }
     }
+
+    /// Deterministic spiral scan for a point whose terrain matches
+    /// `want`, searching a ring around (cx, cy). Returns the first hit;
+    /// falls back to the last candidate when nothing matches.
+    pub fn find_terrain(
+        &mut self,
+        want: &[Terrain],
+        cx: f32,
+        cy: f32,
+        r_min: f32,
+        r_max: f32,
+    ) -> (f32, f32) {
+        const STEPS: usize = 512;
+        const GOLDEN: f32 = 2.399_963_1;
+        let (min_x, max_x, min_y, max_y) = self.spec.land_bounds();
+        let mut last = (cx.clamp(min_x, max_x), cy.clamp(min_y, max_y));
+        for s in 0..STEPS {
+            let t = s as f32 / STEPS as f32;
+            let r = r_min + (r_max - r_min) * t;
+            let a = s as f32 * GOLDEN;
+            let x = (cx + a.cos() * r).clamp(min_x, max_x);
+            let y = (cy + a.sin() * r).clamp(min_y, max_y);
+            last = (x, y);
+            if want.contains(&self.terrain_at(x, y)) {
+                return (x, y);
+            }
+        }
+        last
+    }
 }
 
 #[cfg(test)]
@@ -331,6 +385,64 @@ mod tests {
             }
         }
         assert!(differ > 15);
+    }
+
+    #[test]
+    fn generated_world_places_on_terrain_and_steps() {
+        let mut w = crate::World::new_with_size(
+            150,
+            7,
+            crate::Hill::default(),
+            MapSize::X4,
+        )
+        .unwrap();
+        let (min_x, max_x, min_y, max_y) = w.map.spec.land_bounds();
+        for m in &w.markets {
+            assert!(
+                (min_x..=max_x).contains(&m.x) && (min_y..=max_y).contains(&m.y),
+                "market {} at {},{}",
+                m.id,
+                m.x,
+                m.y
+            );
+            // Homeland is mundane: no qi under a starting settlement.
+            assert_eq!(w.map.qi_at(m.x, m.y), 0.0);
+        }
+        for p in &w.patches {
+            assert!(
+                p.x.is_finite()
+                    && p.y.is_finite()
+                    && p.x >= 0.0
+                    && p.y >= 0.0
+                    && p.x <= w.map.spec.width()
+                    && p.y <= w.map.spec.height(),
+                "patch {:?} out of map",
+                p
+            );
+        }
+        // Farms sit on workable ground, not rock or water.
+        for f in &w.fertility {
+            assert!(w.farm_ground(f.x, f.y, 1.0), "fertile region {:?}", f);
+        }
+        for _ in 0..30 {
+            w.step(false);
+        }
+        w.check().unwrap();
+        // A different seed lays out a different homeland.
+        let other = crate::World::new_with_size(
+            150,
+            8,
+            crate::Hill::default(),
+            MapSize::X4,
+        )
+        .unwrap();
+        let same = w
+            .markets
+            .iter()
+            .zip(&other.markets)
+            .filter(|(a, b)| a.x == b.x && a.y == b.y)
+            .count();
+        assert!(same < 2, "seeds produced near-identical market sites");
     }
 
     #[test]

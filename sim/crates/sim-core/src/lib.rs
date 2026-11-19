@@ -466,7 +466,41 @@ impl World {
         Self::new_with_hill(count, seed, Hill::default())
     }
     pub fn new_with_hill(count: usize, seed: u64, hill: Hill) -> Result<Self, String> {
-        hill.validate()?;
+        Self::new_with_size(count, seed, hill, MapSize::Classic)
+    }
+    /// `size` selects the generated-map preset. Classic keeps the
+    /// historical fixed layout; other sizes procedurally place
+    /// settlements and resources on generated terrain.
+    pub fn new_with_size(
+        count: usize,
+        seed: u64,
+        hill: Hill,
+        size: MapSize,
+    ) -> Result<Self, String> {
+        let spec = if size == MapSize::Classic {
+            MapSpec::classic(seed)
+        } else {
+            MapSpec {
+                size,
+                seed,
+                version: worldmap::GENERATOR_VERSION,
+                home_x: WORLD_WIDTH * size.scale() as f32 / 2.0,
+                home_y: WORLD_HEIGHT * size.scale() as f32 / 2.0,
+            }
+        };
+        let hill = if size == MapSize::Classic {
+            hill
+        } else {
+            let s = size.scale() as f32;
+            Hill {
+                x: hill.x * s,
+                y: hill.y * s,
+                radius: hill.radius * s,
+            }
+        };
+        if size == MapSize::Classic {
+            hill.validate()?;
+        }
         if count == 0 || count > 1_200_000 {
             return Err("Population must be 1..1,200,000".into());
         }
@@ -527,21 +561,41 @@ impl World {
             relationships: Relationships::default(),
             watch: Default::default(),
             hill,
-            map: WorldMap::classic(seed),
+            map: WorldMap::new(spec),
         };
-        for (id, (name, x, y)) in [
-            ("Willow Reach", 180.0, 230.0),
-            ("Tidewater", 780.0, 190.0),
-            ("Stone Crossing", 510.0, 490.0),
+        let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
+            vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
+        } else {
+            let r = w.map.spec.homeland_radius();
+            (0..3)
+                .map(|m| {
+                    let angle = m as f32 * std::f32::consts::TAU / 3.0;
+                    let cx = w.map.spec.home_x + angle.cos() * r * 0.4;
+                    let cy = w.map.spec.home_y + angle.sin() * r * 0.4;
+                    w.map.find_terrain(
+                        &[Terrain::Fertile, Terrain::Grass],
+                        cx,
+                        cy,
+                        0.0,
+                        r * 0.5,
+                    )
+                })
+                .collect()
+        };
+        for (id, (name, (x, y))) in [
+            "Willow Reach",
+            "Tidewater",
+            "Stone Crossing",
         ]
         .iter()
+        .zip(market_sites)
         .enumerate()
         {
             w.markets.push(Market {
                 id: id as u32,
                 name: name.to_string(),
-                x: *x,
-                y: *y,
+                x,
+                y,
                 coins: 0,
                 goods: std::array::from_fn(|_| VecDeque::new()),
                 quotes: std::array::from_fn(|_| Quote::default()),
@@ -564,8 +618,13 @@ impl World {
             m.population += 1;
             m.coins += 20;
             let a = &mut w.agents;
-            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, 890.0));
-            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, 635.0));
+            let (bx, by) = if size == MapSize::Classic {
+                (890.0, 635.0)
+            } else {
+                (w.map.spec.width() - 5.0, w.map.spec.height() - 5.0)
+            };
+            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, bx));
+            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, by));
             a.health.push(100.0);
             a.hunger.push(w.rng.unit() * 12.0);
             a.energy.push(80.0 + w.rng.unit() * 20.0);
@@ -613,11 +672,43 @@ impl World {
         for kind in 0..4 {
             let number = if kind == 1 { 16 } else { 10 };
             for j in 0..number {
-                let (x, y) = match kind {
-                    0 => (90.0 + w.rng.unit() * 300.0, 100.0 + w.rng.unit() * 220.0),
-                    1 => (60.0 + w.rng.unit() * 260.0, 100.0 + w.rng.unit() * 260.0),
-                    2 => (410.0 + w.rng.unit() * 180.0, 350.0 + w.rng.unit() * 190.0),
-                    _ => (870.0 + w.rng.unit() * 18.0, 75.0 + j as f32 * 48.0),
+                let (x, y) = if size != MapSize::Classic {
+                    let home = &w.markets[j % w.markets.len()];
+                    let (cx, cy, r) = (home.x, home.y, w.map.spec.homeland_radius());
+                    match kind {
+                        // Berries and timber stay near settlements on
+                        // growing land; stone sits anywhere off water;
+                        // fish need the shoreline.
+                        0 => w.map.find_terrain(
+                            &[Terrain::Fertile, Terrain::Grass],
+                            cx,
+                            cy,
+                            60.0,
+                            r,
+                        ),
+                        1 => w.map.find_terrain(
+                            &[Terrain::Forest, Terrain::Fertile, Terrain::Grass],
+                            cx,
+                            cy,
+                            60.0,
+                            r,
+                        ),
+                        2 => w.map.find_terrain(
+                            &[Terrain::Grass, Terrain::Rock, Terrain::Fertile],
+                            cx,
+                            cy,
+                            60.0,
+                            r,
+                        ),
+                        _ => w.map.find_terrain(&[Terrain::Water], cx, cy, 0.0, r * 1.5),
+                    }
+                } else {
+                    match kind {
+                        0 => (90.0 + w.rng.unit() * 300.0, 100.0 + w.rng.unit() * 220.0),
+                        1 => (60.0 + w.rng.unit() * 260.0, 100.0 + w.rng.unit() * 260.0),
+                        2 => (410.0 + w.rng.unit() * 180.0, 350.0 + w.rng.unit() * 190.0),
+                        _ => (870.0 + w.rng.unit() * 18.0, 75.0 + j as f32 * 48.0),
+                    }
                 };
                 let cap = if kind == 1 { 100 * scale } else { 80 * scale };
                 w.patches.push(Patch {
@@ -639,7 +730,18 @@ impl World {
                 });
             }
         }
-        for (kind, x, y) in [(4, 570.0, 365.0), (5, 615.0, 430.0), (6, 410.0, 540.0)] {
+        let metal_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
+            vec![(570.0, 365.0), (615.0, 430.0), (410.0, 540.0)]
+        } else {
+            let r = w.map.spec.homeland_radius();
+            (0..3)
+                .map(|j| {
+                    let home = &w.markets[j % w.markets.len()];
+                    w.map.find_terrain(&[Terrain::Rock], home.x, home.y, 0.0, r * 1.5)
+                })
+                .collect()
+        };
+        for (kind, (x, y)) in [4usize, 5, 6].into_iter().zip(metal_sites) {
             w.patches.push(Patch {
                 id: w.patches.len() as u32,
                 kind,

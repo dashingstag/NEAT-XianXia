@@ -589,7 +589,24 @@ func _decode(data: PackedByteArray) -> void:
 			var tone := "#a8cea0" if int(relationship.score)>0 else "#dd9c91"
 			text += "[url=%s]%s[/url] [color=%s]%+d[/color]%s%s\n%s / drift check in %.1f days\n" % [int(relationship.id),relationship.name,tone,int(relationship.score)," / family" if relationship.family else ""," / shared trait" if relationship.shared_trait else "",", ".join(relationship.contexts),float(relationship.days_to_drift)]
 			text += "Roll +1: %s%% / -1: %s%%\n" % [int(relationship.positive_chance_percent),int(relationship.negative_chance_percent)]
-		text += "\n[color=#a8cea0]NEAT / FEASIBLE CHOICES[/color]\n"
+		var decision = info.get("last_decision")
+		if decision is Dictionary:
+			text += "\nLast decision at tick %s: %s (target %s)\n" % [decision.decision_tick,decision.action,decision.target]
+			if decision.get("candidate_counts") is Dictionary:
+				for family in decision.candidate_counts:
+					var totals = decision.candidate_counts[family]
+					if totals[1] > 0:
+						text += "At decision: %s admitted %s, omitted %s\n" % [family,totals[0],totals[1]]
+		else:
+			text += "\nNo decision captured yet.\n"
+		var purchase = info.get("last_purchase")
+		if purchase is Dictionary:
+			text += "Shop %s / owner %s / %s at tick %s / charged %s / shop %s / levy %s\n" % [purchase.shop_id,purchase.owner_id,purchase.outcome,purchase.resolution_tick,purchase.buyer_charge,purchase.shop_proceeds,purchase.market_levy]
+		for family in info.get("candidate_counts",{}):
+			var counts = info.candidate_counts[family]
+			if counts[1] > 0:
+				text += "%s: %s admitted, %s omitted\n" % [family,counts[0],counts[1]]
+		text += "\n[color=#a8cea0]CURRENT POLICY PREVIEW[/color]\n"
 		text += "%s nodes / %s genes\n" % [int(info.genome_nodes),int(info.genome_genes)]
 		for choice in info.get("choices",[]):
 			text += "%s %s → %.3f\n" % [choice.action,choice.product,float(choice.score)]

@@ -364,7 +364,16 @@ pub struct World {
     pub urban: Urban,
     pub banking: Banking,
     pub relationships: Relationships,
+    #[serde(skip)]
+    watch: Watch,
 }
+#[derive(Clone, Debug, Default)]
+struct Watch {
+    person: Option<usize>,
+    last: Option<serde_json::Value>,
+    purchase: Option<serde_json::Value>,
+}
+type Counts = std::collections::BTreeMap<String, [usize; 2]>;
 #[derive(Clone, Copy, Debug)]
 struct Candidate {
     action: Action,
@@ -384,8 +393,8 @@ impl Default for Candidate {
         }
     }
 }
-#[derive(Clone, Copy)]
 struct Request {
+    counts: Option<Box<Counts>>,
     agent: usize,
     candidate: Candidate,
 }
@@ -427,6 +436,9 @@ pub struct AgentTrace {
     pub cargo: u32,
     pub product: String,
     pub choices: Vec<TraceChoice>,
+    pub last_decision: Option<serde_json::Value>,
+    pub last_purchase: Option<serde_json::Value>,
+    pub candidate_counts: Counts,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct TraceChoice {
@@ -497,6 +509,7 @@ impl World {
             urban: Urban::default(),
             banking: Banking::default(),
             relationships: Relationships::default(),
+            watch: Default::default(),
         };
         for (id, (name, x, y)) in [
             ("Willow Reach", 180.0, 230.0),
@@ -772,7 +785,31 @@ impl World {
             }
         }
     }
+    pub fn watch_person(&mut self, person: Option<usize>) {
+        if self.watch.person != person {
+            self.watch = Watch {
+                person,
+                ..Default::default()
+            };
+        }
+    }
+    #[cfg(test)]
     fn offer(&self, i: usize) -> ([Candidate; CANDIDATES], usize) {
+        self.offer_counted(i, None)
+    }
+    fn offer_counted(
+        &self,
+        i: usize,
+        omitted: Option<&mut Counts>,
+    ) -> ([Candidate; CANDIDATES], usize) {
+        self.offer_with_limit(i, omitted, CANDIDATES)
+    }
+    fn offer_with_limit(
+        &self,
+        i: usize,
+        mut omitted: Option<&mut Counts>,
+        limit: usize,
+    ) -> ([Candidate; CANDIDATES], usize) {
         let mut out = [Candidate::default(); CANDIDATES];
         if !self.is_adult(i) || self.must_stay_home(i) {
             return self.family_offers(i);
@@ -818,7 +855,10 @@ impl World {
                        travel: f32,
                        price: f32,
                        infrastructure: f32| {
-            if count == CANDIDATES {
+            if count == limit {
+                if let Some(counts) = omitted.as_deref_mut() {
+                    counts.entry(format!("{action:?}")).or_default()[1] += 1;
+                }
                 return;
             }
             let mut x = [0.0; INPUTS];
@@ -1343,21 +1383,49 @@ impl World {
         {
             return None;
         }
-        let (out, count) = self.offer(i);
+        let mut counts = (self.watch.person == Some(i)).then(Box::<Counts>::default);
+        let (out, count) = self.offer_counted(i, counts.as_deref_mut());
+        if let Some(totals) = counts.as_mut() {
+            for c in &out[..count] {
+                totals.entry(format!("{:?}", c.action)).or_default()[0] += 1;
+            }
+        }
         out[..count]
             .iter()
             .max_by(|a, b| a.score.total_cmp(&b.score))
             .copied()
             .map(|candidate| Request {
+                counts,
                 agent: i,
                 candidate,
             })
+    }
+    fn capture_decision(&mut self, r: &Request) {
+        if self.watch.person == Some(r.agent) && self.agents.convoy[r.agent] == NONE {
+            let c = r.candidate;
+            let mut decision = serde_json::json!({"actor_id":r.agent,"decision_tick":self.tick,"action":format!("{:?}",c.action),"target":c.target,"candidate_counts":r.counts,"score":c.score,"resolution_tick":null,"outcome":null});
+            if c.action == Action::ShopGoods {
+                let shop = c.target as usize / 32;
+                decision["shop_id"] = shop.into();
+                decision["product_id"] = (c.target % 32).into();
+                decision["owner_id"] =
+                    serde_json::json!(self.urban.buildings.get(shop).map(|b| b.owner));
+            }
+            self.watch.last = Some(decision);
+        }
     }
     pub fn trace(&self, i: usize) -> Option<AgentTrace> {
         if i >= self.agents.len() {
             return None;
         }
-        let (out, count) = self.offer(i);
+        let mut candidate_counts = Counts::new();
+        let (out, count) = self.offer_counted(i, Some(&mut candidate_counts));
+        for c in &out[..count] {
+            candidate_counts
+                .entry(format!("{:?}", c.action))
+                .or_default()[0] += 1;
+        }
+        let watched = self.watch.person == Some(i);
         let mut choices: Vec<_> = out[..count]
             .iter()
             .map(|c| TraceChoice {
@@ -1397,6 +1465,17 @@ impl World {
             coins: a.coins[i],
             cargo: a.cargo[i],
             product: PRODUCTS[a.cargo_kind[i] as usize].into(),
+            candidate_counts,
+            last_decision: if watched {
+                self.watch.last.clone()
+            } else {
+                None
+            },
+            last_purchase: if watched {
+                self.watch.purchase.clone()
+            } else {
+                None
+            },
             choices,
         })
     }
@@ -1497,6 +1576,7 @@ impl World {
                 .collect()
         };
         for r in requests {
+            self.capture_decision(&r);
             if matches!(
                 r.candidate.action,
                 Action::Gravedigger | Action::BuildGraveyard

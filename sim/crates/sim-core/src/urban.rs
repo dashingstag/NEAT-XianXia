@@ -1627,17 +1627,45 @@ impl World {
         self.agents.drain_energy(i, 0.5);
     }
     fn buy_urban_goods(&mut self, i: usize, id: usize, sku: usize) {
+        let before = self.agents.coins[i];
+        let outcome = self.settle_purchase(i, id, sku);
+        if self.watch.person == Some(i) {
+            if let Some(d) = self.watch.last.as_mut() {
+                if d["shop_id"].as_u64() == Some(id as u64)
+                    && d["product_id"].as_u64() == Some(sku as u64)
+                    && d["outcome"].is_null()
+                {
+                    let purchased = outcome == "purchased";
+                    d["resolution_tick"] = self.tick.into();
+                    d["outcome"] = outcome.into();
+                    d["quantity"] = u64::from(purchased).into();
+                    d["buyer_charge"] = (before - self.agents.coins[i]).into();
+                    d["market_levy"] = u64::from(purchased).into();
+                    d["shop_proceeds"] = (if purchased {
+                        Self::retail_price(sku) - 1
+                    } else {
+                        0
+                    })
+                    .into();
+                    self.watch.purchase = Some(d.clone());
+                }
+            }
+        }
+    }
+    fn settle_purchase(&mut self, i: usize, id: usize, sku: usize) -> &'static str {
         let Some(b) = self.urban.buildings.get(id) else {
-            return;
+            return "unavailable";
         };
         if b.kind != 1
             || b.owner == NONE
             || !b.ready
             || self.tick.saturating_sub(b.last_open) >= 30
             || !Self::catalog(b.line).contains(&sku)
-            || Self::inventory(b, sku) == 0
         {
-            return;
+            return "unavailable";
+        }
+        if Self::inventory(b, sku) == 0 {
+            return "out_of_stock";
         }
         let price = Self::retail_price(sku);
         let home = if sku == 16 {
@@ -1646,7 +1674,7 @@ impl World {
             None
         };
         if self.agents.coins[i] < price + if sku == 16 { 2 } else { 0 } {
-            return;
+            return "unavailable";
         }
         if sku == 16
             && (home.is_none()
@@ -1660,10 +1688,10 @@ impl World {
                             .any(|j| j.target == h as u32 && j.wares[3] > 0)
                 }))
         {
-            return;
+            return "unavailable";
         }
         if sku < 13 && (self.agents.tools[i][sku - 9] > 0 || self.agents.room(i) < WEIGHTS[sku]) {
-            return;
+            return "unavailable";
         }
         if [14, 15].contains(&sku)
             && (self
@@ -1675,7 +1703,7 @@ impl World {
                 > 0
                 || self.agents.room(i) < WARE_WEIGHT[sku - 13])
         {
-            return;
+            return "unavailable";
         }
         let m = b.market as usize;
         let owner = b.owner;
@@ -1733,6 +1761,7 @@ impl World {
         {
             self.relationship_contact(i, owner as usize, relationships::Context::Shop);
         }
+        "purchased"
     }
     fn execute_urban_job(&mut self, i: usize) {
         let id = self.agents.target[i] as usize;
@@ -2371,6 +2400,61 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn crowded_town_counts_each_discarded_offer_without_reordering() {
+        let mut w = funded();
+        let shop = construct(&mut w, 1);
+        w.urban.buildings[shop].line = 3;
+        w.urban.buildings[shop].owner = 2;
+        w.urban.buildings[shop].wares[4] = 1;
+        w.agents.hunger[3] = 35.0;
+        let template = w.urban.buildings[shop].clone();
+        w.urban.buildings.extend(std::iter::repeat_n(template, 24));
+        let (all, n) = w.offer(3);
+        assert!(
+            all[..n]
+                .iter()
+                .filter(|c| c.action == Action::ShopGoods)
+                .count()
+                > 1
+        );
+        // Exercise the production admission path under saturation even if domain
+        // preselection keeps the current scenario below the normal 64-slot cap.
+        let mut omitted = Counts::new();
+        let (limited, kept) = w.offer_with_limit(3, Some(&mut omitted), 4);
+        assert_eq!(kept, 4);
+        for (actual, expected) in limited[..kept].iter().zip(&all) {
+            assert_eq!(
+                (actual.action, actual.target, actual.score),
+                (expected.action, expected.target, expected.score)
+            );
+        }
+        let mut expected = Counts::new();
+        for c in &all[kept..n] {
+            expected.entry(format!("{:?}", c.action)).or_default()[1] += 1;
+        }
+        assert_eq!(omitted, expected);
+        assert!(omitted["ShopGoods"][1] > 0);
+    }
+
+    #[test]
+    fn watching_decisions_preserves_serialized_world() {
+        let mut w = funded();
+        let mut control = w.clone();
+        w.watch_person(Some(3));
+        for _ in 0..20 {
+            w.step(true);
+            control.step(false);
+        }
+        assert!(w.trace(3).unwrap().last_decision.is_some());
+        assert_eq!(
+            postcard::to_allocvec(&w).unwrap(),
+            postcard::to_allocvec(&control).unwrap()
+        );
+        w.watch_person(Some(4));
+        assert!(w.trace(4).unwrap().last_decision.is_none());
+    }
+
+    #[test]
     fn two_buyers_compete_for_the_last_shop_meal() {
         let mut w = funded();
         let shop = construct(&mut w, 1);
@@ -2393,7 +2477,25 @@ mod tests {
         let wallets = [w.agents.coins[3], w.agents.coins[4]];
         let meals = [w.people[3].meals, w.people[4].meals];
         for i in [3, 4] {
+            w.watch_person(Some(i));
+            w.capture_decision(&Request {
+                agent: i,
+                counts: None,
+                candidate: Candidate {
+                    action: Action::ShopGoods,
+                    target: w.agents.target[i],
+                    ..Candidate::default()
+                },
+            });
             w.execute_urban(i, Action::ShopGoods);
+            let record = w.trace(i).unwrap().last_purchase.unwrap();
+            assert_eq!(
+                record["outcome"],
+                if i == 3 { "purchased" } else { "out_of_stock" }
+            );
+            assert_eq!(record["buyer_charge"], if i == 3 { price } else { 0 });
+            assert_eq!(record["shop_id"], shop);
+            assert_eq!(record["owner_id"], 2);
         }
         assert_eq!(w.agents.coins[3], wallets[0] - price);
         assert_eq!(w.agents.coins[4], wallets[1]);

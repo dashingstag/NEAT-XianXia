@@ -123,6 +123,47 @@ impl Default for Wildlife {
         }
     }
 }
+/// Per-decision-round caches so animal choices don't rescan the whole
+/// animal/grass list for every individual (was O(n^2) at 1024 animals).
+/// Buckets are by forest because mating requires the same forest anyway,
+/// so restricting scans is semantically identical.
+struct ForestStats {
+    members: Vec<Vec<usize>>,
+    grass_idx: Vec<Vec<usize>>,
+    food: Vec<u64>,
+    pop: Vec<usize>,
+    living: usize,
+}
+impl ForestStats {
+    fn build(w: &Wildlife) -> Self {
+        let n = w.forests.len();
+        let mut stats = Self {
+            members: vec![vec![]; n],
+            grass_idx: vec![vec![]; n],
+            food: vec![0; n],
+            pop: vec![0; n],
+            living: 0,
+        };
+        for (i, a) in w.animals.iter().enumerate() {
+            if !a.alive {
+                continue;
+            }
+            stats.living += 1;
+            if let Some(m) = stats.members.get_mut(a.forest as usize) {
+                m.push(i);
+                stats.pop[a.forest as usize] += 1;
+            }
+        }
+        for (i, g) in w.grass.iter().enumerate() {
+            if let Some(v) = stats.grass_idx.get_mut(g.forest as usize) {
+                v.push(i);
+                stats.food[g.forest as usize] += g.stock;
+            }
+        }
+        stats
+    }
+}
+
 #[derive(Clone)]
 struct Choice {
     action: u8,
@@ -279,7 +320,7 @@ impl World {
         w.ledger.initial_animals = w.animals.len() as u64;
         self.wildlife = w;
     }
-    fn animal_choices(&self, i: usize) -> Vec<Choice> {
+    fn animal_choices(&self, i: usize, stats: &ForestStats) -> Vec<Choice> {
         let w = &self.wildlife;
         let a = &w.animals[i];
         if !a.alive {
@@ -301,8 +342,11 @@ impl World {
                 v[9] = a.energy / 100.0;
                 v[10] = a.health / 100.0;
                 v[11] = a.threat;
-                v[12] = (w.food(a.forest) as f32 / 300.0).min(1.0);
-                v[13] = (w.population(a.forest) as f32 / FOREST_CAP as f32).min(1.0);
+                v[12] = (stats.food.get(a.forest as usize).copied().unwrap_or(0) as f32 / 300.0)
+                    .min(1.0);
+                v[13] = (stats.pop.get(a.forest as usize).copied().unwrap_or(0) as f32
+                    / FOREST_CAP as f32)
+                    .min(1.0);
                 v[14] = if self.is_night() { 1.0 } else { 0.0 };
                 v[15] = if a.adult(self.tick) { 1.0 } else { 0.0 };
                 let score = a.brain.as_ref().expect("rebuilt animal brain").evaluate(&v);
@@ -316,12 +360,14 @@ impl World {
                 });
             };
         let portion = if a.species == 0 { 1 } else { 3 };
-        if let Some((id, g)) = w
-            .grass
-            .iter()
-            .enumerate()
-            .filter(|(_, g)| {
-                g.forest == a.forest && g.stock >= portion && (a.hunger > 20.0 || a.energy < 65.0)
+        if let Some((id, g)) = stats
+            .grass_idx
+            .get(a.forest as usize)
+            .into_iter()
+            .flatten()
+            .filter_map(|&id| {
+                let g = &w.grass[id];
+                (g.stock >= portion && (a.hunger > 20.0 || a.energy < 65.0)).then_some((id, g))
             })
             .min_by(|(_, a1), (_, b)| {
                 dist(a.x, a.y, a1.x, a1.y).total_cmp(&dist(a.x, a.y, b.x, b.y))
@@ -390,15 +436,17 @@ impl World {
             a.threat * 0.5,
         );
         if w.fertile(i, self.tick)
-            && w.food(a.forest) >= 30
-            && w.population(a.forest) < FOREST_CAP
+            && stats.food.get(a.forest as usize).copied().unwrap_or(0) >= 30
+            && stats.pop.get(a.forest as usize).copied().unwrap_or(0) < FOREST_CAP
             && a.threat < 0.25
-            && w.animals.iter().filter(|a| a.alive).count() < MAX_LIVING
+            && stats.living < MAX_LIVING
         {
-            if let Some((j, b)) = w
-                .animals
-                .iter()
-                .enumerate()
+            if let Some((j, b)) = stats
+                .members
+                .get(a.forest as usize)
+                .into_iter()
+                .flatten()
+                .map(|&j| (j, &w.animals[j]))
                 .filter(|(j, _)| w.compatible(i, *j, self.tick))
                 .min_by(|(_, b), (_, c)| {
                     dist(a.x, a.y, b.x, b.y).total_cmp(&dist(a.x, a.y, c.x, c.y))
@@ -461,11 +509,12 @@ impl World {
                 }
                 a.threat = (1.0 - nearest / 70.0).max(0.0);
             }
+            let stats = ForestStats::build(&self.wildlife);
             for i in 0..self.wildlife.animals.len() {
                 if !self.wildlife.animals[i].alive {
                     continue;
                 }
-                let choices = self.animal_choices(i);
+                let choices = self.animal_choices(i, &stats);
                 if let Some(c) = choices.iter().max_by(|a, b| a.score.total_cmp(&b.score)) {
                     let a = &mut self.wildlife.animals[i];
                     if a.action != c.action || a.target != c.target {
@@ -685,7 +734,7 @@ impl World {
         let Some(a) = self.wildlife.animals.get(i) else {
             return serde_json::Value::Null;
         };
-        serde_json::json!({"x":a.x,"y":a.y,"id":i,"species":if a.species==0{"Rabbit"}else{"Deer"},"gender":if a.female{"Female"}else{"Male"},"age_days":a.age(self.tick),"adult":a.adult(self.tick),"alive":a.alive,"health":a.health,"hunger":a.hunger,"energy":a.energy,"mother":if a.mother==NONE{None}else{Some(a.mother)},"father":if a.father==NONE{None}else{Some(a.father)},"pregnancy_days_left":a.pregnancy.as_ref().map(|p|p.due.saturating_sub(self.tick) as f32/rest::DAY_TICKS as f32),"forest":a.forest,"action":NAMES[a.action as usize],"generation":a.genome.generation,"genome_nodes":a.genome.nodes.len(),"genome_genes":a.genome.genes.len(),"sensors":ANIMAL_SENSORS,"choices":self.animal_choices(i).iter().map(|c|serde_json::json!({"action":NAMES[c.action as usize],"score":c.score,"inputs":c.inputs.to_vec()})).collect::<Vec<_>>()})
+        serde_json::json!({"x":a.x,"y":a.y,"id":i,"species":if a.species==0{"Rabbit"}else{"Deer"},"gender":if a.female{"Female"}else{"Male"},"age_days":a.age(self.tick),"adult":a.adult(self.tick),"alive":a.alive,"health":a.health,"hunger":a.hunger,"energy":a.energy,"mother":if a.mother==NONE{None}else{Some(a.mother)},"father":if a.father==NONE{None}else{Some(a.father)},"pregnancy_days_left":a.pregnancy.as_ref().map(|p|p.due.saturating_sub(self.tick) as f32/rest::DAY_TICKS as f32),"forest":a.forest,"action":NAMES[a.action as usize],"generation":a.genome.generation,"genome_nodes":a.genome.nodes.len(),"genome_genes":a.genome.genes.len(),"sensors":ANIMAL_SENSORS,"choices":self.animal_choices(i,&ForestStats::build(&self.wildlife)).iter().map(|c|serde_json::json!({"action":NAMES[c.action as usize],"score":c.score,"inputs":c.inputs.to_vec()})).collect::<Vec<_>>()})
     }
     pub(super) fn validate_wildlife(&self) -> Result<(), String> {
         let w = &self.wildlife;

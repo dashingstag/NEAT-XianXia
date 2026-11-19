@@ -15,6 +15,7 @@ Branch `frontier/m0-foundations`. All commits keep the user's uncommitted `viewe
 - Blocked: `python tools/dev.py doctor` fails — Godot executable not installed; all viewer/protocol/interactive checks pending.
 - M0 merged to main (`4ba285d`) and pushed; issue #17 closed with resolution comment.
 - M1 started on `frontier/m1-generated-world`: `worldmap` module with seeded, order-independent chunked generation (elevation/moisture/qi, terrain classes, MapSize Classic/x4/x25/x100, mundane homeland qi ring, persisted spec only — `0feb01a`). Still to land: generated placement of forests/patches/fertility for non-Classic sizes, scenario size option, viewer streaming/minimap, fog of war, spatial grid + bounds-literal cleanup.
+- M1 placement landed (`cfed6bf`): `World::new_with_size` sites markets inside the homeland on fertile/grass terrain, samples patches and mines from terrain classes, `MapSpec` owns the bounds helpers (classic constants preserved), `expand_map_and_food` skips legacy 3x scaling off-Classic, `sim-runner --map classic|x4|x25|x100` for bench/verify/soak. Generated X4 runs clean in soak; 125 tests pass.
 
 ## Player-facing goals
 

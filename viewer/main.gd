@@ -653,7 +653,6 @@ func _decode(data: PackedByteArray) -> void:
 		happiness_bar.value = float(person.get("happiness",50))
 		rested_bar.value = float(info.get("rested_meter",0.0))
 		detail.text = _buyer_link() + PersonInspector.describe(info,state)
-	var ecology: Dictionary = state.get("wildlife",{})
 	var grass: Dictionary = ecology.get("grass_account",{})
 	var lines := "[color=#a8cea0]WOODLAND WILDLIFE[/color]\nRabbits %s / deer %s / births %s / deaths %s\nGrass %s / eaten %s / berries eaten %s\n\n" % [int(ecology.get("rabbits",0)),int(ecology.get("deer",0)),int(ecology.get("births",0)),int(ecology.get("deaths",0)),int(grass.get("stock",0)),int(grass.get("eaten",0)),int(ecology.get("berries_eaten",0))]
 	lines += "[color=#e5c78e]VILLAGE JOB BOARDS[/color]\nClick a village board to inspect its policy.\n"

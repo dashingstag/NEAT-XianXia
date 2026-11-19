@@ -240,6 +240,8 @@ impl World {
             if self.education.schools[id].progress >= 25.0 {
                 let s = &mut self.education.schools[id];
                 s.ready = true;
+                self.commitments
+                    .resolve(i, Action::BuildSchool, id as u32, 1, self.tick, true);
                 let reward = s.build_escrow;
                 s.build_escrow = 0;
                 self.agents.coins[i] += reward;

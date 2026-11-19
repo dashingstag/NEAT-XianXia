@@ -50,6 +50,22 @@ func check_ui() -> void:
 		ui.status.text = "Offline town fixture"
 		return
 	assert(ui.counter.text.contains("BALANCED"))
+	var overlays := {}
+	for control in ui.find_children("*", "Button", true, false):
+		if control.text in ["Trade", "Resources"]:
+			overlays[control.text] = control
+	assert(overlays.size() == 2)
+	assert(not ui.field.show_trade and not ui.field.show_resources)
+	overlays["Trade"].button_pressed = true
+	overlays["Resources"].button_pressed = true
+	assert(ui.field.show_trade and ui.field.show_resources)
+	for level in [1, 2, 3]:
+		ui.field.set_fidelity(level)
+		await process_frame
+		assert(ui.field.show_trade and ui.field.show_resources)
+	overlays["Trade"].button_pressed = false
+	overlays["Resources"].button_pressed = false
+	assert(not ui.field.show_trade and not ui.field.show_resources)
 	assert(ui.field.detail_mesh.texture == ui.field._tex("villager-atlas-v2/atlas.png"))
 	assert(ui.field.detail_mesh.texture.get_size() == Vector2(1024,1280))
 	assert(ui.field._tex("animal-table-xianxia/atlas.png").get_size() == Vector2(576,384))

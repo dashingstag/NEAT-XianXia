@@ -46,7 +46,16 @@ def backend():
 
 
 def godot():
-    return os.getenv("GODOT_BIN") or shutil.which("godot") or "godot"
+    configured = os.getenv("GODOT_BIN") or shutil.which("godot")
+    if configured:
+        return configured
+    if os.name == "nt":
+        filename = f"Godot_v{CONFIG['toolchain']['godot']}-stable_win64.exe"
+        downloads = Path.home() / "Downloads"
+        for candidate in (downloads / filename, downloads / filename / filename):
+            if candidate.is_file():
+                return candidate
+    return "godot"
 
 
 @contextmanager
@@ -202,9 +211,13 @@ def player_lock(folder):
         yield
 
 
-def play(run):
-    folder = Path(os.getenv("XIANXIA_PLAYER_DIR", Path.home() / ".xianxia-handoff")).resolve()
+def play(run, fresh=False):
+    folder = run / "player" if fresh else Path(
+        os.getenv("XIANXIA_PLAYER_DIR", Path.home() / ".xianxia-handoff")
+    ).resolve()
     folder.mkdir(parents=True, exist_ok=True)
+    if fresh:
+        print(f"Fresh game profile: {folder}", flush=True)
     with player_lock(folder):
         binary = Path(shutil.copy2(backend(), run))
         with server(binary, run, folder / "world.snapshot", "founders") as port:
@@ -243,8 +256,10 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     tests = sub.add_parser("test")
     tests.add_argument("suite", choices=["sim", "viewer", "connection", "protocol", "replay", "isolation", "labs", "world", "all"])
-    for name in ["doctor", "play", "package"]:
+    for name in ["doctor", "package"]:
         sub.add_parser(name)
+    sub.add_parser("play").add_argument("--fresh", action="store_true",
+                                       help="Start with a new profile in this run's evidence folder")
     sub.add_parser("preview").add_argument("--fixture", choices=["town-shop"], default="town-shop")
     sub.add_parser("bench").add_argument("--scenario", choices=["mature-town"], default="mature-town")
     args = parser.parse_args()
@@ -276,7 +291,7 @@ def main():
         elif args.command == "package":
             package(run)
         else:
-            play(run)
+            play(run, fresh=args.fresh)
     except Exception as error:
         record(run / "result.json", {"args": vars(args), "passed": False, "error": repr(error)})
         raise

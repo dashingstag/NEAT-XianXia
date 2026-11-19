@@ -188,6 +188,10 @@ impl From<LegacyWorld> for World {
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
+            food_memory: Default::default(),
+            forage_memory: Default::default(),
+            work_memory: Default::default(),
+            commitments: Default::default(),
             hill: Hill::default(),
         }
     }

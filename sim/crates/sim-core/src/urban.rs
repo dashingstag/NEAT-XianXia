@@ -841,7 +841,7 @@ impl World {
         );
         c.inputs[4] /= 8.0;
         self.personal_inputs(i, c.action, c.kind, &mut c.inputs);
-        c.score = self.brains[i].evaluate(&c.inputs);
+        c.score = self.score_action(i, c.action, c.target, &c.inputs);
         Some(c)
     }
     pub(super) fn urban_offers(&self, i: usize) -> Vec<Candidate> {
@@ -1355,6 +1355,8 @@ impl World {
             return;
         }
         let Some((source, sku, q)) = self.procurement(id) else {
+            self.commitments
+                .resolve(i, Action::OrderGoods, id as u32, 1, self.tick, false);
             return;
         };
         let m = self.urban.buildings[id].market as usize;
@@ -1421,7 +1423,9 @@ impl World {
         } else {
             job.wares[sku - 13] = q
         }
-        self.post_urban_job(job);
+        let job_id = self.post_urban_job(job);
+        self.commitments
+            .dispatch(i, Action::OrderGoods, id as u32, job_id);
     }
     fn hunt_target(&self, i: usize) -> Option<usize> {
         self.wildlife
@@ -1506,6 +1510,16 @@ impl World {
             }
             if self.agents.coins[i] > 0 || self.agents.room(i) > 0 {
                 self.agents.coins[i] += self.urban.estates[id].cash;
+                if self.urban.estates[id].cash > 0 {
+                    self.commitments.resolve(
+                        i,
+                        Action::CollectEstate,
+                        id as u32,
+                        1,
+                        self.tick,
+                        true,
+                    );
+                }
                 self.urban.estates[id].cash = 0;
             }
             let firm = self.business(i);
@@ -1541,7 +1555,9 @@ impl World {
                 }
                 if room < 24 {
                     self.agents.coins[i] -= 2;
-                    self.post_urban_job(j);
+                    let job_id = self.post_urban_job(j);
+                    self.commitments
+                        .dispatch(i, Action::CollectEstate, id as u32, job_id);
                 }
             }
             self.agents.action[i] = Action::Wait;
@@ -1668,6 +1684,7 @@ impl World {
                 self.urban.assigned[i] = job as u32;
                 self.agents.action[i] = Action::UrbanWork;
                 self.agents.target[i] = job as u32;
+                self.work_memory[work_memory::WorkKind::Urban as usize].commit(i, job as u32, 1);
                 self.agents.timer[i] = 0.0;
                 self.urban.progress.entry(i as u32).or_default().hunted += 1;
                 self.update_urban_weight(i);
@@ -1874,11 +1891,19 @@ impl World {
     fn execute_urban_job(&mut self, i: usize) {
         let id = self.agents.target[i] as usize;
         let Some(j) = self.urban.jobs.get(id).and_then(Option::as_ref) else {
+            self.work_memory[work_memory::WorkKind::Urban as usize].cancel(i);
             self.urban.assigned[i] = NONE;
             self.update_urban_weight(i);
             return;
         };
         if j.worker != NONE && j.worker != i as u32 {
+            self.work_memory[work_memory::WorkKind::Urban as usize].resolve_at(
+                i,
+                (id as u32, 1),
+                work_memory::urban_memory_target(j.market, j.kind),
+                self.tick,
+                false,
+            );
             return;
         }
         if j.kind == 0 && self.urban.buildings[j.target as usize].needs_clear {
@@ -2042,6 +2067,14 @@ impl World {
         self.agents.coins[i] += j.reward;
         self.people[i].jobs += 1;
         self.urban.completed += 1;
+        self.commitments.delivery_finished(id, self.tick);
+        self.work_memory[work_memory::WorkKind::Urban as usize].resolve_at(
+            i,
+            (id as u32, 1),
+            work_memory::urban_memory_target(j.market, j.kind),
+            self.tick,
+            true,
+        );
         if j.payer == NONE {
             self.markets[j.market as usize].expenses_total += j.reward;
             self.credit_education_bonus(i, j.market as usize, j.reward);
@@ -2057,6 +2090,7 @@ impl World {
         }
     }
     fn refund_urban_job(&mut self, id: usize) {
+        self.commitments.delivery_cancelled(id);
         let Some(j) = self.urban.jobs[id].take() else {
             return;
         };
@@ -2078,6 +2112,7 @@ impl World {
             self.agents.coins[j.payer as usize] += j.reward;
         }
         if j.worker != NONE {
+            self.work_memory[work_memory::WorkKind::Urban as usize].cancel(j.worker as usize);
             self.urban.assigned[j.worker as usize] = NONE;
             self.update_urban_weight(j.worker as usize);
         }
@@ -2108,6 +2143,7 @@ impl World {
             .insert(owner, self.tick + rest::DAY_TICKS);
     }
     pub(super) fn pause_urban_job(&mut self, i: usize) {
+        self.work_memory[work_memory::WorkKind::Urban as usize].cancel(i);
         let Some(&id) = self.urban.assigned.get(i) else {
             return;
         };
@@ -2491,12 +2527,18 @@ mod tests {
         let id = w.post_urban_job(j);
         w.agents.action[2] = Action::UrbanWork;
         w.agents.target[2] = id as u32;
+        let memory_index = work_memory::WorkKind::Urban as usize;
+        w.work_memory[memory_index].commit(2, id as u32, 1);
         w.agents.x[2] = w.markets[0].x;
         w.agents.y[2] = w.markets[0].y;
         for _ in 0..12 {
             w.execute_urban_job(2);
         }
         assert_eq!(w.agents.urban_weight[2], 8);
+        assert_eq!(
+            w.action_memory_inputs(2, Action::UrbanWork, id as u32),
+            Some([0.0; 4])
+        );
         assert_eq!(w.urban.buildings[b].raw[1], 0);
         w.agents.x[2] += 10.0;
         let dropped = w.agents.x[2];
@@ -2505,6 +2547,7 @@ mod tests {
         assert_eq!(w.agents.urban_weight[2], 0);
         w.agents.action[3] = Action::UrbanWork;
         w.agents.target[3] = id as u32;
+        w.work_memory[memory_index].commit(3, id as u32, 1);
         w.agents.x[3] = dropped;
         w.agents.y[3] = w.agents.y[2];
         for _ in 0..12 {
@@ -2517,6 +2560,9 @@ mod tests {
         }
         assert_eq!(w.urban.buildings[b].raw[1], 2);
         assert!(w.urban.jobs[id].is_none());
+        let key = work_memory::urban_memory_target(0, 1);
+        assert_eq!(w.work_memory[memory_index].inputs(2, key, w.tick), [0.0; 4]);
+        assert_eq!(w.work_memory[memory_index].inputs(3, key, w.tick)[0], 1.0);
         w.check().unwrap();
     }
     #[test]
@@ -2624,6 +2670,7 @@ mod tests {
         for i in [3, 4] {
             w.watch_person(Some(i));
             w.capture_decision(&Request {
+                memory_offers: None,
                 agent: i,
                 counts: None,
                 candidate: Candidate {
@@ -2671,7 +2718,22 @@ mod tests {
         w.operate_business(1, factory);
         assert_eq!(w.urban.buildings[factory].wares[3], 1);
         assert_eq!(w.urban.buildings[factory].raw[1], 0);
+        w.commitments.commit(2, Action::OrderGoods, shop as u32, 1);
         w.place_procurement(2, shop);
+        let neutral = Some([0.0; 4]);
+        assert_eq!(
+            w.action_memory_inputs(2, Action::OrderGoods, shop as u32),
+            neutral
+        );
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-pending-order-{}.snapshot",
+            std::process::id()
+        ));
+        w.save(&path).unwrap();
+        let replay = World::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(w.commitments, replay.commitments);
+        w = replay;
         let id = w
             .urban
             .jobs
@@ -2689,11 +2751,24 @@ mod tests {
             w.execute_urban_job(3);
         }
         at(&mut w, 3, shop, Action::UrbanWork);
+        assert_eq!(
+            w.action_memory_inputs(2, Action::OrderGoods, shop as u32),
+            neutral
+        );
         w.agents.target[3] = id as u32;
         for _ in 0..12 {
             w.execute_urban_job(3);
         }
         assert_eq!(w.urban.buildings[shop].wares[3], 1);
+        assert_eq!(
+            w.action_memory_inputs(2, Action::OrderGoods, shop as u32)
+                .unwrap()[0],
+            1.0
+        );
+        assert_eq!(
+            w.action_memory_inputs(3, Action::OrderGoods, shop as u32),
+            neutral
+        );
         let home = construct(&mut w, 0);
         at(&mut w, 4, home, Action::RentHome);
         w.execute_urban(4, Action::RentHome);
@@ -2729,7 +2804,12 @@ mod tests {
         assert_eq!(w.coins(), coins);
         w.agents.action[1] = Action::CollectEstate;
         w.agents.target[1] = 0;
+        w.commitments.commit(1, Action::CollectEstate, 0, 1);
         w.execute_urban(1, Action::CollectEstate);
+        assert_eq!(
+            w.action_memory_inputs(1, Action::CollectEstate, 0).unwrap()[0],
+            1.0
+        );
         assert_eq!(w.urban.estates[0].cash, 0);
         assert_eq!(w.coins(), coins);
         w.check().unwrap();

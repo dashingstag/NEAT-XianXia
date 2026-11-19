@@ -53,8 +53,14 @@ mod tests {
         w.agents.action[0] = Action::ForageMeal;
         w.agents.target[0] = patch as u32;
         w.agents.timer[0] = 1.0;
+        w.forage_memory.commit(0, patch as u32, 0);
         w.execute_personal(0, Action::ForageMeal);
         assert_eq!(w.agents.hunger[0], 40.0);
+        let learned = w.forage_memory.inputs(0, patch as u32, w.tick);
+        assert_eq!(learned[0], 1.0);
+        assert_eq!(w.food_memory.inputs(0, patch as u32, w.tick), [0.0; 4]);
+        w.execute_personal(0, Action::ForageMeal);
+        assert_eq!(w.forage_memory.inputs(0, patch as u32, w.tick), learned);
         assert_eq!(w.agents.cargo[0], 4);
         w.check().unwrap();
     }
@@ -153,7 +159,9 @@ mod tests {
         w.agents.action[0] = Action::Court;
         w.agents.target[0] = 1;
         w.agents.timer[0] = 3.0;
+        w.commitments.commit(0, Action::Court, 1, 0);
         w.execute_personal(0, Action::Court);
+        assert_eq!(w.action_memory_inputs(0, Action::Court, 1).unwrap()[0], 1.0);
         assert_eq!(w.people[0].spouse, 1);
         assert_eq!(w.people[1].spouse, 0);
         assert_eq!(w.stats.marriages, 1);
@@ -1029,19 +1037,28 @@ impl World {
             Action::Socialize | Action::BuildTavern => self.execute_social(i, action),
             Action::ForageMeal => {
                 let id = self.agents.target[i] as usize;
-                if id >= self.patches.len() || self.patches[id].stock == 0 {
+                let Some(patch) = self.patches.get(id) else {
+                    self.forage_memory.cancel(i);
+                    return;
+                };
+                let kind = patch.kind;
+                if patch.stock == 0 {
+                    self.forage_memory
+                        .resolve(i, id as u32, kind, self.tick, false);
                     return;
                 }
                 self.agents.timer[i] += DT;
                 if self.agents.timer[i] < 1.0 {
                     return;
                 }
-                let k = self.patches[id].kind;
-                if ![0, 3].contains(&k) {
+                if ![0, 3].contains(&kind) {
+                    self.forage_memory.cancel(i);
                     return;
                 }
                 self.patches[id].stock -= 1;
-                self.ledger.consumed[k] += 1;
+                self.forage_memory
+                    .resolve(i, id as u32, kind, self.tick, true);
+                self.ledger.consumed[kind] += 1;
                 self.people[i].meals += 1;
                 self.agents.hunger[i] = (self.agents.hunger[i] - 40.0).max(0.0);
                 self.agents.timer[i] = 0.0;
@@ -1077,6 +1094,8 @@ impl World {
                 self.people[i].happiness = (self.people[i].happiness + 12.0).min(100.0);
                 self.people[j].happiness = (self.people[j].happiness + 12.0).min(100.0);
                 self.stats.marriages += 1;
+                self.commitments
+                    .resolve(i, Action::Court, j as u32, 0, self.tick, true);
                 self.agents.action[i] = Action::Wait;
             }
             Action::CareFamily => {
@@ -1094,10 +1113,29 @@ impl World {
                                 self.agents.fish[i] += 1
                             }
                             self.agents.timer[i] = 0.0;
+                            self.commitments.resolve(
+                                i,
+                                Action::CareFamily,
+                                self.agents.target[i],
+                                0,
+                                self.tick,
+                                true,
+                            );
                         }
                     }
                 } else {
+                    let meals = self.people[i].meals;
                     self.feed_dependents(i);
+                    if self.people[i].meals > meals {
+                        self.commitments.resolve(
+                            i,
+                            Action::CareFamily,
+                            self.agents.target[i],
+                            0,
+                            self.tick,
+                            true,
+                        );
+                    }
                 }
             }
             Action::CraftTool | Action::BuyTool | Action::EquipTool => {

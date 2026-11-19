@@ -987,6 +987,7 @@ impl World {
             return;
         };
         let i = c.worker as usize;
+        self.commitments.cancel(i, Action::BuildGraveyard);
         if c.kind == JobKind::Haul {
             let body = &mut self.corpses[c.corpse as usize];
             if body.status == 1 {
@@ -1051,6 +1052,8 @@ impl World {
             }
             g.ready = true;
             self.stats.graveyards_built += 1;
+            self.commitments
+                .resolve(i, Action::BuildGraveyard, c.market, 2, self.tick, true);
         } else if c.phase == 1 {
             c.timer += DT * work_speed;
             if c.timer < 1.0 {

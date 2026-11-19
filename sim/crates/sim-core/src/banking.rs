@@ -64,10 +64,15 @@ mod tests {
         w.agents.y[0] = w.banking.banks[0].y;
         w.agents.target[0] = 0;
         w.agents.action[0] = Action::BuildBank;
+        w.commitments.commit(0, Action::BuildBank, 0, 1);
         for _ in 0..302 {
             w.execute_banking(0, Action::BuildBank);
         }
         assert!(w.banking.banks[0].ready);
+        assert_eq!(
+            w.action_memory_inputs(0, Action::BuildBank, 0).unwrap()[0],
+            1.0
+        );
         assert_eq!(w.coins(), coins);
         w.check().unwrap();
     }
@@ -80,6 +85,7 @@ mod tests {
         w.agents.action[20] = Action::BorrowBusiness;
         assert!(w.can_seek_business_loan(20));
         let coins = w.coins();
+        w.commitments.commit(20, Action::BorrowBusiness, 0, 1);
         w.execute_banking(20, Action::BorrowBusiness);
         assert_eq!(w.agents.coins[20], 58);
         assert_eq!(w.banking.loans[&20].principal, 58);
@@ -113,6 +119,11 @@ mod tests {
         borrow(&mut w);
         let coins = w.coins();
         w.execute_banking(20, Action::BorrowBusiness);
+        assert_eq!(
+            w.action_memory_inputs(20, Action::BorrowBusiness, 0)
+                .unwrap()[0],
+            1.0
+        );
         assert_eq!(w.banking.approved[&20], 1);
         assert_eq!(w.agents.coins[20], 58);
         w.tick = YEAR;
@@ -122,7 +133,12 @@ mod tests {
         assert_eq!(w.coins(), coins);
         w.agents.coins[0] -= 100;
         w.agents.coins[20] += 100;
+        w.commitments.commit(20, Action::RepayLoan, 0, 1);
         w.execute_banking(20, Action::RepayLoan);
+        assert_eq!(
+            w.action_memory_inputs(20, Action::RepayLoan, 0).unwrap()[0],
+            1.0
+        );
         assert!(!w.banking.loans.contains_key(&20));
         assert_eq!(w.banking.principal_paid, 58);
         assert_eq!(w.banking.interest_paid, 3);
@@ -540,6 +556,8 @@ impl World {
                 b.ready = true;
                 b.worker = NONE;
                 b.builder_escrow = 0;
+                self.commitments
+                    .resolve(i, Action::BuildBank, id as u32, 1, self.tick, true);
                 self.agents.coins[i] += pay;
                 self.people[i].jobs += 1;
                 self.markets[m].expenses_total += pay;
@@ -550,6 +568,14 @@ impl World {
                     return;
                 };
                 if !self.bank_will_lend(i, id, q) {
+                    self.commitments.resolve(
+                        i,
+                        Action::BorrowBusiness,
+                        id as u32,
+                        1,
+                        self.tick,
+                        false,
+                    );
                     return;
                 }
                 let rate = self.banking.banks[id].rate;
@@ -582,6 +608,8 @@ impl World {
                     },
                 );
                 *self.banking.approved.entry(i as u32).or_default() += 1;
+                self.commitments
+                    .resolve(i, Action::BorrowBusiness, id as u32, 1, self.tick, true);
             }
             Action::RepayLoan => self.repay_bank_loan(i, id),
             _ => {}
@@ -643,6 +671,10 @@ impl World {
         self.banking.banks[id].cash += pay;
         self.banking.interest_paid += interest;
         self.banking.principal_paid += pay - interest;
+        if pay > 0 {
+            self.commitments
+                .resolve(i, Action::RepayLoan, id as u32, 1, self.tick, true);
+        }
         if l.principal == 0 && l.interest == 0 {
             self.banking.loans.remove(&(i as u32));
         }

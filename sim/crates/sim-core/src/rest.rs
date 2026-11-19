@@ -109,15 +109,18 @@ mod tests {
         let mut w = housed(1);
         w.agents.energy[0] = 20.0;
         w.agents.rested_meter[0] = 79.0;
+        w.work_memory[work_memory::WorkKind::Rest as usize].commit(0, 0, 0);
         sleeper(&mut w, 0);
         let home = (w.markets[0].x, w.markets[0].y);
         assert!(dist(w.agents.x[0], w.agents.y[0], home.0, home.1) > 50.0);
         w.execute_rest(0);
         assert!(w.agents.sleeping[0]);
         assert_eq!(w.agents.energy[0], 20.5);
+        assert_eq!(w.action_memory_inputs(0, Action::Rest, 0), Some([0.0; 4]));
         w.execute_rest(0);
         assert!(w.agents.rested[0]);
         assert_eq!(w.agents.rested_meter[0], 80.0);
+        assert_eq!(w.action_memory_inputs(0, Action::Rest, 0).unwrap()[0], 1.0);
         let energy = w.agents.energy[0];
         w.execute_rest(0);
         assert_eq!(w.agents.energy[0], energy);
@@ -333,6 +336,13 @@ impl World {
             } else {
                 self.agents.action[i] = Action::Wait;
                 self.agents.sleeping[i] = false;
+                self.work_memory[work_memory::WorkKind::Rest as usize].resolve(
+                    i,
+                    self.agents.target[i],
+                    0,
+                    self.tick,
+                    false,
+                );
             }
         }
     }
@@ -431,6 +441,13 @@ impl World {
         if a.rested_meter[i] >= 80.0 {
             if !a.rested[i] {
                 self.people[i].rest_cycles += 1;
+                self.work_memory[work_memory::WorkKind::Rest as usize].resolve(
+                    i,
+                    site as u32,
+                    0,
+                    self.tick,
+                    true,
+                );
             }
             a.rested[i] = true;
         }

@@ -118,7 +118,9 @@ mod tests {
         });
         let coins = w.agents.coins[0];
         w.agents.timer[0] = 1.0;
+        w.commitments.commit(0, Action::Build, 0, 1);
         w.execute_exchange(0, 0, Action::Build);
+        assert_eq!(w.action_memory_inputs(0, Action::Build, 0).unwrap()[0], 1.0);
         assert_eq!(w.agents.coins[0], coins + 1);
         assert_eq!(w.stats.paid_services, 1);
         let food = w.agents.berries[0];
@@ -269,6 +271,8 @@ impl World {
             m.expenses_total += 1;
             self.agents.coins[i] += 1;
             self.stats.paid_services += 1;
+            self.commitments
+                .resolve(i, Action::Build, t as u32, 1, self.tick, true);
         }
         let p = m.project.as_mut().unwrap();
         p.progress = (p.progress + labor).min(p.required);

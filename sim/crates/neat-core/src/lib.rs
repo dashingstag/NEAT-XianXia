@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const INPUTS: usize = 42;
-pub const MAX_NODES: usize = 96;
+pub const MEMORY_INPUTS: usize = 4;
+const MEMORY_NODE_IDS: [u32; MEMORY_INPUTS] = [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX];
+pub const MAX_NODES: usize = 100;
 pub const SENSORS: [&str; INPUTS] = [
     "need",
     "benefit",
@@ -127,6 +129,7 @@ impl Innovations {
 }
 #[derive(Clone, Debug)]
 pub struct CompiledNode {
+    memory_input: Option<usize>,
     pub kind: Kind,
     pub bias: f32,
     pub start: usize,
@@ -140,12 +143,24 @@ pub struct Compiled {
 }
 impl Compiled {
     pub fn evaluate(&self, inputs: &[f32; INPUTS]) -> f32 {
+        self.evaluate_with_memory(inputs, &[0.0; MEMORY_INPUTS])
+    }
+
+    pub fn evaluate_with_memory(
+        &self,
+        inputs: &[f32; INPUTS],
+        memory: &[f32; MEMORY_INPUTS],
+    ) -> f32 {
         let mut values = [0.0f32; MAX_NODES];
         let mut input = 0;
         for (i, node) in self.nodes.iter().enumerate() {
             if node.kind == Kind::Input {
-                values[i] = inputs[input];
-                input += 1;
+                if let Some(slot) = node.memory_input {
+                    values[i] = memory[slot];
+                } else {
+                    values[i] = inputs[input];
+                    input += 1;
+                }
                 continue;
             }
             let mut v = node.bias;
@@ -245,11 +260,46 @@ impl Genome {
             genes,
         }
     }
+    /// Add optional outcome-memory sensors without renumbering the existing genome.
+    pub fn add_memory_inputs(&mut self, registry: &mut Innovations) {
+        let Some(output) = self
+            .nodes
+            .iter()
+            .find(|node| node.kind == Kind::Output)
+            .map(|node| node.id)
+        else {
+            return;
+        };
+        for id in MEMORY_NODE_IDS {
+            if self.nodes.iter().any(|node| node.id == id) {
+                continue;
+            }
+            self.nodes.push(Node {
+                id,
+                kind: Kind::Input,
+                bias: 0.0,
+            });
+            self.genes.push(Gene {
+                innovation: registry.edge(id, output),
+                from: id,
+                to: output,
+                weight: 0.0,
+                enabled: true,
+            });
+        }
+    }
+
     pub fn compile(&self) -> Result<Compiled, String> {
         if self.nodes.len() > MAX_NODES {
             return Err("Brain exceeds node budget".into());
         }
-        if self.nodes.iter().filter(|n| n.kind == Kind::Input).count() != INPUTS {
+        if self
+            .nodes
+            .iter()
+            .filter(|n| n.kind == Kind::Input && !MEMORY_NODE_IDS.contains(&n.id))
+            .count()
+            != INPUTS
+        {
             return Err("Sensor schema mismatch".into());
         }
         let mut pending = self.nodes.clone();
@@ -299,6 +349,7 @@ impl Genome {
                 edges.push((order.iter().position(|p| p.id == g.from).unwrap(), g.weight));
             }
             nodes.push(CompiledNode {
+                memory_input: MEMORY_NODE_IDS.iter().position(|&id| id == n.id),
                 kind: n.kind,
                 bias: n.bias,
                 start,
@@ -330,7 +381,13 @@ impl Genome {
         }
     }
     pub fn add_node(&mut self, rng: &mut Rng, registry: &mut Innovations) -> bool {
-        if self.nodes.len() >= MAX_NODES {
+        let budget = 96
+            + self
+                .nodes
+                .iter()
+                .filter(|node| MEMORY_NODE_IDS.contains(&node.id))
+                .count();
+        if self.nodes.len() >= budget || registry.next_node >= MEMORY_NODE_IDS[0] {
             return false;
         }
         let enabled: Vec<usize> = self

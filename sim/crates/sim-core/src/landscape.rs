@@ -32,6 +32,54 @@ impl Hill {
     }
 }
 impl World {
+    pub(super) fn site_stone_crossing(&mut self) {
+        const STONE: usize = 2;
+        const SETBACK: f32 = 85.0;
+        let origin = (self.markets[STONE].x, self.markets[STONE].y);
+        if self.hill.clearance(origin.0, origin.1) >= SETBACK {
+            return;
+        }
+        let radius = self.hill.radius + SETBACK;
+        let foothill = (self.hill.x, self.hill.y - radius);
+        let best = (0..64)
+            .map(|step| {
+                let angle = std::f32::consts::TAU * step as f32 / 64.0;
+                (
+                    self.hill.x + radius * angle.cos(),
+                    self.hill.y + radius * angle.sin(),
+                )
+            })
+            .filter(|&(x, y)| {
+                (120.0..=2550.0).contains(&x)
+                    && (120.0..=1800.0).contains(&y)
+                    && self.markets[..STONE]
+                        .iter()
+                        .all(|m| dist(x, y, m.x, m.y) >= 250.0)
+                    && self.markets[..STONE].iter().all(|m| {
+                        let dx = m.x - x;
+                        let dy = m.y - y;
+                        let t = (((self.hill.x - x) * dx + (self.hill.y - y) * dy)
+                            / (dx * dx + dy * dy))
+                            .clamp(0.0, 1.0);
+                        self.hill.clearance(x + dx * t, y + dy * t) >= 32.0
+                    })
+            })
+            .min_by(|&(ax, ay), &(bx, by)| {
+                dist(ax, ay, foothill.0, foothill.1)
+                    .total_cmp(&dist(bx, by, foothill.0, foothill.1))
+            });
+        if let Some((x, y)) = best {
+            self.markets[STONE].x = x;
+            self.markets[STONE].y = y;
+            for i in 0..self.agents.len() {
+                if self.agents.home[i] as usize == STONE {
+                    self.agents.x[i] += x - origin.0;
+                    self.agents.y[i] += y - origin.1;
+                }
+            }
+        }
+    }
+
     fn forest_ground_clear(&self, x: f32, y: f32, r: f32) -> bool {
         x - r >= 20.0
             && x + r <= 2670.0

@@ -96,6 +96,8 @@ impl World {
                 t.escrow = 0;
                 self.people[i].jobs += 1;
                 self.stats.jobs_completed += 1;
+                self.commitments
+                    .resolve(i, Action::BuildTavern, id as u32, 1, self.tick, true);
                 self.credit_education_bonus(i, town, paid);
             }
             self.agents.drain_energy(i, DT * 0.1);

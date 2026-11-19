@@ -3,6 +3,10 @@ signal agent_selected(id: int)
 signal animal_selected(id: int)
 signal site_selected(site: Dictionary)
 var show_zones: bool = false
+var show_trade: bool = false
+var show_resources: bool = false
+var settlement_label_boxes: Dictionary = {}
+var hovered_settlement_label := -1
 signal resource_placed(kind: int, position: Vector2)
 signal follow_cancelled
 signal board_selected(market: int)
@@ -102,6 +106,7 @@ func _ready() -> void:
 	hud_style.bg_color = Color(0.06,0.12,0.09,0.88)
 	hud_style.set_corner_radius_all(5)
 	resized.connect(_resize)
+	mouse_exited.connect(func(): _update_label_hover(Vector2(-1, -1)))
 	_resize()
 
 func _resize() -> void:
@@ -201,6 +206,8 @@ func _refresh_overview() -> void:
 	overview_dirty = false
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_update_label_hover(event.position)
 	if event is InputEventMouseButton:
 		if event.button_index in [MOUSE_BUTTON_LEFT,MOUSE_BUTTON_MIDDLE,MOUSE_BUTTON_RIGHT]:
 			if event.pressed:
@@ -361,38 +368,251 @@ func hill_footprint() -> Rect2:
 	var radius := float(hill.radius)
 	return Rect2(Vector2(hill.x,hill.y)-Vector2.ONE*radius,Vector2.ONE*radius*2.0)
 
+
+
+func _update_label_hover(point: Vector2) -> void:
+	var next := -1
+	for id in settlement_label_boxes:
+		if settlement_label_boxes[id].has_point(point):
+			next = int(id)
+			break
+	if next != hovered_settlement_label:
+		hovered_settlement_label = next
+		queue_redraw()
+
+func _draw_settlement_labels(markets: Array) -> void:
+	var font := ThemeDB.fallback_font
+	var priority := {"Town": 3, "Village": 2, "Camp": 1}
+	var ordered := markets.duplicate()
+	ordered.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var first := int(priority.get(a.get("stage", ""), 0))
+		var second := int(priority.get(b.get("stage", ""), 0))
+		return first > second if first != second else int(a.get("id", 0)) < int(b.get("id", 0))
+	)
+	var occupied: Array[Rect2] = []
+	for market in markets:
+		var center := offset + Vector2(market.x, market.y) * zoom
+		var radius := _label_clearance(market)
+		occupied.append(Rect2(center - Vector2.ONE * radius, Vector2.ONE * radius * 2.0))
+	for building in world.get("urban", {}).get("buildings", []):
+		var center := offset + Vector2(building.x, building.y) * zoom
+		var radius := maxf(5.0, 19.0 * zoom)
+		occupied.append(Rect2(center - Vector2.ONE * radius, Vector2.ONE * radius * 2.0))
+	var bounds := Rect2(Vector2(8, 66), size - Vector2(16, 107 if show_trade or show_resources else 74))
+	for market in ordered:
+		var anchor := offset + Vector2(market.x, market.y) * zoom
+		if not Rect2(Vector2.ZERO, size).has_point(anchor):
+			continue
+		var title := str(market.name)
+		var subtitle := "%s · %s people" % [market.get("stage", "Settlement"), int(market.population)]
+		var width := maxf(font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x,
+			font.get_string_size(subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x) + 18.0
+		var gap := _label_clearance(market) + 8.0
+		var candidates := [
+			Vector2(0, -gap - 36), Vector2(-width - gap, -18),
+			Vector2(gap, -18), Vector2(-width * 0.5, gap),
+			Vector2(-width, -gap - 36), Vector2(0, gap),
+		]
+		for i in range(candidates.size()):
+			var point: Vector2 = candidates[i]
+			if i == 0:
+				point.x -= width * 0.5
+			var box := Rect2(anchor + point, Vector2(width, 36))
+			if not bounds.encloses(box) or occupied.any(func(previous: Rect2) -> bool: return previous.intersects(box.grow(4))):
+				continue
+			occupied.append(box)
+			var id := int(market.get("id", 0))
+			settlement_label_boxes[id] = box
+			var hovered := id == hovered_settlement_label
+			draw_rect(box, Color(0.07, 0.13, 0.10, 0.92 if hovered else 0.42))
+			if hovered:
+				draw_rect(box, Color("b9a783"), false, 1.0)
+			var title_at := box.position + Vector2(9, 14)
+			var subtitle_at := box.position + Vector2(9, 29)
+			draw_string(font, title_at + Vector2(1, 1), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.05, 0.09, 0.06, 0.85))
+			draw_string(font, subtitle_at + Vector2(1, 1), subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.05, 0.09, 0.06, 0.85))
+			draw_string(font, title_at, title, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("fff0d1"))
+			draw_string(font, subtitle_at, subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("ecedd5"))
+			break
+
+func _draw_resource_marker(at: Vector2, kind: int, fraction: float, tint: Color) -> void:
+	var r := 5.0 / zoom
+	if kind in [4, 5, 6, 7]:
+		draw_colored_polygon(PackedVector2Array([at + Vector2(0, -r), at + Vector2(r, 0),
+			at + Vector2(0, r), at + Vector2(-r, 0)]), tint)
+	else:
+		draw_circle(at, r, Color("26382d"))
+		draw_circle(at, r * 0.75, tint)
+	draw_rect(Rect2(at + Vector2(-r, r + 2.0 / zoom), Vector2(2.0 * r, 2.0 / zoom)), Color("26382d"))
+	draw_rect(Rect2(at + Vector2(-r, r + 2.0 / zoom), Vector2(2.0 * r * clampf(fraction, 0, 1), 2.0 / zoom)), Color("f3e7b9"))
+
+
+
+# These layers are decorative. The snapshot still supplies every feature's position.
+func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	for i in range(24):
+		var angle := TAU * i / 24.0
+		var edge := 0.91 + 0.055 * sin(angle * 3.0 + phase) + 0.035 * cos(angle * 5.0 - phase)
+		points.append(center + Vector2.from_angle(angle) * radii * edge)
+	return points
+
+func _draw_hill_art(view: Rect2) -> void:
+	var hill := hill_footprint()
+	if not view.intersects(hill):
+		return
+	var center := hill.get_center()
+	var radius := hill.size.x * 0.5
+	var skirt := _terrain_shape(center, Vector2.ONE * radius, 1.3)
+	draw_colored_polygon(skirt, Color("838d70"))
+	for layer in range(4):
+		var scale := 0.88 - layer * 0.16
+		var at := center + Vector2(-0.075, -0.12) * radius * layer
+		var contour := _terrain_shape(at, Vector2(1.0, 0.91) * radius * scale, 1.3)
+		draw_colored_polygon(contour, [Color("98a084"), Color("a8ad94"), Color("b7bba4"), Color("c5c9b0")][layer])
+		contour.append(contour[0])
+		draw_polyline(contour, Color("798570"), 2.0, true)
+	for side in range(5):
+		var at := center + Vector2(0.03 + side * 0.105, 0.51 - side * 0.09) * radius
+		var face := PackedVector2Array([at, at + Vector2(0.07, -0.13) * radius,
+			at + Vector2(0.14, -0.16) * radius, at + Vector2(0.10, 0.01) * radius])
+		draw_colored_polygon(face, Color("777f70").lerp(Color("9fa58c"), 0.12 * side))
+
+func _draw_coast_art(view: Rect2) -> void:
+	if map_width <= 2700.0 or view.end.x < 2635.0:
+		return
+	draw_rect(Rect2(2700, 0, map_width - 2700, map_height), Color("477986"))
+	var shore := PackedVector2Array([Vector2(2700, 0), Vector2(2700, map_height)])
+	var waterline := PackedVector2Array()
+	for i in range(49):
+		var y := map_height * i / 48.0
+		var x := 2672.0 + 13.0 * sin(y / 130.0) + 5.0 * sin(y / 44.0)
+		waterline.append(Vector2(x, y))
+	for i in range(waterline.size() - 1, -1, -1):
+		shore.append(waterline[i])
+	draw_colored_polygon(shore, Color("c7bd91"))
+	draw_polyline(waterline, Color("dacb9f"), 3.0, true)
+	for y in range(30, int(map_height), 78):
+		var x := 2720.0 + 10.0 * sin(float(y) / 100.0)
+		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, 0.19), 2.0, true)
+
+func _settlement_radius(market: Dictionary) -> float:
+	var blocks := int(market.get("housing_blocks", 0))
+	return 38.0 + minf(145.0, 23.0 * sqrt(float(blocks)))
+
+func _label_clearance(market: Dictionary) -> float:
+	var center := Vector2(market.x, market.y)
+	var hill := hill_footprint()
+	var radius := _settlement_radius(market)
+	if center.distance_to(hill.get_center()) < hill.size.x * 0.5:
+		radius = maxf(radius, 106.0) * 1.08 + 6.0
+	return maxf(15.0, radius * zoom)
+
+func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
+	for market in markets:
+		var center := Vector2(market.x, market.y)
+		var radius := _settlement_radius(market)
+		if not view.grow(radius).has_point(center):
+			continue
+		var hill := hill_footprint()
+		var phase := float(market.get("id", 0)) * 0.8
+		if center.distance_to(hill.get_center()) < hill.size.x * 0.5:
+			# Existing hillside villages occupy a cut bench with a visible retaining edge.
+			var bench := Vector2(maxf(radius, 106.0), maxf(radius * 0.72, 63.0))
+			draw_colored_polygon(_terrain_shape(center + Vector2(4, 12), bench * 1.08, phase), Color("68705e"))
+			var rim := _terrain_shape(center + Vector2(0, 5), bench * 1.04, phase)
+			draw_colored_polygon(rim, Color("98927a"))
+			rim.append(rim[0])
+			draw_polyline(rim, Color("626856"), 3.5, true)
+			draw_colored_polygon(_terrain_shape(center, bench, phase), Color("b7ac88"))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.83), phase), Color(0.73, 0.68, 0.49, 0.54))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 0.75, radius * 0.60), phase), Color(0.79, 0.73, 0.55, 0.48))
+
+
+
+# Keep the painted ruts inside the Rust simulation's 22-unit road corridor.
+func _road_shape(start: Vector2, end: Vector2, side: float) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	var normal := (end - start).normalized().orthogonal() * side
+	var bend := minf(12.0, start.distance_to(end) * 0.06)
+	for i in range(25):
+		var t := i / 24.0
+		var drift := bend * sin(PI * t) * (0.47 + 0.53 * sin(TAU * t + 0.5))
+		points.append(start.lerp(end, t) + normal * drift)
+	return points
+
+func _draw_roads(markets: Array) -> void:
+	for road in world.get("roads", []):
+		var a := int(road.get("a", 0))
+		var b := int(road.get("b", 0))
+		if a < 0 or b < 0 or a >= markets.size() or b >= markets.size() or a == b:
+			continue
+		var start := Vector2(markets[a].x, markets[a].y)
+		var end := Vector2(markets[b].x, markets[b].y)
+		var side := 1.0 if (mini(a, b) + maxi(a, b)) % 2 == 0 else -1.0
+		var points := _road_shape(start, end, side)
+		if road.built:
+			draw_polyline(points, Color(0.33, 0.30, 0.20, 0.26), 18.0, true)
+			draw_polyline(points, Color("a7966d"), 12.0, true)
+			draw_polyline(points, Color("c7b489"), 7.0, true)
+			for i in range(2, points.size() - 1, 2):
+				var direction := (points[i + 1] - points[i - 1]).normalized()
+				var verge := direction.orthogonal() * (5.0 if i % 4 == 0 else -5.0)
+				var at := points[i] + verge
+				draw_line(at - direction * 7.0, at + direction * 9.0, Color(0.38, 0.33, 0.20, 0.31), 1.6, true)
+		elif fidelity > 1 or show_trade:
+			for i in range(points.size() - 1):
+				var first := points[i]
+				var last := points[i + 1]
+				draw_dashed_line(first, last, Color("687452"), 2.0, 10.0, true)
+		var traffic := int(road.get("traffic", 0))
+		if show_trade and traffic > 0:
+			var width := clampf(2.0 + log(float(traffic) + 1.0), 3.0, 10.0) / zoom
+			draw_polyline(points, Color(0.35, 0.90, 0.83, 0.70), width, true)
+
+
 func _draw() -> void:
+	settlement_label_boxes.clear()
 	draw_rect(Rect2(Vector2.ZERO,size),Color("15231d"))
 	draw_set_transform(offset,0,Vector2(zoom,zoom))
-	draw_rect(Rect2(0,0,map_width,map_height),Color("8b9f6b"))
-	draw_rect(Rect2(2700,0,map_width-2700,map_height),Color("4b8289"))
-	draw_rect(Rect2(2661,0,39,map_height),Color("c7bf89"))
-	var forests: Array = world.get("wildlife",{}).get("forests",[])
-	var forest_view := Rect2(-offset/zoom,size/zoom)
+	draw_rect(Rect2(0, 0, map_width, map_height), Color("93a575"))
+	var forest_view := Rect2(-offset / zoom, size / zoom)
+	_draw_coast_art(forest_view)
+	_draw_hill_art(forest_view)
+	var markets: Array = world.get("markets", [])
+	var forests: Array = world.get("wildlife", {}).get("forests", [])
+	# Paint the woodland floor before canopies so neighboring groves read together.
+	for id in range(forests.size()):
+		var forest: Dictionary = forests[id]
+		var center := Vector2(forest.x, forest.y)
+		var radius := float(forest.radius)
+		if not forest_view.grow(radius * 1.25).has_point(center):
+			continue
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 1.22, radius * 1.14), float(id)), Color(0.32, 0.48, 0.32, 0.30))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.93), float(id)), Color("617f53"))
 	for id in range(forests.size()):
 		var forest: Dictionary = forests[id]
 		var centre := Vector2(forest.x,forest.y)
 		if not forest_view.grow(float(forest.radius)).has_point(centre):
 			continue
-		draw_circle(centre,float(forest.radius),Color("55764b"))
 		var trees := _tree_points(id,float(forest.radius))
 		for tree in range(0,trees.size(),3 if fidelity==1 else 1):
 			var at := centre+trees[tree]
 			var tree_glyph: String = "terrain-flora-xianxia/"+TREE_GLYPHS[(id*3+tree)%TREE_GLYPHS.size()]+".png"
 			if fidelity > 1 and _glyph(tree_glyph,at,22.0+float(tree%4)*2.0,22.0+float(tree%4)*2.0):
 				continue
-			draw_circle(at+Vector2(2,3),8.0,Color(0.12,0.22,0.10,0.22))
-			draw_circle(at,7.0+float(tree%4),Color("426540") if tree%2==0 else Color("3d603c"))
+			var crown := 9.0 + float(tree % 5)
+			draw_circle(at + Vector2(4, 5), crown, Color(0.10, 0.22, 0.16, 0.22), true, -1.0, true)
+			draw_circle(at, crown, Color("365c43"), true, -1.0, true)
+			draw_circle(at + Vector2(-2, -3), crown * 0.76, Color("507448"), true, -1.0, true)
+			draw_circle(at + Vector2(-4, -5), crown * 0.44, Color("739055"), true, -1.0, true)
 	for clearing in world.get("urban",{}).get("cleared",[]):
-		draw_circle(Vector2(clearing[0],clearing[1]),float(clearing[2]),Color("8b9f6b"))
+		draw_circle(Vector2(clearing[0],clearing[1]),float(clearing[2]),Color("93a575"))
 	for grass in world.get("wildlife",{}).get("grass",[]):
 		var fraction := float(grass.stock)/maxf(1.0,float(grass.capacity))
 		draw_circle(Vector2(grass.x,grass.y),7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
-	var hill := hill_footprint()
-	draw_circle(hill.get_center(),hill.size.x/2.0,Color("a1a486"))
-	draw_circle(hill.get_center() + Vector2(30,-18) * (hill.size.x/720.0),hill.size.x*(258.0/720.0),Color("afb195"))
-	for y in range(45,1920,111):
-		draw_line(Vector2(2775,y),Vector2(2955,y-15),Color(0.7,0.9,0.9,0.18),1)
+	_draw_settlement_ground(markets, forest_view)
+	_draw_roads(markets)
 	if show_zones:
 		for zone in world.get("urban",{}).get("zones",[]):
 			var color: Color = [Color("77b7ed"),Color("f4ce75"),Color("c49ae6")][int(zone.kind)]
@@ -428,22 +648,16 @@ func _draw() -> void:
 			caption = "Lease available" if building.advertised else "Awaiting listing"
 		if fidelity>1 or show_zones:
 			draw_string(ThemeDB.fallback_font,at+Vector2(-20,23),caption,HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("f3e6c9"))
-	var markets: Array = world.get("markets",[])
-	for road in world.get("roads",[]):
-		var a := int(road.get("a",0))
-		var b := int(road.get("b",0))
-		if a >= markets.size() or b >= markets.size():
-			continue
-		var pa := Vector2(markets[a].x,markets[a].y)
-		var pb := Vector2(markets[b].x,markets[b].y)
-		draw_line(pa,pb,Color("d5bd8e") if road.built else Color(0.9,0.85,0.65,0.2),7 if road.built else 2)
 	for patch in world.get("patches",[]):
 		var p := Vector2(patch.x,patch.y)
 		var kind := int(patch.kind)
-		if kind in [4,5,6,7] and int(patch.stock)==0:
+		if not show_resources and (int(patch.stock) == 0 or (fidelity == 1 and kind < 4)):
 			continue
 		var fraction: float = float(patch.stock) / maxf(1.0,float(patch.capacity))
 		var colors := [Color("a95d76"),Color("365a38"),Color("d0ccb1"),Color("bce1df"),Color("edc65d"),Color("c8d6df"),Color("ba7650"),Color("8d949b"),Color("d7d18b"),Color("aab7b0"),Color("aab7b0"),Color("aab7b0"),Color("aab7b0")]
+		if show_resources:
+			_draw_resource_marker(p, kind, fraction, colors[kind])
+			continue
 		var radius := (5.0 if kind != 1 else 9.0) * (0.45 + fraction * 0.55)
 		var glyph_path := ""
 		if kind < PATCH_GLYPHS.size():
@@ -462,6 +676,18 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-30,22),["Gold mine","Silver mine","Copper mine","Iron mine"][kind-4],HORIZONTAL_ALIGNMENT_LEFT,-1,11,colors[kind])
 	for m in markets:
 		var p := Vector2(m.x,m.y)
+		if fidelity == 1:
+			var radius := 7.0 / zoom
+			match str(m.get("stage", "")):
+				"Town":
+					draw_rect(Rect2(p - Vector2.ONE * radius, Vector2.ONE * radius * 2), Color("293c32"))
+					draw_rect(Rect2(p - Vector2.ONE * radius * 0.65, Vector2.ONE * radius * 1.3), Color("eed198"))
+				"Village":
+					draw_circle(p, radius, Color("293c32"))
+					draw_circle(p, radius * 0.65, Color("dcb884"))
+				_:
+					draw_colored_polygon(PackedVector2Array([p + Vector2(0, -radius), p + Vector2(radius, radius), p + Vector2(-radius, radius)]), Color("634d37"))
+			continue
 		draw_circle(p,42,Color(0.95,0.87,0.62,0.24))
 		draw_rect(Rect2(p-Vector2(16,11),Vector2(32,22)),Color("d6c698"))
 		draw_rect(Rect2(p-Vector2(19,15),Vector2(38,13)),Color("a27254"))
@@ -478,9 +704,6 @@ func _draw() -> void:
 				draw_rect(Rect2(at+Vector2(2,2),Vector2(3,3)),Color("f4c77a"))
 		if world.get("clock",{}).get("night",false):
 			draw_rect(Rect2(p+Vector2(-4,0),Vector2(7,5)),Color("ffda82"))
-		if fidelity == 1:
-			draw_string(ThemeDB.fallback_font,p-Vector2(70.0/zoom,210),str(m.name),HORIZONTAL_ALIGNMENT_LEFT,-1,maxi(12,roundi(14.0/zoom)),Color("f7eed0"))
-			draw_string(ThemeDB.fallback_font,p-Vector2(70.0/zoom,160),str(int(m.population))+" people / "+str(int(m.get("stable_residents",0)))+" residents | "+str(m.stage),HORIZONTAL_ALIGNMENT_LEFT,-1,maxi(10,roundi(10.0/zoom)),Color("eef0cc"))
 	for school in world.get("schools",[]):
 		var p := Vector2(school.x,school.y)
 		if not _glyph("site-glyphs-xianxia/school.png",p,42,42,1.0 if school.ready else 0.55):
@@ -607,6 +830,18 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font,Vector2(25,31),"WOODLAND GROVES",HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("deebc7"))
 		draw_string(ThemeDB.fallback_font,Vector2(2733,93),"COAST",HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("e2f2e6"))
 	draw_set_transform(Vector2.ZERO)
+	if fidelity == 1:
+		_draw_settlement_labels(markets)
+	var legend: Array[String] = []
+	if show_trade:
+		legend.append("Teal lines: cumulative road cargo")
+	if show_resources:
+		legend.append("Resource bars: stock remaining · Diamonds: mines")
+	if not legend.is_empty():
+		var legend_text := "   •   ".join(legend)
+		var width := ThemeDB.fallback_font.get_string_size(legend_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 20.0
+		draw_style_box(hud_style, Rect2(12, size.y - 37, width, 25))
+		draw_string(ThemeDB.fallback_font, Vector2(22, size.y - 20), legend_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("f7eed0"))
 	draw_style_box(hud_style,Rect2(12,12,360,49))
 	draw_string(ThemeDB.fallback_font,Vector2(23,32),"LEVEL %s / %s / %.1fx" % [fidelity,["OVERVIEW","INDIVIDUAL FEATURES","ANIMATED INDIVIDUALS"][fidelity-1],magnification],HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("f7eed0"))
 	draw_string(ThemeDB.fallback_font,Vector2(23,49),"Wheel: zoom   Left drag: pan / Click: select   Detailed people: %s" % draw_indices.size(),HORIZONTAL_ALIGNMENT_LEFT,-1,11,Color("b7c7ad"))

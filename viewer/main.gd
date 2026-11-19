@@ -110,6 +110,14 @@ func _ready() -> void:
 	zones_button.toggle_mode = true
 	zones_button.toggled.connect(func(value: bool): field.show_zones=value; field.queue_redraw())
 	view_controls.add_child(zones_button)
+	for overlay in ["Trade", "Resources"]:
+		var toggle := button(overlay, func(): pass)
+		toggle.toggle_mode = true
+		if overlay == "Trade":
+			toggle.toggled.connect(func(value: bool): field.show_trade = value; field.queue_redraw())
+		else:
+			toggle.toggled.connect(func(value: bool): field.show_resources = value; field.queue_redraw())
+		view_controls.add_child(toggle)
 	clock_label = label("Day 1 / 06:00",12)
 	view_controls.add_child(clock_label)
 	view_controls.add_child(label("Wheel zoom / left drag pan / click select",12))
@@ -673,4 +681,3 @@ func _decode(data: PackedByteArray) -> void:
 	for market in state.get("markets",[]):
 		lines += "\n[b]%s[/b] · %s\n%s\nStock %s\nLocal %s / imported %s\n" % [market.name,market.stage,market.profile,str(market.stock),str(market.local_sales),str(market.imported_sales)]
 	markets.text = lines
-

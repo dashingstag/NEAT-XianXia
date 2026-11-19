@@ -16,6 +16,8 @@ python tools/dev.py test all
 
 The launcher opens a paused world or resumes the last explicitly saved world. Use **Run** to start and **Save** before closing the viewer. See [player and release instructions](docs/PLAY.md).
 
+On Windows, double-click [launch-new-game.bat](launch-new-game.bat) to start a separate, fresh game. The launcher prints its profile path under the run's evidence folder. Each launch can run alongside other instances and has its own save. Set `XIANXIA_PYTHON` to a Python 3.11+ executable if you need a specific interpreter.
+
 ## Find your area
 
 | Directory | Responsibility |

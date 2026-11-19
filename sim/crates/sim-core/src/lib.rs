@@ -370,9 +370,18 @@ pub struct World {
     #[serde(skip)]
     watch: Watch,
     pub hill: Hill,
+    #[serde(skip)]
+    food_memory: food_memory::FoodMemory,
+    #[serde(skip)]
+    forage_memory: food_memory::FoodMemory,
+    #[serde(skip)]
+    work_memory: work_memory::WorkMemory,
+    #[serde(skip)]
+    commitments: commitment_memory::Commitments,
 }
 #[derive(Clone, Debug, Default)]
 struct Watch {
+    memory_trial: Option<memory_pilot::Trial>,
     retail_flow: [u64; 4],
     person: Option<usize>,
     last: Option<serde_json::Value>,
@@ -399,6 +408,7 @@ impl Default for Candidate {
     }
 }
 struct Request {
+    memory_offers: Option<[u16; Action::RepayLoan as usize + 1]>,
     counts: Option<Box<Counts>>,
     agent: usize,
     candidate: Candidate,
@@ -452,6 +462,8 @@ pub struct TraceChoice {
     pub product: String,
     pub score: f32,
     pub inputs: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_inputs: Option<[f32; 4]>,
 }
 
 impl World {
@@ -519,6 +531,10 @@ impl World {
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
+            food_memory: Default::default(),
+            forage_memory: Default::default(),
+            work_memory: Default::default(),
+            commitments: Default::default(),
             hill,
         };
         for (id, (name, x, y)) in [
@@ -598,6 +614,7 @@ impl World {
             if i % 11 == 0 {
                 genome.add_connection(&mut w.rng, &mut w.innovations);
             }
+            genome.add_memory_inputs(&mut w.innovations);
             w.brains.push(genome.compile()?);
             w.genomes.push(genome);
         }
@@ -648,6 +665,7 @@ impl World {
             m.add(0, m.population as u64 * 2, m.id);
         }
         w.expand_map_and_food();
+        w.site_stone_crossing();
         w.init_people();
         w.init_wildlife();
         w.upgrade_landscape(true);
@@ -800,6 +818,7 @@ impl World {
             self.watch = Watch {
                 person,
                 retail_flow: self.watch.retail_flow,
+                memory_trial: self.watch.memory_trial.take(),
                 ..Default::default()
             };
         }
@@ -958,7 +977,7 @@ impl World {
             x[1] += self.relationship_affinity(i, action, target) * 0.1;
             x[10] = a.energy[i] / 100.0;
             x[11] = infrastructure;
-            let score = self.brains[i].evaluate(&x);
+            let score = self.score_action(i, action, target, &x);
             out[count] = Candidate {
                 action,
                 target,
@@ -1408,11 +1427,25 @@ impl World {
                 totals.entry(format!("{:?}", c.action)).or_default()[0] += 1;
             }
         }
+        let mut out = out;
+        let memory_offers = self.watch.memory_trial.as_ref().map(|trial| {
+            let mut tally = [0; Action::RepayLoan as usize + 1];
+            for candidate in &mut out[..count] {
+                tally[candidate.action as usize] += 1;
+                candidate.score += trial.adjust(
+                    (i, candidate.action as u8, candidate.target, candidate.kind),
+                    self.tick,
+                    &candidate.inputs,
+                );
+            }
+            tally
+        });
         out[..count]
             .iter()
             .max_by(|a, b| a.score.total_cmp(&b.score))
             .copied()
             .map(|candidate| Request {
+                memory_offers,
                 counts,
                 agent: i,
                 candidate,
@@ -1456,6 +1489,7 @@ impl World {
                 },
                 score: c.score,
                 inputs: c.inputs.to_vec(),
+                memory_inputs: self.action_memory_inputs(i, c.action, c.target),
             })
             .collect();
         choices.sort_by(|a, b| b.score.total_cmp(&a.score));
@@ -1578,6 +1612,12 @@ impl World {
             }
         }
         for i in new_deaths {
+            self.food_memory.forget(i);
+            self.forage_memory.forget(i);
+            self.commitments.forget(i);
+            for memory in &mut self.work_memory {
+                memory.forget(i);
+            }
             self.register_corpse(i);
         }
         self.civic_step();
@@ -1594,13 +1634,55 @@ impl World {
                 .collect()
         };
         for r in requests {
+            if let (Some(trial), Some(offers)) = (&mut self.watch.memory_trial, r.memory_offers) {
+                trial.commit(
+                    r.agent,
+                    r.candidate,
+                    offers,
+                    self.agents.convoy[r.agent] == NONE,
+                );
+            }
             self.capture_decision(&r);
+            if self.agents.convoy[r.agent] == NONE {
+                let c = r.candidate;
+                if self.agents.cargo[r.agent] == 0
+                    || matches!(c.action, Action::StoreCargo | Action::Barter)
+                {
+                    self.commitments.cancel_trade(r.agent);
+                }
+                self.commitments.commit(r.agent, c.action, c.target, c.kind);
+                let food = [
+                    (Action::BuyFood, &mut self.food_memory),
+                    (Action::ForageMeal, &mut self.forage_memory),
+                ];
+                let work = work_memory::WorkKind::ACTIONS
+                    .into_iter()
+                    .zip(&mut self.work_memory);
+                for (action, memory) in food.into_iter().chain(work) {
+                    if c.action == action
+                        && (action != Action::Rest || !self.agents.rested[r.agent])
+                    {
+                        memory.commit(r.agent, c.target, c.kind);
+                    } else {
+                        memory.cancel(r.agent);
+                    }
+                }
+            }
             if matches!(
                 r.candidate.action,
                 Action::Gravedigger | Action::BuildGraveyard
             ) {
                 if self.agents.convoy[r.agent] == NONE {
-                    self.accept_job(r.agent, r.candidate.target as usize, r.candidate.action);
+                    if !self.accept_job(r.agent, r.candidate.target as usize, r.candidate.action) {
+                        self.commitments.resolve(
+                            r.agent,
+                            r.candidate.action,
+                            r.candidate.target,
+                            r.candidate.kind,
+                            self.tick,
+                            false,
+                        );
+                    }
                     self.agents.last_decision[r.agent] = self.tick;
                     self.stats.decisions += 1;
                 }
@@ -1630,7 +1712,11 @@ impl World {
             let i = (j + offset) % len;
             if self.agents.alive[i] && self.agents.convoy[i] == NONE {
                 self.agents.sleeping[i] = false;
-                self.execute(i);
+                if self.watch.memory_trial.is_some() {
+                    self.execute_with_memory_pilot(i);
+                } else {
+                    self.execute(i);
+                }
             }
         }
         self.start_projects();
@@ -1738,8 +1824,13 @@ impl World {
             | Action::BuildGraveyard => {}
             Action::Gather => {
                 let p = &mut self.patches[t];
-                if p.kind != kind || p.stock == 0 || a.room(i) < WEIGHTS[kind] || a.energy[i] < 1.0
-                {
+                let memory = &mut self.work_memory[work_memory::WorkKind::Gather as usize];
+                if p.kind != kind || a.room(i) < WEIGHTS[kind] || a.energy[i] < 1.0 {
+                    memory.cancel(i);
+                    return;
+                }
+                if p.stock == 0 {
+                    memory.resolve(i, t as u32, kind, self.tick, false);
                     return;
                 }
                 if a.timer[i] >= 1.0 {
@@ -1750,6 +1841,7 @@ impl World {
                     a.drain_energy(i, 0.8);
                     a.timer[i] = 0.0;
                     self.stats.harvested += 1;
+                    memory.resolve(i, t as u32, kind, self.tick, true);
                 }
             }
             Action::Deliver => {
@@ -1761,6 +1853,10 @@ impl World {
                 let q = q.min(m.quotes[kind].remaining);
                 if q == 0 {
                     self.stats.rejected += 1;
+                    self.commitments
+                        .resolve(i, Action::Deliver, t as u32, kind, self.tick, false);
+                    self.commitments
+                        .trade_sale(i, t as u32, kind, self.tick, false, false);
                     return;
                 }
                 let price = m.quotes[kind].bid;
@@ -1770,6 +1866,10 @@ impl World {
                 m.quotes[kind].remaining -= q;
                 a.coins[i] += payment;
                 a.cargo[i] -= q as u32;
+                self.commitments
+                    .resolve(i, Action::Deliver, t as u32, kind, self.tick, true);
+                self.commitments
+                    .trade_sale(i, t as u32, kind, self.tick, true, a.cargo[i] == 0);
                 m.add(kind, q, a.origin[i]);
                 m.sales[kind] += q;
                 if a.origin[i] == m.id {
@@ -1793,14 +1893,22 @@ impl World {
                     || a.berries[i] + a.fish[i] + a.rice[i] >= 4
                     || a.room(i) < WEIGHTS[kind]
                 {
+                    self.food_memory.cancel(i);
                     return;
                 }
                 let m = &mut self.markets[t];
                 let price = m.quotes[kind].ask;
-                if m.quotes[kind].offered == 0 || price == 0 || a.coins[i] < price {
+                if a.coins[i] < price {
+                    self.food_memory.cancel(i);
+                    return;
+                }
+                if m.quotes[kind].offered == 0 || price == 0 {
+                    self.food_memory
+                        .resolve(i, t as u32, kind, self.tick, false);
                     return;
                 }
                 if let Some(l) = m.take(kind, 1) {
+                    self.food_memory.resolve(i, t as u32, kind, self.tick, true);
                     a.coins[i] -= price;
                     m.coins += price;
                     m.revenue_total += price;
@@ -1814,6 +1922,9 @@ impl World {
                     }
                     self.stats.trades += 1;
                     self.people[i].trades += 1;
+                } else {
+                    self.food_memory
+                        .resolve(i, t as u32, kind, self.tick, false);
                 }
             }
             Action::Trade => {
@@ -1822,7 +1933,12 @@ impl World {
                 }
                 let m = &mut self.markets[home];
                 let price = m.quotes[kind].ask;
-                if price == 0 || m.quotes[kind].offered == 0 || a.coins[i] < price {
+                if price == 0 || m.quotes[kind].offered == 0 {
+                    self.commitments
+                        .resolve(i, Action::Trade, t as u32, kind, self.tick, false);
+                    return;
+                }
+                if a.coins[i] < price {
                     return;
                 }
                 let qty = (a.room(i) / WEIGHTS[kind]) as u64;
@@ -1839,8 +1955,12 @@ impl World {
                     a.cargo[i] = l.quantity as u32;
                     a.origin[i] = l.origin;
                     a.action[i] = Action::Deliver;
+                    self.commitments.trade_pickup(i, t as u32, kind);
                     self.stats.trades += 1;
                     self.people[i].trades += 1;
+                } else {
+                    self.commitments
+                        .resolve(i, Action::Trade, t as u32, kind, self.tick, false);
                 }
             }
             Action::Build
@@ -1950,11 +2070,18 @@ impl World {
         }
     }
     pub fn save(&self, path: &Path) -> Result<(), String> {
-        let payload = postcard::to_allocvec(self).map_err(|e| e.to_string())?;
+        let payload = postcard::to_allocvec(&(
+            self,
+            &self.food_memory,
+            &self.forage_memory,
+            &self.work_memory,
+            &self.commitments,
+        ))
+        .map_err(|e| e.to_string())?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE14".to_vec();
+        let mut data = b"XXSAVE18".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -1969,7 +2096,11 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE14"
+            || (&data[..8] != b"XXSAVE18"
+                && &data[..8] != b"XXSAVE17"
+                && &data[..8] != b"XXSAVE16"
+                && &data[..8] != b"XXSAVE15"
+                && &data[..8] != b"XXSAVE14"
                 && &data[..8] != b"XXSAVE13"
                 && &data[..8] != b"XXSAVE12"
                 && &data[..8] != b"XXSAVE11"
@@ -1996,7 +2127,45 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if &data[..8] == b"XXSAVE04" {
+        let mut world: Self = if &data[..8] == b"XXSAVE18" {
+            let (mut world, purchases, foraging, work, commitments): (
+                Self,
+                food_memory::FoodMemory,
+                food_memory::FoodMemory,
+                work_memory::WorkMemory,
+                commitment_memory::Commitments,
+            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = purchases;
+            world.forage_memory = foraging;
+            world.work_memory = work;
+            world.commitments = commitments;
+            world
+        } else if &data[..8] == b"XXSAVE17" {
+            let (mut world, purchases, foraging, work): (
+                Self,
+                food_memory::FoodMemory,
+                food_memory::FoodMemory,
+                work_memory::WorkMemory,
+            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = purchases;
+            world.forage_memory = foraging;
+            world.work_memory = work;
+            world
+        } else if &data[..8] == b"XXSAVE16" {
+            let (mut world, purchases, foraging): (
+                Self,
+                food_memory::FoodMemory,
+                food_memory::FoodMemory,
+            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = purchases;
+            world.forage_memory = foraging;
+            world
+        } else if &data[..8] == b"XXSAVE15" {
+            let (mut world, memory): (Self, food_memory::FoodMemory) =
+                postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = memory;
+            world
+        } else if &data[..8] == b"XXSAVE04" {
             let old: legacy_v4::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             let mut w: World = old.into();
@@ -2062,6 +2231,10 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
+            && &data[..8] != b"XXSAVE16"
+            && &data[..8] != b"XXSAVE17"
+            && &data[..8] != b"XXSAVE18"
         {
             world.init_wildlife();
         }
@@ -2071,6 +2244,10 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
+            && &data[..8] != b"XXSAVE16"
+            && &data[..8] != b"XXSAVE17"
+            && &data[..8] != b"XXSAVE18"
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2081,6 +2258,10 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
+            && &data[..8] != b"XXSAVE16"
+            && &data[..8] != b"XXSAVE17"
+            && &data[..8] != b"XXSAVE18"
         {
             world.relocate_fertile_land();
         }
@@ -2090,6 +2271,9 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
+        for genome in &mut world.genomes {
+            genome.add_memory_inputs(&mut world.innovations);
+        }
         world.brains = world
             .genomes
             .iter()
@@ -2454,3 +2638,11 @@ mod tests {
         w.check().unwrap();
     }
 }
+
+mod memory_pilot;
+
+mod food_memory;
+
+mod work_memory;
+
+mod commitment_memory;

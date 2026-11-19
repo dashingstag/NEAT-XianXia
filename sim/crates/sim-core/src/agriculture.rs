@@ -91,17 +91,26 @@ mod tests {
         w.agents.timer[0] = 2.0;
         let coins = w.coins();
         let wallet = w.agents.coins[0];
+        w.work_memory[work_memory::WorkKind::Farm as usize].commit(0, 0, 8);
         w.execute_farm(0, Action::Farm);
         assert_eq!(w.agents.coins[0], wallet + 2);
         assert_eq!(w.coins(), coins);
+        assert_eq!(w.action_memory_inputs(0, Action::Farm, 0).unwrap()[0], 1.0);
+        let after_shift = w.work_memory.clone();
         w.execute_farm(0, Action::Farm);
+        assert_eq!(w.work_memory, after_shift);
         assert_eq!(w.agents.coins[0], wallet + 2);
         w.farms[0].tended_days = 15;
         w.tick = 15 * rest::DAY_TICKS;
         w.farm_step();
         let before = w.farms[0].harvest_remaining;
         w.agents.timer[0] = 1.0;
+        w.work_memory[work_memory::WorkKind::Harvest as usize].commit(0, 0, 8);
         w.execute_farm(0, Action::HarvestRice);
+        assert_eq!(
+            w.action_memory_inputs(0, Action::HarvestRice, 0).unwrap()[0],
+            1.0
+        );
         assert_eq!(w.farms[0].harvest_remaining, before - 1);
         assert_eq!(w.agents.cargo[0], 1);
         assert_eq!(w.agents.cargo_kind[0], 8);
@@ -298,6 +307,8 @@ impl World {
             let day = (self.tick - f.planted) / rest::DAY_TICKS;
             if f.mature || f.escrow < 2 || f.last_tended == day {
                 self.agents.timer[i] = 0.0;
+                self.work_memory[work_memory::WorkKind::Farm as usize]
+                    .resolve(i, id as u32, 8, self.tick, false);
                 return;
             }
             if self.agents.timer[i] < 2.0 {
@@ -312,13 +323,18 @@ impl World {
             self.people[i].farm_shifts += 1;
             self.people[i].jobs += 1;
             self.stats.farm_shifts += 1;
+            self.work_memory[work_memory::WorkKind::Farm as usize]
+                .resolve(i, id as u32, 8, self.tick, true);
             self.agents.timer[i] = 0.0;
             self.agents.drain_energy(i, 0.5);
             self.credit_education_bonus(i, paid_market, 2);
         } else {
-            if !f.mature
-                || f.harvest_remaining == 0
-                || self.agents.room(i) == 0
+            if !f.mature || f.harvest_remaining == 0 {
+                self.work_memory[work_memory::WorkKind::Harvest as usize]
+                    .resolve(i, id as u32, 8, self.tick, false);
+                return;
+            }
+            if self.agents.room(i) == 0
                 || self.agents.cargo[i] > 0 && self.agents.cargo_kind[i] != 8
                 || self.agents.timer[i] < 0.5
             {
@@ -331,6 +347,8 @@ impl World {
             self.agents.timer[i] = 0.0;
             self.people[i].harvested += 1;
             self.stats.rice_harvested += 1;
+            self.work_memory[work_memory::WorkKind::Harvest as usize]
+                .resolve(i, id as u32, 8, self.tick, true);
             self.agents.drain_energy(i, 0.1);
         }
     }

@@ -552,7 +552,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                     Command::Reset { agents, seed } => {
                         advance_remaining = 0;
                         wealth.invalidate();
-                        world = World::new_with_hill(agents, seed, world.hill)?;
+                        world = World::new_with_size(agents, seed, world.hill, world.map.spec.size)?;
                         selected = Some(0);
                         selected_animal = None;
                         paused = true;

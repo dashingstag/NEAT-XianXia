@@ -248,9 +248,11 @@ impl From<Market> for LegacyMarket {
         }
     }
 }
+#[cfg(test)]
 pub fn to_legacy_agents(a: &Agents) -> LegacyAgents {
     a.clone().into()
 }
+#[cfg(test)]
 pub fn to_legacy_market(m: &Market) -> LegacyMarket {
     m.clone().into()
 }

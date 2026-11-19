@@ -64,6 +64,10 @@ pub const PRODUCTS: [&str; GOODS] = [
 pub const WORLD_WIDTH: f32 = 3072.0;
 pub const WORLD_HEIGHT: f32 = 1920.0;
 const NONE: u32 = u32::MAX;
+// Wire frames pack action into 6 bits: IDs must stay below 64 and be
+// append-only (old saves and replays store the index). Reserved ranges:
+// 39-41 hunting/combat, 42-45 taming and husbandry, 46-49 guild quests,
+// 50-53 founding and migration, 54-57 qi and cultivation, 58-63 unassigned.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Action {

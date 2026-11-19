@@ -23,6 +23,7 @@ struct Options {
     load: bool,
     serial: bool,
     hill: sim_core::Hill,
+    seeds: u32,
 }
 fn options() -> Result<Options, String> {
     let mut args = env::args().skip(1);
@@ -41,6 +42,7 @@ fn options() -> Result<Options, String> {
         load: false,
         serial: false,
         hill: Default::default(),
+        seeds: 3,
     };
     while let Some(k) = args.next() {
         if k == "--load" {
@@ -64,6 +66,7 @@ fn options() -> Result<Options, String> {
             "--port" => o.port = v.parse().map_err(|_| "Invalid port")?,
             "--out" => o.out = Some(v.into()),
             "--checkpoint" => o.checkpoint = v.into(),
+            "--seeds" => o.seeds = v.parse().map_err(|_| "Invalid seeds")?,
             _ => return Err(format!("Unknown option {k}")),
         }
     }
@@ -75,6 +78,7 @@ fn options() -> Result<Options, String> {
         "life-demo",
         "school-demo",
         "urban-demo",
+        "soak",
     ]
     .contains(&o.mode.as_str())
     {
@@ -136,6 +140,9 @@ fn run() -> Result<(), String> {
     let initialize_seconds = initialized.elapsed().as_secs_f64();
     if o.mode == "serve" {
         return serve(w, &o);
+    }
+    if o.mode == "soak" {
+        return soak(&o);
     }
     let start_decisions = w.stats.decisions;
     let started = Instant::now();
@@ -199,6 +206,70 @@ fn run() -> Result<(), String> {
         }
         println!("Checkpoint replay: exact match after 20 additional ticks.");
     }
+    Ok(())
+}
+
+/// Headless multi-seed soak: runs each seed for --steps ticks and reports
+/// population dynamics, trade, settlement foundings and ecology. The world
+/// digest lets CI detect unintended nondeterminism between revisions.
+fn soak(o: &Options) -> Result<(), String> {
+    if o.seeds == 0 || o.seeds > 64 {
+        return Err("Seeds must be 1..64".into());
+    }
+    let mut runs = Vec::new();
+    for s in 0..o.seeds {
+        let seed = o.seed.wrapping_add(s as u64);
+        let mut w = World::new_with_hill(o.agents, seed, o.hill)?;
+        let mut times = Vec::with_capacity(o.steps as usize);
+        for tick in 0..o.steps {
+            let start = Instant::now();
+            w.step(!o.serial);
+            times.push(start.elapsed().as_secs_f64() * 1000.0);
+            if tick % 100 == 0 {
+                w.check()?;
+            }
+        }
+        w.check()?;
+        times.sort_by(|a, b| a.total_cmp(b));
+        let digest = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            postcard::to_allocvec(&w)
+                .map_err(|e| e.to_string())?
+                .hash(&mut h);
+            format!("{:016x}", h.finish())
+        };
+        let animals = w.animal_count();
+        let wildlife_deaths = w.wildlife.ledger.deaths;
+        let wildlife_births = w.wildlife.ledger.births;
+        let towns = w.markets.iter().filter(|m| m.village).count();
+        runs.push(json!({
+            "seed": seed,
+            "tick": w.tick,
+            "living": w.living(),
+            "births": w.stats.births,
+            "deaths": w.stats.deaths,
+            "trades": w.stats.trades,
+            "camps_founded": w.stats.camps_founded,
+            "markets": w.markets.len(),
+            "villages": towns,
+            "animals": animals,
+            "wildlife_births": wildlife_births,
+            "wildlife_deaths": wildlife_deaths,
+            "p50_tick_ms": times[(times.len() - 1) / 2],
+            "p95_tick_ms": times[((times.len() - 1) as f64 * 0.95) as usize],
+            "world_digest": digest,
+        }));
+    }
+    let report = json!({"mode":"soak","agents":o.agents,"steps":o.steps,"seeds":o.seeds,"runs":runs});
+    if let Some(path) = &o.out {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).map_err(|e| e.to_string())?;
+    }
+    println!("{}", serde_json::to_string_pretty(&report).unwrap());
     Ok(())
 }
 

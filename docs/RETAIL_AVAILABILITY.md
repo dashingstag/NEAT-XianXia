@@ -24,3 +24,21 @@ Starting from the same mature daytime checkpoint, the inventory control added 20
 In the stock-only case, the sampled actor could afford and carry at least one open shop item on 133 ticks. Pre-tick urban offer generation produced a shopping candidate on 78 ticks. The 33 admitted decisions were captured during the actual simulation step. Those counts use different observation points and denominators. Inventory is the first constraint and stocking a shelf alone did not produce a completed sale in this six-game-hour window.
 
 All 13 observed parallel continuations matched the serialized state of their unobserved serial controls. Raw output belongs in the ignored .work directory.
+
+## Empty-counter owner experiment
+
+Run from the repository root with `cargo run --release --locked --manifest-path sim/Cargo.toml -p sim-core --example restocking -- fixtures/bank-v12.snapshot`. Repeat with `--features experimental-restocking` before the example argument. This opt-in feature adjusts only the benefit inputs for a shopkeeper with empty catalog shelves and a feasible, funded order. Tending the counter drops from 0.9 to 0.1 and ordering increases from 0.85 to 1.0.
+
+Two days (6,000 ticks) from the same mature seed-42 checkpoint gave the following cumulative results. Each day passed conservation checks and reproduced the same serialized state after a checkpoint reload.
+
+| Two-day result | Default | Experimental |
+|---|---:|---:|
+| Orders / pickups / deliveries | 0 / 0 / 0 | 7 / 7 / 7 |
+| Wholesale and freight spending | 0 | 104 |
+| Stocked-and-open shop-ticks | 0 | 11,070 |
+| Retail units sold | 0 | 0 |
+| Occupied shops' ending cash | 213 | 147 |
+| Sum of occupied shops' arrears | 0 | 1 |
+| Initial owners alive | 8/8 | 8/8 |
+
+Shop-ticks sum across shops. End cash also reflects other business activity. The experiment establishes that owners can trigger physical restocking in this fixture. It does not establish sustainable retail demand. Keep the default policy and trace eligible buyers through offer admission, choice, travel and checkout before revising incentives.

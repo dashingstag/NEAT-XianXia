@@ -993,6 +993,13 @@ impl World {
         }
         if let Some(id) = self.business(i) {
             let b = &self.urban.buildings[id];
+            let order_available = self.procurement(id).is_some();
+            let empty = cfg!(feature = "experimental-restocking")
+                && order_available
+                && b.kind == 1
+                && Self::catalog(b.line)
+                    .into_iter()
+                    .all(|sku| Self::inventory(b, sku) == 0);
             if b.kind == 1 || self.recipe(id).is_some() {
                 out.push(self.urban_candidate(
                     i,
@@ -1000,20 +1007,20 @@ impl World {
                     id,
                     1,
                     0.85,
-                    0.9,
+                    if empty { 0.1 } else { 0.9 },
                     0.0,
                     b.x,
                     b.y,
                 ));
             }
-            if self.procurement(id).is_some() {
+            if order_available {
                 out.push(self.urban_candidate(
                     i,
                     Action::OrderGoods,
                     id,
                     1,
                     0.9,
-                    0.85,
+                    if empty { 1.0 } else { 0.85 },
                     2.0,
                     b.x,
                     b.y,
@@ -1403,6 +1410,10 @@ impl World {
             self.markets[m].quotes[sku].offered = self.markets[m].quotes[sku]
                 .offered
                 .min(self.markets[m].stock(sku));
+        }
+        if self.urban.buildings[id].kind == 1 {
+            self.watch.retail_flow[0] += 1;
+            self.watch.retail_flow[1] += cost + 2;
         }
         self.urban.buildings[id].cash -= cost + 2;
         if sku < 13 {
@@ -1968,6 +1979,15 @@ impl World {
             if j.progress < 1.0 || self.agents.room(i) < j.weight() {
                 return;
             }
+            if j.kind == 1
+                && self
+                    .urban
+                    .buildings
+                    .get(j.target as usize)
+                    .is_some_and(|b| b.kind == 1)
+            {
+                self.watch.retail_flow[2] += 1;
+            }
             let j = self.urban.jobs[id].as_mut().unwrap();
             j.phase = 1;
             j.progress = 0.0;
@@ -1992,6 +2012,9 @@ impl World {
                 }
             } else {
                 let b = &mut self.urban.buildings[j.target as usize];
+                if j.kind == 1 && b.kind == 1 {
+                    self.watch.retail_flow[3] += 1;
+                }
                 for k in 0..GOODS {
                     b.raw[k] += j.raw[k];
                 }

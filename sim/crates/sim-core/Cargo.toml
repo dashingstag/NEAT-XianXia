@@ -12,3 +12,6 @@ rayon.workspace = true
 postcard.workspace = true
 zstd.workspace = true
 
+
+[features]
+experimental-restocking = []

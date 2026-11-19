@@ -373,6 +373,7 @@ pub struct World {
 }
 #[derive(Clone, Debug, Default)]
 struct Watch {
+    retail_flow: [u64; 4],
     person: Option<usize>,
     last: Option<serde_json::Value>,
     purchase: Option<serde_json::Value>,
@@ -798,9 +799,14 @@ impl World {
         if self.watch.person != person {
             self.watch = Watch {
                 person,
+                retail_flow: self.watch.retail_flow,
                 ..Default::default()
             };
         }
+    }
+    /// Successful shop orders, wholesale spend including freight, pickups, and deliveries.
+    pub fn retail_flow(&self) -> [u64; 4] {
+        self.watch.retail_flow
     }
     pub fn last_watched_decision(&self) -> Option<&serde_json::Value> {
         self.watch.last.as_ref()

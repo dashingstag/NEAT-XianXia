@@ -2,7 +2,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const INPUTS: usize = 42;
+/// Sensors 0..42 are the shipped schema; 42..48 are reserved for frontier work
+/// (dread, qi pressure, technique memory, bond, quest reward, unexplored pull).
+/// Older genomes are migrated by inserting input nodes and shifting node IDs up.
+pub const INPUTS: usize = 48;
+pub const LEGACY_INPUTS: usize = 42;
 pub const MAX_NODES: usize = 96;
 pub const SENSORS: [&str; INPUTS] = [
     "need",
@@ -47,6 +51,12 @@ pub const SENSORS: [&str; INPUTS] = [
     "adult",
     "iron",
     "rice",
+    "dread",
+    "qi_pressure",
+    "technique_memory",
+    "bond",
+    "quest_reward",
+    "unexplored",
 ];
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -122,6 +132,30 @@ impl Innovations {
             self.next_gene += 1;
             self.edges.insert((from, to), id);
             id
+        }
+    }
+    /// Shifts every recorded node reference `>= from` up by `delta`, matching
+    /// `Genome::migrate_inputs`. Edge innovation numbers are keyed on node IDs,
+    /// so both endpoints are remapped; split records hold the node IDs they minted.
+    pub fn migrate_node_ids(&mut self, from: u32, delta: u32) {
+        let mut edges = BTreeMap::new();
+        for ((a, b), id) in std::mem::take(&mut self.edges) {
+            edges.insert(
+                (
+                    a + (a >= from) as u32 * delta,
+                    b + (b >= from) as u32 * delta,
+                ),
+                id,
+            );
+        }
+        self.edges = edges;
+        for id in self.splits.values_mut() {
+            if *id >= from {
+                *id += delta;
+            }
+        }
+        if self.next_node >= from {
+            self.next_node += delta;
         }
     }
 }
@@ -404,6 +438,38 @@ impl Genome {
         }
         false
     }
+    /// True when this genome still carries the 42-sensor layout and needs
+    /// `migrate_inputs`. Detection by input-node count keeps migration safe on
+    /// test fixtures that embed already-widened genomes in old schema headers.
+    pub fn needs_input_migration(&self) -> bool {
+        self.nodes.iter().filter(|n| n.kind == Kind::Input).count() == LEGACY_INPUTS
+    }
+    /// Inserts input nodes `from..INPUTS` and shifts every node ID `>= from` up
+    /// by `INPUTS - from`, keeping gene endpoints valid. The registry must be
+    /// migrated with `Innovations::migrate_node_ids` in the same pass.
+    pub fn migrate_inputs(&mut self, from: usize) {
+        let delta = INPUTS - from;
+        for n in &mut self.nodes {
+            if n.id >= from as u32 {
+                n.id += delta as u32;
+            }
+        }
+        for g in &mut self.genes {
+            if g.from >= from as u32 {
+                g.from += delta as u32;
+            }
+            if g.to >= from as u32 {
+                g.to += delta as u32;
+            }
+        }
+        for i in from..INPUTS {
+            self.nodes.push(Node {
+                id: i as u32,
+                kind: Kind::Input,
+                bias: 0.0,
+            });
+        }
+    }
     /// The fitter parent's disjoint/excess genes survive. Matching genes align by innovation.
     pub fn crossover(fitter: &Self, other: &Self, rng: &mut Rng) -> Self {
         let mut child = fitter.clone();
@@ -462,6 +528,76 @@ pub fn species(genomes: &[Genome], threshold: f32) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Rebuild the shipped 42-sensor layout: inputs 0..41, hidden 42..45, output 46.
+    fn old_schema_genome() -> (Genome, Innovations) {
+        let mut nodes: Vec<Node> = (0..LEGACY_INPUTS)
+            .map(|id| Node {
+                id: id as u32,
+                kind: Kind::Input,
+                bias: 0.0,
+            })
+            .collect();
+        for i in 0..4 {
+            nodes.push(Node {
+                id: (LEGACY_INPUTS + i) as u32,
+                kind: Kind::Tanh,
+                bias: -0.2,
+            });
+        }
+        nodes.push(Node {
+            id: (LEGACY_INPUTS + 4) as u32,
+            kind: Kind::Output,
+            bias: 0.1,
+        });
+        let mut innovations = Innovations::default();
+        innovations.next_node = (LEGACY_INPUTS + 5) as u32;
+        let mut genes = Vec::new();
+        for h in 0..4 {
+            for sensor in [0u32, 3, 26] {
+                genes.push(Gene {
+                    innovation: innovations.edge(sensor, (LEGACY_INPUTS + h) as u32),
+                    from: sensor,
+                    to: (LEGACY_INPUTS + h) as u32,
+                    weight: 0.4,
+                    enabled: true,
+                });
+            }
+            genes.push(Gene {
+                innovation: innovations.edge((LEGACY_INPUTS + h) as u32, (LEGACY_INPUTS + 4) as u32),
+                from: (LEGACY_INPUTS + h) as u32,
+                to: (LEGACY_INPUTS + 4) as u32,
+                weight: 0.9,
+                enabled: true,
+            });
+        }
+        (
+            Genome {
+                generation: 0,
+                nodes,
+                genes,
+            },
+            innovations,
+        )
+    }
+    #[test]
+    fn legacy_genomes_widen_without_renumbering_sensors() {
+        let (mut g, mut reg) = old_schema_genome();
+        assert!(g.needs_input_migration());
+        g.migrate_inputs(LEGACY_INPUTS);
+        reg.migrate_node_ids(LEGACY_INPUTS as u32, (INPUTS - LEGACY_INPUTS) as u32);
+        assert!(!g.needs_input_migration());
+        let brain = g.compile().unwrap();
+        let mut sensors = [0.0; INPUTS];
+        sensors[0] = 0.7;
+        sensors[3] = 0.2;
+        let score = brain.evaluate(&sensors);
+        assert!(score.is_finite() && score != 0.0);
+        // Hidden nodes moved above the new inputs; the registry mints above them.
+        assert!(g.nodes.iter().all(|n| n.id >= 42 || n.kind == Kind::Input));
+        assert_eq!(reg.next_node, (INPUTS + 5) as u32);
+        assert!(g.add_connection(&mut Rng(9), &mut reg));
+        assert!(g.compile().is_ok());
+    }
     #[test]
     fn inputs_and_seeds_are_reproducible() {
         let mut r = Innovations::default();

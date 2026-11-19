@@ -1,5 +1,5 @@
 //! Packed native agent state and an authoritative, integer-accounted economy.
-use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS};
+use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS, LEGACY_INPUTS};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, fs, io::Read, path::Path};
@@ -464,7 +464,7 @@ impl World {
             return Err("Population must be 1..1,200,000".into());
         }
         let mut w = Self {
-            format: 14,
+            format: 15,
             seed,
             rng: Rng(seed),
             tick: 0,
@@ -1954,7 +1954,7 @@ impl World {
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE14".to_vec();
+        let mut data = b"XXSAVE15".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -1969,7 +1969,8 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE14"
+            || (&data[..8] != b"XXSAVE15"
+                && &data[..8] != b"XXSAVE14"
                 && &data[..8] != b"XXSAVE13"
                 && &data[..8] != b"XXSAVE12"
                 && &data[..8] != b"XXSAVE11"
@@ -2054,7 +2055,7 @@ impl World {
             }
         }
         world.social.resize(world.agents.len(), 0.0);
-        world.format = 14;
+        world.format = 15;
         if &data[..8] != b"XXSAVE08"
             && &data[..8] != b"XXSAVE09"
             && &data[..8] != b"XXSAVE10"
@@ -2062,6 +2063,7 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.init_wildlife();
         }
@@ -2071,6 +2073,7 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2081,8 +2084,12 @@ impl World {
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
             && &data[..8] != b"XXSAVE14"
+            && &data[..8] != b"XXSAVE15"
         {
             world.relocate_fertile_land();
+        }
+        if &data[..8] != b"XXSAVE15" {
+            world.migrate_brain_schemas();
         }
         world.sync_education();
         world.wildlife.rebuild()?;
@@ -2096,6 +2103,43 @@ impl World {
             .map(|g| g.compile())
             .collect::<Result<Vec<_>, _>>()?;
         Ok(world)
+    }
+    /// Widens pre-format-15 brains from the 42-sensor schema to the reserved
+    /// 48-sensor layout, shifting hidden and output node IDs consistently.
+    fn migrate_brain_schemas(&mut self) {
+        let delta = (INPUTS - LEGACY_INPUTS) as u32;
+        if delta == 0 {
+            return;
+        }
+        let mut migrated = false;
+        for g in &mut self.genomes {
+            if g.needs_input_migration() {
+                g.migrate_inputs(LEGACY_INPUTS);
+                migrated = true;
+            }
+        }
+        if migrated {
+            self.innovations
+                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
+        }
+        for c in &mut self.councils {
+            if c.genome.needs_input_migration() {
+                c.genome.migrate_inputs(LEGACY_INPUTS);
+                c.innovations.migrate_node_ids(LEGACY_INPUTS as u32, delta);
+            }
+        }
+        let mut wild = false;
+        for a in &mut self.wildlife.animals {
+            if a.genome.needs_input_migration() {
+                a.genome.migrate_inputs(LEGACY_INPUTS);
+                wild = true;
+            }
+        }
+        if wild {
+            self.wildlife
+                .innovations
+                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
+        }
     }
     fn validate(&self) -> Result<(), String> {
         let n = self.agents.len();
@@ -2140,7 +2184,7 @@ impl World {
             self.genomes.len(),
         ];
         self.hill.validate()?;
-        if self.format != 14
+        if self.format != 15
             || n == 0
             || n > 1_200_000
             || lengths.iter().any(|l| *l != n)

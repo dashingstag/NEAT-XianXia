@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(loaded.stocks(), w.stocks());
         assert_eq!(loaded.coins(), w.coins());
         assert_eq!(loaded.wildlife.ledger.births, w.wildlife.ledger.births);
-        assert_eq!(loaded.format, 14);
+        assert_eq!(loaded.format, 15);
         loaded.check().unwrap();
     }
 }

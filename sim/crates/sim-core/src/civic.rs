@@ -44,6 +44,12 @@ pub const COUNCIL_SENSORS: [&str; INPUTS] = [
     "harvest_ready",
     "food_pressure",
     "workforce",
+    "threat_level",
+    "quest_backlog",
+    "guild_ready",
+    "frontier_value",
+    "mystic_reports",
+    "sect_pressure",
 ];
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Corpse {

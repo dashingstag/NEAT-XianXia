@@ -128,6 +128,6 @@ mod tests {
         assert_eq!(loaded.stocks(), expected);
         assert_eq!(loaded.coins(), w.coins());
         assert_eq!(loaded.social, vec![0.0; 12]);
-        assert_eq!(loaded.format, 14);
+        assert_eq!(loaded.format, 15);
     }
 }

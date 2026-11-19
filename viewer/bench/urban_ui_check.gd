@@ -50,6 +50,13 @@ func check_ui() -> void:
 		ui.status.text = "Offline town fixture"
 		return
 	assert(ui.counter.text.contains("BALANCED"))
+	assert(ui.field.detail_mesh.texture == ui.field._tex("villager-atlas-v2/atlas.png"))
+	assert(ui.field.detail_mesh.texture.get_size() == Vector2(1024,1280))
+	assert(ui.field._tex("animal-table-xianxia/atlas.png").get_size() == Vector2(576,384))
+	for group in ["terrain-flora-xianxia/pine.png","site-glyphs-xianxia/shop.png","site-glyphs-xianxia/bank.png"]:
+		assert(ui.field._tex(group) != null)
+	for item in ui.resource_option.item_count:
+		assert(ui.resource_option.get_item_icon(item) != null)
 	ui.connected = true
 	ui.inspector_tabs.current_tab = ui.inspector_tabs.get_tab_idx_from_control(ui.inspector_tabs.get_node("Wealth"))
 	assert(ui.commands.back() == {"command":"watch_wealth","enabled":true})

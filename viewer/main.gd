@@ -225,8 +225,13 @@ func _ready() -> void:
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	resource_panel.add_child(help)
 	resource_option = OptionButton.new()
+	var icon_names := ["berries","","","","gold","silver","copper","iron"]
 	for kind in [0,4,5,6,7]:
-		resource_option.add_item(["Berries","","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
+		var icon: Texture2D = preload("res://art_texture.gd").read("res://assets/parked/icons-brush/"+icon_names[kind]+".png")
+		if icon != null:
+			resource_option.add_icon_item(icon,["Berries","","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
+		else:
+			resource_option.add_item(["Berries","","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
 	resource_panel.add_child(resource_option)
 	resource_panel.add_child(label("Starting amount / capacity",12))
 	resource_quantity = SpinBox.new()

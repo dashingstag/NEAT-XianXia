@@ -1,17 +1,271 @@
 //! Explicit schema-13 reader: preserves learned relationships and restores the original hill.
+//! Serialized layouts are frozen here. Changing a live type must not alter these readers.
 use super::*;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyAgents {
+    pub x: Vec<f32>,
+    pub y: Vec<f32>,
+    pub health: Vec<f32>,
+    pub hunger: Vec<f32>,
+    pub energy: Vec<f32>,
+    pub alive: Vec<bool>,
+    pub coins: Vec<u64>,
+    pub berries: Vec<u32>,
+    pub fish: Vec<u32>,
+    pub cargo: Vec<u32>,
+    pub cargo_kind: Vec<u8>,
+    pub origin: Vec<u32>,
+    pub home: Vec<u32>,
+    pub action: Vec<Action>,
+    pub target: Vec<u32>,
+    pub timer: Vec<f32>,
+    pub last_decision: Vec<u64>,
+    pub convoy: Vec<u32>,
+    pub solo_until: Vec<u64>,
+    pub dwell_cell: Vec<u32>,
+    pub dwell_ticks: Vec<u32>,
+    pub residence: Vec<u32>,
+    pub capacity: Vec<u32>,
+    pub rested_meter: Vec<f32>,
+    pub rested: Vec<bool>,
+    pub sleeping: Vec<bool>,
+    pub rest_site: Vec<u32>,
+    pub bed_slot: Vec<u32>,
+    pub contract: Vec<u32>,
+    pub carried_body: Vec<u32>,
+    pub corpse: Vec<u32>,
+    pub rice: Vec<u32>,
+    pub traits: Vec<u16>,
+    pub tools: Vec<[u8; 4]>,
+    pub urban_weight: Vec<u32>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyLot {
+    pub quantity: u64,
+    pub origin: u32,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct LegacyQuote {
+    pub bid: u64,
+    pub remaining: u64,
+    pub escrow: u64,
+    pub ask: u64,
+    pub offered: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyProject {
+    pub kind: String,
+    pub progress: f32,
+    pub required: f32,
+    pub destination: u32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyMarket {
+    pub id: u32,
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub coins: u64,
+    pub goods: [VecDeque<LegacyLot>; 13],
+    pub quotes: [LegacyQuote; 13],
+    pub nearest: [u32; 13],
+    pub population: u32,
+    pub housing_blocks: u32,
+    pub stable_residents: u32,
+    pub village: bool,
+    pub project: Option<LegacyProject>,
+    pub sales: [u64; 13],
+    pub local_sales: [u64; 13],
+    pub imported_sales: [u64; 13],
+    pub revenue_total: u64,
+    pub expenses_total: u64,
+}
+impl From<LegacyAgents> for Agents {
+    fn from(old: LegacyAgents) -> Self {
+        Self {
+            x: old.x,
+            y: old.y,
+            health: old.health,
+            hunger: old.hunger,
+            energy: old.energy,
+            alive: old.alive,
+            coins: old.coins,
+            berries: old.berries,
+            fish: old.fish,
+            cargo: old.cargo,
+            cargo_kind: old.cargo_kind,
+            origin: old.origin,
+            home: old.home,
+            action: old.action,
+            target: old.target,
+            timer: old.timer,
+            last_decision: old.last_decision,
+            convoy: old.convoy,
+            solo_until: old.solo_until,
+            dwell_cell: old.dwell_cell,
+            dwell_ticks: old.dwell_ticks,
+            residence: old.residence,
+            capacity: old.capacity,
+            rested_meter: old.rested_meter,
+            rested: old.rested,
+            sleeping: old.sleeping,
+            rest_site: old.rest_site,
+            bed_slot: old.bed_slot,
+            contract: old.contract,
+            carried_body: old.carried_body,
+            corpse: old.corpse,
+            rice: old.rice,
+            traits: old.traits,
+            tools: old.tools,
+            urban_weight: old.urban_weight,
+        }
+    }
+}
+impl From<LegacyMarket> for Market {
+    fn from(old: LegacyMarket) -> Self {
+        Self {
+            id: old.id,
+            name: old.name,
+            x: old.x,
+            y: old.y,
+            coins: old.coins,
+            goods: std::array::from_fn(|k| {
+                old.goods[k]
+                    .iter()
+                    .map(|l| Lot {
+                        quantity: l.quantity,
+                        origin: l.origin,
+                    })
+                    .collect()
+            }),
+            quotes: std::array::from_fn(|k| Quote {
+                bid: old.quotes[k].bid,
+                remaining: old.quotes[k].remaining,
+                escrow: old.quotes[k].escrow,
+                ask: old.quotes[k].ask,
+                offered: old.quotes[k].offered,
+            }),
+            nearest: old.nearest,
+            population: old.population,
+            housing_blocks: old.housing_blocks,
+            stable_residents: old.stable_residents,
+            village: old.village,
+            project: old.project.map(|p| Project {
+                kind: p.kind,
+                progress: p.progress,
+                required: p.required,
+                destination: p.destination,
+            }),
+            sales: old.sales,
+            local_sales: old.local_sales,
+            imported_sales: old.imported_sales,
+            revenue_total: old.revenue_total,
+            expenses_total: old.expenses_total,
+        }
+    }
+}
+impl From<Agents> for LegacyAgents {
+    fn from(a: Agents) -> Self {
+        Self {
+            x: a.x,
+            y: a.y,
+            health: a.health,
+            hunger: a.hunger,
+            energy: a.energy,
+            alive: a.alive,
+            coins: a.coins,
+            berries: a.berries,
+            fish: a.fish,
+            cargo: a.cargo,
+            cargo_kind: a.cargo_kind,
+            origin: a.origin,
+            home: a.home,
+            action: a.action,
+            target: a.target,
+            timer: a.timer,
+            last_decision: a.last_decision,
+            convoy: a.convoy,
+            solo_until: a.solo_until,
+            dwell_cell: a.dwell_cell,
+            dwell_ticks: a.dwell_ticks,
+            residence: a.residence,
+            capacity: a.capacity,
+            rested_meter: a.rested_meter,
+            rested: a.rested,
+            sleeping: a.sleeping,
+            rest_site: a.rest_site,
+            bed_slot: a.bed_slot,
+            contract: a.contract,
+            carried_body: a.carried_body,
+            corpse: a.corpse,
+            rice: a.rice,
+            traits: a.traits,
+            tools: a.tools,
+            urban_weight: a.urban_weight,
+        }
+    }
+}
+impl From<Market> for LegacyMarket {
+    fn from(m: Market) -> Self {
+        Self {
+            id: m.id,
+            name: m.name,
+            x: m.x,
+            y: m.y,
+            coins: m.coins,
+            goods: std::array::from_fn(|k| {
+                m.goods[k]
+                    .iter()
+                    .map(|l| LegacyLot {
+                        quantity: l.quantity,
+                        origin: l.origin,
+                    })
+                    .collect()
+            }),
+            quotes: std::array::from_fn(|k| LegacyQuote {
+                bid: m.quotes[k].bid,
+                remaining: m.quotes[k].remaining,
+                escrow: m.quotes[k].escrow,
+                ask: m.quotes[k].ask,
+                offered: m.quotes[k].offered,
+            }),
+            nearest: m.nearest,
+            population: m.population,
+            housing_blocks: m.housing_blocks,
+            stable_residents: m.stable_residents,
+            village: m.village,
+            project: m.project.map(|p| LegacyProject {
+                kind: p.kind,
+                progress: p.progress,
+                required: p.required,
+                destination: p.destination,
+            }),
+            sales: m.sales,
+            local_sales: m.local_sales,
+            imported_sales: m.imported_sales,
+            revenue_total: m.revenue_total,
+            expenses_total: m.expenses_total,
+        }
+    }
+}
+pub fn to_legacy_agents(a: &Agents) -> LegacyAgents {
+    a.clone().into()
+}
+pub fn to_legacy_market(m: &Market) -> LegacyMarket {
+    m.clone().into()
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LegacyWorld {
     pub format: u32,
     pub seed: u64,
     pub rng: Rng,
     pub tick: u64,
-    pub agents: Agents,
+    pub agents: LegacyAgents,
     pub genomes: Vec<Genome>,
     pub innovations: Innovations,
     #[serde(skip)]
     pub brains: Vec<Compiled>,
-    pub markets: Vec<Market>,
+    pub markets: Vec<LegacyMarket>,
     pub patches: Vec<Patch>,
     pub roads: Vec<Road>,
     pub ledger: Ledger,
@@ -43,11 +297,11 @@ impl From<LegacyWorld> for World {
             seed: old.seed,
             rng: old.rng,
             tick: old.tick,
-            agents: old.agents,
+            agents: old.agents.into(),
             genomes: old.genomes,
             innovations: old.innovations,
             brains: old.brains,
-            markets: old.markets,
+            markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches,
             roads: old.roads,
             ledger: old.ledger,

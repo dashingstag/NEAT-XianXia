@@ -8,7 +8,7 @@ mod banking;
 mod legacy_v12;
 mod legacy_v13;
 pub use landscape::Hill;
-pub use worldmap::{MapSize, MapSpec, Terrain, WorldMap};
+pub use worldmap::{Exploration, MapSize, MapSpec, Terrain, WorldMap};
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;
@@ -377,6 +377,7 @@ pub struct World {
     watch: Watch,
     pub hill: Hill,
     pub map: WorldMap,
+    pub explored: Exploration,
 }
 #[derive(Clone, Debug, Default)]
 struct Watch {
@@ -562,6 +563,7 @@ impl World {
             watch: Default::default(),
             hill,
             map: WorldMap::new(spec),
+            explored: Exploration::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -769,6 +771,11 @@ impl World {
         w.sync_urban();
         w.sync_relationships();
         w.sync_shelters();
+        // Each settlement starts knowing its immediate surroundings.
+        for m in 0..w.markets.len() {
+            let (x, y) = (w.markets[m].x, w.markets[m].y);
+            w.explored.reveal(m, x, y, 500.0);
+        }
         w.refresh();
         Ok(w)
     }
@@ -1753,6 +1760,7 @@ impl World {
         self.banking_step();
         self.relationships_step();
         self.wildlife_step();
+        self.update_explored();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2358,6 +2366,12 @@ impl World {
         let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
         result["hill"] = serde_json::json!(self.hill);
         result["map"] = serde_json::json!(self.map.spec);
+        result["explored_chunks"] = serde_json::json!(self
+            .explored
+            .chunks
+            .iter()
+            .map(|s| s.len())
+            .collect::<Vec<_>>());
         result["wildlife"] = self.wildlife_summary();
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();

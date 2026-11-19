@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::WORLD_HEIGHT;
 use crate::WORLD_WIDTH;
@@ -99,6 +99,38 @@ impl MapSpec {
         } else {
             (10.0, self.width() - 10.0, 10.0, self.height() - 10.0)
         }
+    }
+}
+
+/// Per-settlement fog-of-war knowledge: `chunks[market_id]` is the set of
+/// generated-map chunk coordinates that market's people have visited.
+/// Knowledge only accumulates — it is the record of where anyone from
+/// that settlement has physically been.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Exploration {
+    pub chunks: Vec<BTreeSet<(u32, u32)>>,
+}
+impl Exploration {
+    /// Chunk coordinates covering a world position.
+    pub fn chunk_of(x: f32, y: f32) -> (u32, u32) {
+        ((x / CHUNK_SIZE as f32) as u32, (y / CHUNK_SIZE as f32) as u32)
+    }
+    /// Mark the chunks overlapped by a circle as known to `market`.
+    pub fn reveal(&mut self, market: usize, x: f32, y: f32, radius: f32) {
+        if market >= self.chunks.len() {
+            self.chunks.resize(market + 1, BTreeSet::new());
+        }
+        let (x0, y0) = Self::chunk_of(x - radius, y - radius);
+        let (x1, y1) = Self::chunk_of(x + radius, y + radius);
+        for cy in y0..=y1 {
+            for cx in x0..=x1 {
+                self.chunks[market].insert((cx, cy));
+            }
+        }
+    }
+    /// Total chunks known to a market (0 when it knows nothing).
+    pub fn known(&self, market: usize) -> usize {
+        self.chunks.get(market).map_or(0, |s| s.len())
     }
 }
 
@@ -315,6 +347,28 @@ impl WorldMap {
     }
 }
 
+impl crate::World {
+    /// Fog of war: credit each living agent's current chunk to their
+    /// home settlement. Knowledge accumulates over time; positions are
+    /// cheap to insert (one set insert per agent per tick).
+    pub(super) fn update_explored(&mut self) {
+        self.explored
+            .chunks
+            .resize(self.markets.len(), BTreeSet::new());
+        for i in 0..self.agents.len() {
+            if !self.agents.alive[i] {
+                continue;
+            }
+            let home = self.agents.home[i] as usize;
+            if home >= self.explored.chunks.len() {
+                continue;
+            }
+            let chunk = Exploration::chunk_of(self.agents.x[i], self.agents.y[i]);
+            self.explored.chunks[home].insert(chunk);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +497,32 @@ mod tests {
             .filter(|(a, b)| a.x == b.x && a.y == b.y)
             .count();
         assert!(same < 2, "seeds produced near-identical market sites");
+    }
+
+    #[test]
+    fn exploration_accumulates_and_survives_save() {
+        let mut w = crate::World::new(20, 42).unwrap();
+        // Settlements start knowing their home area.
+        assert!(w.explored.known(0) > 0);
+        let before = w.explored.known(1);
+        // Walk an agent of market 1 far away; their chunk becomes known.
+        let i = (0..w.agents.len())
+            .find(|&i| w.agents.alive[i] && w.agents.home[i] == 1)
+            .unwrap();
+        w.agents.x[i] = 2600.0;
+        w.agents.y[i] = 1500.0;
+        let target = Exploration::chunk_of(2600.0, 1500.0);
+        w.step(false);
+        assert!(w.explored.known(1) > before || w.explored.chunks[1].contains(&target));
+        // Persisted through save/load.
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-explored-{}.snapshot",
+            std::process::id()
+        ));
+        w.save(&path).unwrap();
+        let restored = crate::World::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(restored.explored, w.explored);
     }
 
     #[test]

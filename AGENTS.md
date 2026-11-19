@@ -1,5 +1,11 @@
 # Working on NEAT Xianxia
 
+## GitHub issue lifecycle
+
+When work reveals a reproducible defect or a confirmed limitation, search open and closed GitHub issues first. Add evidence to an existing match or open an issue describing the problem, expected and observed behavior, affected code or reproduction, and how to verify a fix. Clearly label suspected impacts. Link related issues in the pull request. For partial fixes use a reference that leaves the issue open.
+
+After the complete fix merges, verify the merged revision and add a closing comment listing the steps taken, the merged PR or commit and the checks that passed. Close the issue then. If GitHub already closed it on merge, still add the resolution comment. Keep temporary logs and personal saves outside commits and public reports.
+
 Start with README.md and the command table. Run from the repository root. Use synthetic fixtures for verification. The runner owns test processes, ports and checkpoints. The interactive play command uses a persistent profile.
 
 After the first Git commit, give concurrent contributors separate branches and worktrees. Agree on the player-visible outcome, affected data, owner and a small example before cross-domain work. A passing test report should identify the revision, scenario, command and observed result. Recheck the combined revision before release.

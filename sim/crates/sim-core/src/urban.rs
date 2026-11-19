@@ -2371,6 +2371,40 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn two_buyers_compete_for_the_last_shop_meal() {
+        let mut w = funded();
+        let shop = construct(&mut w, 1);
+        w.urban.buildings[shop].line = 3;
+        w.apply_urban_policy(0, "AdvertisePremises");
+        at(&mut w, 2, shop, Action::LeaseBusiness);
+        w.execute_urban(2, Action::LeaseBusiness);
+        assert_eq!(w.urban.buildings[shop].owner, 2);
+        w.urban.produced[4] += 1;
+        w.urban.buildings[shop].wares[4] = 1;
+        w.urban.buildings[shop].last_open = w.tick;
+        let price = World::retail_price(17);
+        let cash = w.urban.buildings[shop].cash;
+        let treasury = w.markets[0].coins;
+        for i in [3, 4] {
+            at(&mut w, i, shop, Action::ShopGoods);
+            w.agents.target[i] = (shop * 32 + 17) as u32;
+            assert!(w.agents.coins[i] >= price);
+        }
+        let wallets = [w.agents.coins[3], w.agents.coins[4]];
+        let meals = [w.people[3].meals, w.people[4].meals];
+        for i in [3, 4] {
+            w.execute_urban(i, Action::ShopGoods);
+        }
+        assert_eq!(w.agents.coins[3], wallets[0] - price);
+        assert_eq!(w.agents.coins[4], wallets[1]);
+        assert_eq!(w.people[3].meals, meals[0] + 1);
+        assert_eq!(w.people[4].meals, meals[1]);
+        assert_eq!(w.urban.buildings[shop].wares[4], 0);
+        assert_eq!(w.urban.buildings[shop].cash, cash + price - 1);
+        assert_eq!(w.markets[0].coins, treasury + 1);
+        w.check().unwrap();
+    }
+    #[test]
     fn manufacture_wholesale_and_retail_use_real_stock_and_cash() {
         let mut w = funded();
         let factory = construct(&mut w, 2);

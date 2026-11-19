@@ -207,6 +207,10 @@ impl World {
             rng: Rng(self.seed ^ 0x57494c444c494645),
             ..Wildlife::default()
         };
+        let (bx, by) = {
+            let (min_x, max_x, min_y, max_y) = self.map.spec.wild_bounds();
+            ((min_x, max_x), (min_y, max_y))
+        };
         // Group actual berry/timber resources into small groves; stocks and positions stay intact.
         for p in self.patches.iter().filter(|p| [0, 1].contains(&p.kind)) {
             if let Some(f) = w
@@ -229,8 +233,8 @@ impl World {
                 let angle = j as f32 * std::f32::consts::TAU / 5.0;
                 w.grass.push(Grass {
                     forest: f as u32,
-                    x: (x + angle.cos() * 45.0).clamp(10.0, 2650.0),
-                    y: (y + angle.sin() * 45.0).clamp(10.0, 1890.0),
+                    x: (x + angle.cos() * 45.0).clamp(bx.0, bx.1),
+                    y: (y + angle.sin() * 45.0).clamp(by.0, by.1),
                     stock: 60,
                     capacity: 60,
                     growth: 0.0,
@@ -245,8 +249,8 @@ impl World {
                     species,
                     female: j % 2 == 0,
                     forest: f as u32,
-                    x: (x + angle.cos() * radius).clamp(10.0, 2650.0),
-                    y: (y + angle.sin() * radius).clamp(10.0, 1890.0),
+                    x: (x + angle.cos() * radius).clamp(bx.0, bx.1),
+                    y: (y + angle.sin() * radius).clamp(by.0, by.1),
                     heading: angle,
                     alive: true,
                     health: 100.0,

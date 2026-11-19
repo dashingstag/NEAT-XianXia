@@ -16,11 +16,11 @@ impl Default for Hill {
     }
 }
 impl Hill {
-    pub(super) fn validate(self) -> Result<(), String> {
+    pub(super) fn validate(self, width: f32, height: f32) -> Result<(), String> {
         if self.radius.is_finite()
             && self.radius > 0.0
-            && (self.radius..=WORLD_WIDTH - self.radius).contains(&self.x)
-            && (self.radius..=WORLD_HEIGHT - self.radius).contains(&self.y)
+            && (self.radius..=width - self.radius).contains(&self.x)
+            && (self.radius..=height - self.radius).contains(&self.y)
         {
             Ok(())
         } else {
@@ -81,10 +81,11 @@ impl World {
     }
 
     fn forest_ground_clear(&self, x: f32, y: f32, r: f32) -> bool {
-        x - r >= 20.0
-            && x + r <= 2670.0
-            && y - r >= 20.0
-            && y + r <= 1900.0
+        let (min_x, max_x, min_y, max_y) = self.map.spec.land_bounds();
+        x - r >= min_x
+            && x + r <= max_x
+            && y - r >= min_y
+            && y + r <= max_y
             && self.hill.clearance(x, y) >= r + 25.0
             && self
                 .patches
@@ -126,8 +127,10 @@ impl World {
                 .min(140.0);
             let mut candidate = None;
             let mut best = f32::INFINITY;
-            for gx in 0..19 {
-                for gy in 0..13 {
+            let grid_x = (self.map.spec.width() / 130.0).ceil() as i32;
+            let grid_y = (self.map.spec.height() / 130.0).ceil() as i32;
+            for gx in 0..grid_x.min(300) {
+                for gy in 0..grid_y.min(300) {
                     let x = 160.0 + gx as f32 * 130.0;
                     let y = 160.0 + gy as f32 * 130.0;
                     if !self.forest_ground_clear(x, y, radius) {
@@ -223,8 +226,9 @@ impl World {
         self.refresh();
     }
     pub(super) fn farm_ground(&self, x: f32, y: f32, r: f32) -> bool {
-        (30.0 + r..=2650.0 - r).contains(&x)
-            && (30.0 + r..=1880.0 - r).contains(&y)
+        let (min_x, max_x, min_y, max_y) = self.map.spec.field_bounds();
+        (min_x + r..=max_x - r).contains(&x)
+            && (min_y + r..=max_y - r).contains(&y)
             && self.hill.clearance(x, y) > r
             && self
                 .patches
@@ -240,9 +244,11 @@ impl World {
                 continue;
             }
             let old = (r.x, r.y);
-            let candidate = (0..32)
+            let gx = (self.map.spec.width() / 80.0).ceil() as i32;
+            let gy = (self.map.spec.height() / 80.0).ceil() as i32;
+            let candidate = (0..gx.min(400))
                 .flat_map(|x| {
-                    (0..22).map(move |y| (80.0 + x as f32 * 80.0, 80.0 + y as f32 * 80.0))
+                    (0..gy.min(400)).map(move |y| (80.0 + x as f32 * 80.0, 80.0 + y as f32 * 80.0))
                 })
                 .filter(|(x, y)| self.farm_ground(*x, *y, radius))
                 .min_by(|a, b| {
@@ -286,10 +292,11 @@ impl World {
         if ![0, 4, 5, 6, 7].contains(&kind) || !(1..=1_000_000).contains(&quantity) {
             return Err("Choose berries or a metal mine, with 1..1,000,000 units".into());
         }
+        let (min_x, max_x, min_y, max_y) = self.map.spec.field_bounds();
         if !x.is_finite()
             || !y.is_finite()
-            || !(30.0..=2650.0).contains(&x)
-            || !(30.0..=1880.0).contains(&y)
+            || !(min_x..=max_x).contains(&x)
+            || !(min_y..=max_y).contains(&y)
         {
             return Err("Place resources on land inside the map".into());
         }

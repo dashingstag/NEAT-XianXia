@@ -75,6 +75,7 @@ impl From<LegacyWorld> for World {
             work_memory: Default::default(),
             commitments: Default::default(),
             hill: Hill::default(),
+            map: crate::WorldMap::classic(old.seed),
         }
     }
 }

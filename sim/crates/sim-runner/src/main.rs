@@ -24,6 +24,7 @@ struct Options {
     serial: bool,
     hill: sim_core::Hill,
     seeds: u32,
+    map: sim_core::MapSize,
 }
 fn options() -> Result<Options, String> {
     let mut args = env::args().skip(1);
@@ -43,6 +44,7 @@ fn options() -> Result<Options, String> {
         serial: false,
         hill: Default::default(),
         seeds: 3,
+        map: sim_core::MapSize::Classic,
     };
     while let Some(k) = args.next() {
         if k == "--load" {
@@ -67,6 +69,15 @@ fn options() -> Result<Options, String> {
             "--out" => o.out = Some(v.into()),
             "--checkpoint" => o.checkpoint = v.into(),
             "--seeds" => o.seeds = v.parse().map_err(|_| "Invalid seeds")?,
+            "--map" => {
+                o.map = match v.as_str() {
+                    "classic" => sim_core::MapSize::Classic,
+                    "x4" => sim_core::MapSize::X4,
+                    "x25" => sim_core::MapSize::X25,
+                    "x100" => sim_core::MapSize::X100,
+                    _ => return Err("--map must be classic|x4|x25|x100".into()),
+                }
+            }
             _ => return Err(format!("Unknown option {k}")),
         }
     }
@@ -120,7 +131,7 @@ fn run() -> Result<(), String> {
     let mut w = if o.load {
         World::load(&o.checkpoint)?
     } else {
-        World::new_with_hill(o.agents, o.seed, o.hill)?
+        World::new_with_size(o.agents, o.seed, o.hill, o.map)?
     };
     if o.mode == "civic-demo" {
         for _ in 0..300 {
@@ -219,7 +230,7 @@ fn soak(o: &Options) -> Result<(), String> {
     let mut runs = Vec::new();
     for s in 0..o.seeds {
         let seed = o.seed.wrapping_add(s as u64);
-        let mut w = World::new_with_hill(o.agents, seed, o.hill)?;
+        let mut w = World::new_with_size(o.agents, seed, o.hill, o.map)?;
         let mut times = Vec::with_capacity(o.steps as usize);
         for tick in 0..o.steps {
             let start = Instant::now();

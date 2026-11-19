@@ -8,6 +8,7 @@ mod banking;
 mod legacy_v12;
 mod legacy_v13;
 pub use landscape::Hill;
+pub use worldmap::{MapSize, MapSpec, Terrain, WorldMap};
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;
@@ -29,6 +30,7 @@ mod legacy_v5;
 mod legacy_v6;
 mod legacy_v7;
 mod wildlife;
+mod worldmap;
 use wildlife::Wildlife;
 mod life;
 mod social;
@@ -382,7 +384,13 @@ pub struct World {
     work_memory: work_memory::WorkMemory,
     #[serde(skip)]
     commitments: commitment_memory::Commitments,
+    #[serde(skip, default = "default_checkpoint_map")]
+    pub map: WorldMap,
 }
+fn default_checkpoint_map() -> WorldMap {
+    WorldMap::classic(0)
+}
+
 #[derive(Clone, Debug, Default)]
 struct Watch {
     memory_trial: Option<memory_pilot::Trial>,
@@ -475,7 +483,39 @@ impl World {
         Self::new_with_hill(count, seed, Hill::default())
     }
     pub fn new_with_hill(count: usize, seed: u64, hill: Hill) -> Result<Self, String> {
-        hill.validate()?;
+        Self::new_with_size(count, seed, hill, MapSize::Classic)
+    }
+    /// `size` selects the generated-map preset. Classic keeps the
+    /// historical fixed layout; other sizes procedurally place
+    /// settlements and resources on generated terrain.
+    pub fn new_with_size(
+        count: usize,
+        seed: u64,
+        hill: Hill,
+        size: MapSize,
+    ) -> Result<Self, String> {
+        let spec = if size == MapSize::Classic {
+            MapSpec::classic(seed)
+        } else {
+            MapSpec {
+                size,
+                seed,
+                version: worldmap::GENERATOR_VERSION,
+                home_x: WORLD_WIDTH * size.scale() as f32 / 2.0,
+                home_y: WORLD_HEIGHT * size.scale() as f32 / 2.0,
+            }
+        };
+        let hill = if size == MapSize::Classic {
+            hill
+        } else {
+            let s = size.scale() as f32;
+            Hill {
+                x: hill.x * s,
+                y: hill.y * s,
+                radius: hill.radius * s,
+            }
+        };
+        hill.validate(spec.width(), spec.height())?;
         if count == 0 || count > 1_200_000 {
             return Err("Population must be 1..1,200,000".into());
         }
@@ -540,20 +580,32 @@ impl World {
             work_memory: Default::default(),
             commitments: Default::default(),
             hill,
+            map: WorldMap::new(spec),
         };
-        for (id, (name, x, y)) in [
-            ("Willow Reach", 180.0, 230.0),
-            ("Tidewater", 780.0, 190.0),
-            ("Stone Crossing", 510.0, 490.0),
-        ]
-        .iter()
-        .enumerate()
+        let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
+            vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
+        } else {
+            let r = w.map.spec.homeland_radius();
+            (0..3)
+                .map(|m| {
+                    let angle = m as f32 * std::f32::consts::TAU / 3.0;
+                    let cx = w.map.spec.home_x + angle.cos() * r * 0.4;
+                    let cy = w.map.spec.home_y + angle.sin() * r * 0.4;
+                    w.map
+                        .find_terrain(&[Terrain::Fertile, Terrain::Grass], cx, cy, 0.0, r * 0.5)
+                })
+                .collect()
+        };
+        for (id, (name, (x, y))) in ["Willow Reach", "Tidewater", "Stone Crossing"]
+            .iter()
+            .zip(market_sites)
+            .enumerate()
         {
             w.markets.push(Market {
                 id: id as u32,
                 name: name.to_string(),
-                x: *x,
-                y: *y,
+                x,
+                y,
                 coins: 0,
                 goods: std::array::from_fn(|_| VecDeque::new()),
                 quotes: std::array::from_fn(|_| Quote::default()),
@@ -576,8 +628,13 @@ impl World {
             m.population += 1;
             m.coins += 20;
             let a = &mut w.agents;
-            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, 890.0));
-            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, 635.0));
+            let (bx, by) = if size == MapSize::Classic {
+                (890.0, 635.0)
+            } else {
+                (w.map.spec.width() - 5.0, w.map.spec.height() - 5.0)
+            };
+            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, bx));
+            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, by));
             a.health.push(100.0);
             a.hunger.push(w.rng.unit() * 12.0);
             a.energy.push(80.0 + w.rng.unit() * 20.0);
@@ -626,11 +683,40 @@ impl World {
         for kind in 0..4 {
             let number = if kind == 1 { 16 } else { 10 };
             for j in 0..number {
-                let (x, y) = match kind {
-                    0 => (90.0 + w.rng.unit() * 300.0, 100.0 + w.rng.unit() * 220.0),
-                    1 => (60.0 + w.rng.unit() * 260.0, 100.0 + w.rng.unit() * 260.0),
-                    2 => (410.0 + w.rng.unit() * 180.0, 350.0 + w.rng.unit() * 190.0),
-                    _ => (870.0 + w.rng.unit() * 18.0, 75.0 + j as f32 * 48.0),
+                let (x, y) = if size != MapSize::Classic {
+                    let home = &w.markets[j % w.markets.len()];
+                    let (cx, cy, r) = (home.x, home.y, w.map.spec.homeland_radius());
+                    match kind {
+                        // Berries and timber stay near settlements on
+                        // growing land; stone sits anywhere off water;
+                        // fish need the shoreline.
+                        0 => {
+                            w.map
+                                .find_terrain(&[Terrain::Fertile, Terrain::Grass], cx, cy, 60.0, r)
+                        }
+                        1 => w.map.find_terrain(
+                            &[Terrain::Forest, Terrain::Fertile, Terrain::Grass],
+                            cx,
+                            cy,
+                            60.0,
+                            r,
+                        ),
+                        2 => w.map.find_terrain(
+                            &[Terrain::Grass, Terrain::Rock, Terrain::Fertile],
+                            cx,
+                            cy,
+                            60.0,
+                            r,
+                        ),
+                        _ => w.map.find_terrain(&[Terrain::Water], cx, cy, 0.0, r * 1.5),
+                    }
+                } else {
+                    match kind {
+                        0 => (90.0 + w.rng.unit() * 300.0, 100.0 + w.rng.unit() * 220.0),
+                        1 => (60.0 + w.rng.unit() * 260.0, 100.0 + w.rng.unit() * 260.0),
+                        2 => (410.0 + w.rng.unit() * 180.0, 350.0 + w.rng.unit() * 190.0),
+                        _ => (870.0 + w.rng.unit() * 18.0, 75.0 + j as f32 * 48.0),
+                    }
                 };
                 let cap = if kind == 1 { 100 * scale } else { 80 * scale };
                 w.patches.push(Patch {
@@ -652,7 +738,19 @@ impl World {
                 });
             }
         }
-        for (kind, x, y) in [(4, 570.0, 365.0), (5, 615.0, 430.0), (6, 410.0, 540.0)] {
+        let metal_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
+            vec![(570.0, 365.0), (615.0, 430.0), (410.0, 540.0)]
+        } else {
+            let r = w.map.spec.homeland_radius();
+            (0..3)
+                .map(|j| {
+                    let home = &w.markets[j % w.markets.len()];
+                    w.map
+                        .find_terrain(&[Terrain::Rock], home.x, home.y, 0.0, r * 1.5)
+                })
+                .collect()
+        };
+        for (kind, (x, y)) in [4usize, 5, 6].into_iter().zip(metal_sites) {
             w.patches.push(Patch {
                 id: w.patches.len() as u32,
                 kind,
@@ -669,7 +767,9 @@ impl World {
             m.add(0, m.population as u64 * 2, m.id);
         }
         w.expand_map_and_food();
-        w.site_stone_crossing();
+        if size == MapSize::Classic {
+            w.site_stone_crossing();
+        }
         w.init_people();
         w.init_wildlife();
         w.upgrade_landscape(true);
@@ -2080,12 +2180,13 @@ impl World {
             &self.forage_memory,
             &self.work_memory,
             &self.commitments,
+            &self.map,
         ))
         .map_err(|e| e.to_string())?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE18".to_vec();
+        let mut data = b"XXSAVE19".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2100,7 +2201,8 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE18"
+            || (&data[..8] != b"XXSAVE19"
+                && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
                 && &data[..8] != b"XXSAVE15"
@@ -2131,7 +2233,22 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if &data[..8] == b"XXSAVE18" {
+        let mut world: Self = if &data[..8] == b"XXSAVE19" {
+            let (mut world, purchases, foraging, work, commitments, map): (
+                Self,
+                food_memory::FoodMemory,
+                food_memory::FoodMemory,
+                work_memory::WorkMemory,
+                commitment_memory::Commitments,
+                WorldMap,
+            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = purchases;
+            world.forage_memory = foraging;
+            world.work_memory = work;
+            world.commitments = commitments;
+            world.map = map;
+            world
+        } else if &data[..8] == b"XXSAVE18" {
             let (mut world, purchases, foraging, work, commitments): (
                 Self,
                 food_memory::FoodMemory,
@@ -2169,7 +2286,18 @@ impl World {
                 postcard::take_from_bytes::<Self>(&raw).map_err(|e| e.to_string())?;
             // Main used v15 for the widened genome. Early memory builds also used v15
             // and appended a purchase-memory payload to the same serialized world.
-            if !memory.is_empty() {
+            world.map = WorldMap::classic(world.seed);
+            if let Ok((spec, [])) = postcard::take_from_bytes::<MapSpec>(memory) {
+                if spec.seed == world.seed
+                    && spec.version == worldmap::GENERATOR_VERSION
+                    && (0.0..=spec.width()).contains(&spec.home_x)
+                    && (0.0..=spec.height()).contains(&spec.home_y)
+                {
+                    world.map = WorldMap::new(spec);
+                } else {
+                    world.food_memory = postcard::from_bytes(memory).map_err(|e| e.to_string())?;
+                }
+            } else if !memory.is_empty() {
                 world.food_memory = postcard::from_bytes(memory).map_err(|e| e.to_string())?;
             }
             world
@@ -2230,6 +2358,9 @@ impl World {
                 }
             }
         }
+        if &data[..8] != b"XXSAVE19" && &data[..8] != b"XXSAVE15" {
+            world.map = WorldMap::classic(world.seed);
+        }
         world.social.resize(world.agents.len(), 0.0);
         world.format = 15;
         if &data[..8] != b"XXSAVE08"
@@ -2243,6 +2374,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
+            && &data[..8] != b"XXSAVE19"
         {
             world.init_wildlife();
         }
@@ -2256,6 +2388,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
+            && &data[..8] != b"XXSAVE19"
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2270,6 +2403,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
+            && &data[..8] != b"XXSAVE19"
         {
             world.relocate_fertile_land();
         }
@@ -2369,7 +2503,8 @@ impl World {
             self.matches.len(),
             self.genomes.len(),
         ];
-        self.hill.validate()?;
+        self.hill
+            .validate(self.map.spec.width(), self.map.spec.height())?;
         if self.format != 15
             || n == 0
             || n > 1_200_000
@@ -2431,8 +2566,9 @@ impl World {
     }
 
     fn snapshot_metadata(&self) -> serde_json::Value {
-        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":WORLD_WIDTH,"map_height":WORLD_HEIGHT,"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
+        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
         result["hill"] = serde_json::json!(self.hill);
+        result["map"] = serde_json::json!(self.map.spec);
         result["wildlife"] = self.wildlife_summary();
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();

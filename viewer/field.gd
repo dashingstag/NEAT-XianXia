@@ -318,7 +318,7 @@ func _pick_site(p: Vector2) -> Dictionary:
 			if p.distance_to(centre)<22.0:
 				return {"kind":"markets","id":int(town.id),"market":int(town.id)}
 			for house in range(int(town.housing_blocks)):
-				var at := (centre+_house_origin(house)).clamp(Vector2(5,5),Vector2(2670,1900))
+				var at := _house_position(centre, house)
 				if Rect2(at-Vector2(2,3),Vector2(24,20)).has_point(p):
 					return {"kind":"house","id":house,"market":int(town.id)}
 		for shelter in world.get("shelters",[]):
@@ -368,6 +368,12 @@ func hill_footprint() -> Rect2:
 	var radius := float(hill.radius)
 	return Rect2(Vector2(hill.x,hill.y)-Vector2.ONE*radius,Vector2.ONE*radius*2.0)
 
+func _classic_terrain() -> bool:
+	return str(world.get("map", {}).get("size", "Classic")) == "Classic"
+
+func _house_position(center: Vector2, index: int) -> Vector2:
+	var limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)
+	return (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
 
 
 func _update_label_hover(point: Vector2) -> void:
@@ -504,7 +510,7 @@ func _label_clearance(market: Dictionary) -> float:
 	var center := Vector2(market.x, market.y)
 	var hill := hill_footprint()
 	var radius := _settlement_radius(market)
-	if center.distance_to(hill.get_center()) < hill.size.x * 0.5:
+	if _classic_terrain() and center.distance_to(hill.get_center()) < hill.size.x * 0.5:
 		radius = maxf(radius, 106.0) * 1.08 + 6.0
 	return maxf(15.0, radius * zoom)
 
@@ -516,7 +522,7 @@ func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
 			continue
 		var hill := hill_footprint()
 		var phase := float(market.get("id", 0)) * 0.8
-		if center.distance_to(hill.get_center()) < hill.size.x * 0.5:
+		if _classic_terrain() and center.distance_to(hill.get_center()) < hill.size.x * 0.5:
 			# Existing hillside villages occupy a cut bench with a visible retaining edge.
 			var bench := Vector2(maxf(radius, 106.0), maxf(radius * 0.72, 63.0))
 			draw_colored_polygon(_terrain_shape(center + Vector2(4, 12), bench * 1.08, phase), Color("68705e"))
@@ -577,8 +583,9 @@ func _draw() -> void:
 	draw_set_transform(offset,0,Vector2(zoom,zoom))
 	draw_rect(Rect2(0, 0, map_width, map_height), Color("93a575"))
 	var forest_view := Rect2(-offset / zoom, size / zoom)
-	_draw_coast_art(forest_view)
-	_draw_hill_art(forest_view)
+	if _classic_terrain():
+		_draw_coast_art(forest_view)
+		_draw_hill_art(forest_view)
 	var markets: Array = world.get("markets", [])
 	var forests: Array = world.get("wildlife", {}).get("forests", [])
 	# Paint the woodland floor before canopies so neighboring groves read together.
@@ -694,7 +701,7 @@ func _draw() -> void:
 		var blocks := int(m.housing_blocks)
 		var view_rect := Rect2(-offset/zoom,size/zoom).grow(25.0)
 		for j in range(blocks):
-			var at: Vector2 = (p + _house_origin(j)).clamp(Vector2(5,5),Vector2(2670,1900))
+			var at := _house_position(p, j)
 			if not view_rect.has_point(at):
 				continue
 			if not _glyph("site-glyphs-xianxia/home.png",at+Vector2(10,8),26,26):
@@ -826,7 +833,7 @@ func _draw() -> void:
 		draw_arc(focus_target,22.0,0,TAU,32,Color("ffedaa"),1.5)
 	if selected_index >= 0:
 		draw_arc(points[selected_index],4.5 if fidelity > 1 else 11.0,0,TAU,24,Color("ffedaa"),0.4 if fidelity > 1 else 2.0)
-	if fidelity == 1:
+	if fidelity == 1 and _classic_terrain():
 		draw_string(ThemeDB.fallback_font,Vector2(25,31),"WOODLAND GROVES",HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("deebc7"))
 		draw_string(ThemeDB.fallback_font,Vector2(2733,93),"COAST",HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("e2f2e6"))
 	draw_set_transform(Vector2.ZERO)

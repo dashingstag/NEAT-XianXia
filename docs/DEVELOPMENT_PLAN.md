@@ -13,6 +13,8 @@ Branch `frontier/m0-foundations`. All commits keep the user's uncommitted `viewe
 - Action IDs reserved on the enum comment: 39-41 hunt/combat, 42-45 taming, 46-49 guild, 50-53 founding, 54-57 qi, 58-63 spare. `sim-runner soak` added (`59a249a`): `--seeds N --steps M` reports per-seed population/trade/ecology plus a world digest.
 - Re-scoped: spatial grid and bounds-literal cleanup moved to M1 (natural home with the map rewrite); per-family candidate caps deferred until new action families land in M3.
 - Blocked: `python tools/dev.py doctor` fails — Godot executable not installed; all viewer/protocol/interactive checks pending.
+- M0 merged to main (`4ba285d`) and pushed; issue #17 closed with resolution comment.
+- M1 started on `frontier/m1-generated-world`: `worldmap` module with seeded, order-independent chunked generation (elevation/moisture/qi, terrain classes, MapSize Classic/x4/x25/x100, mundane homeland qi ring, persisted spec only — `0feb01a`). Still to land: generated placement of forests/patches/fertility for non-Classic sizes, scenario size option, viewer streaming/minimap, fog of war, spatial grid + bounds-literal cleanup.
 
 ## Player-facing goals
 

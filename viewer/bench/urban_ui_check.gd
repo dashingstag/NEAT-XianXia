@@ -64,6 +64,34 @@ func check_ui() -> void:
 		if not relations.is_empty():
 			ui.detail.meta_clicked.emit(str(int(relations[0].id)))
 			assert(int(ui.selected_input.value)==int(relations[0].id))
+	# Overlay a synthetic receipt on the legacy fixture; its shop has since changed hands.
+	var buyer: Dictionary = world.selected.duplicate(true)
+	var original := int(buyer.id)
+	for building in world.urban.buildings:
+		if int(building.kind) != 1 or building.owner == null:
+			continue
+		var shop := int(building.id)
+		var current := int(building.owner)
+		var previous := current + 1
+		buyer.last_purchase = {"shop_id":shop,"owner_id":previous,"outcome":"purchased","resolution_tick":120,"buyer_charge":8,"shop_proceeds":7,"market_levy":1}
+		var receipt: String = ui.PersonInspector.describe(buyer,world)
+		var shop_link := "shop/%s/%s" % [original,shop]
+		var seller_link := "seller/%s/%s" % [original,previous]
+		assert(receipt.contains("[url=%s]" % shop_link) and receipt.contains("[url=%s]" % seller_link))
+		ui.detail.meta_clicked.emit(seller_link)
+		assert(int(ui.selected_input.value)==previous)
+		ui.detail.meta_clicked.emit("buyer")
+		assert(int(ui.selected_input.value)==original)
+		ui.detail.meta_clicked.emit(shop_link)
+		assert(ui.site_selection.id==shop and ui.detail.text.contains("[url=buyer]"))
+		var owner_link := "owner/%s" % current
+		assert(ui.detail.text.contains("[url=%s]" % owner_link))
+		ui.detail.meta_clicked.emit(owner_link)
+		assert(int(ui.selected_input.value)==current and ui.purchase_buyer==original)
+		ui.detail.meta_clicked.emit("buyer")
+		assert(int(ui.selected_input.value)==original and ui.purchase_buyer==-1)
+		break
+	assert(buyer.has("last_purchase"),"Expected an occupied shop for navigation")
 	ui.field.show_zones = true
 	ui.field.pick_mode = "Buildings"
 	for building in world.urban.buildings:

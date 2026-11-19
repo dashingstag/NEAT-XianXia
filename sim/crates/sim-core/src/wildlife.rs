@@ -4,6 +4,68 @@ use std::collections::BTreeMap;
 const MAX_LIVING: usize = 1024;
 const MAX_HISTORY: usize = 4096;
 const FOREST_CAP: usize = 40;
+/// Data-driven species traits. New species (predators etc.) append a
+/// row here instead of adding `species ==` branches. Order matters:
+/// saved worlds and the wire store `species` as this table's index.
+#[derive(Clone, Copy, Debug)]
+pub struct SpeciesDef {
+    pub name: &'static str,
+    /// Age (days) at which the animal can breed.
+    pub adult_days: u32,
+    /// Days between matings.
+    pub cooldown_days: u32,
+    /// Gestation length in days.
+    pub gestation_days: u32,
+    /// Units eaten per feeding.
+    pub portion: u64,
+    /// Hunger gained per second.
+    pub hunger_rate: f32,
+    /// Maximum age in days.
+    pub lifespan_days: u32,
+    /// Ground speed units/second.
+    pub speed: f32,
+    /// Offspring per birth.
+    pub litter: u32,
+    /// Age assigned to founding population animals.
+    pub founding_age: u32,
+    /// True for animals that hunt other animals (predators, M2).
+    pub predator: bool,
+}
+pub const SPECIES: [SpeciesDef; 2] = [
+    SpeciesDef {
+        name: "Rabbit",
+        adult_days: 90,
+        cooldown_days: 45,
+        gestation_days: 30,
+        portion: 1,
+        hunger_rate: 0.08,
+        lifespan_days: 2500,
+        speed: 22.0,
+        litter: 2,
+        founding_age: 120,
+        predator: false,
+    },
+    SpeciesDef {
+        name: "Deer",
+        adult_days: 365,
+        cooldown_days: 365,
+        gestation_days: 200,
+        portion: 3,
+        hunger_rate: 0.12,
+        lifespan_days: 5000,
+        speed: 28.0,
+        litter: 1,
+        founding_age: 600,
+        predator: false,
+    },
+];
+impl SpeciesDef {
+    /// Traits for a species index. Unknown indices (e.g. a newer save on
+    /// an older build) degrade to the last known row rather than panic.
+    pub fn of(species: u8) -> &'static SpeciesDef {
+        SPECIES.get(species as usize).unwrap_or(&SPECIES[0])
+    }
+}
 const NAMES: [&str; 6] = [
     "Graze grass",
     "Eat berries",
@@ -87,7 +149,7 @@ impl Animal {
             .saturating_add((tick.saturating_sub(self.born) / rest::DAY_TICKS) as u32)
     }
     pub(super) fn adult(&self, tick: u64) -> bool {
-        self.age(tick) >= if self.species == 0 { 90 } else { 365 }
+        self.age(tick) >= SpeciesDef::of(self.species).adult_days
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -203,7 +265,7 @@ impl Wildlife {
             && a.pregnancy.is_none()
             && (a.last_mated == 0
                 || tick.saturating_sub(a.last_mated)
-                    >= if a.species == 0 { 45 } else { 365 } * rest::DAY_TICKS)
+                    >= SpeciesDef::of(a.species).cooldown_days as u64 * rest::DAY_TICKS)
     }
     fn compatible(&self, i: usize, j: usize, tick: u64) -> bool {
         if i == j || !self.fertile(i, tick) || !self.fertile(j, tick) {
@@ -298,7 +360,7 @@ impl World {
                     hunger: 15.0 + w.rng.unit() * 20.0,
                     energy: 75.0,
                     born: self.tick,
-                    initial_age: if species == 0 { 120 } else { 600 },
+                    initial_age: SpeciesDef::of(species).founding_age,
                     mother: NONE,
                     father: NONE,
                     pregnancy: None,
@@ -359,7 +421,7 @@ impl World {
                     score,
                 });
             };
-        let portion = if a.species == 0 { 1 } else { 3 };
+        let portion = SpeciesDef::of(a.species).portion;
         if let Some((id, g)) = stats
             .grass_idx
             .get(a.forest as usize)
@@ -533,14 +595,14 @@ impl World {
                 continue;
             }
             let a = &mut self.wildlife.animals[i];
-            a.hunger = (a.hunger + DT * if a.species == 0 { 0.08 } else { 0.12 }).min(120.0);
+            a.hunger = (a.hunger + DT * SpeciesDef::of(a.species).hunger_rate).min(120.0);
             a.energy = (a.energy - DT * if a.action == 3 { 0.005 } else { 0.015 }).max(0.0);
             if a.hunger > 95.0 || a.energy <= 0.0 {
                 a.health = (a.health - DT * 0.6).max(0.0);
             } else if a.hunger < 40.0 {
                 a.health = (a.health + DT * 0.03).min(100.0);
             }
-            if a.health <= 0.0 || a.age(self.tick) > if a.species == 0 { 2500 } else { 5000 } {
+            if a.health <= 0.0 || a.age(self.tick) > SpeciesDef::of(a.species).lifespan_days {
                 a.alive = false;
                 a.pregnancy = None;
                 self.wildlife.ledger.deaths += 1;
@@ -562,7 +624,7 @@ impl World {
             let a = &mut self.wildlife.animals[i];
             let d = dist(a.x, a.y, a.goal_x, a.goal_y);
             if d > 5.0 {
-                let speed = if a.species == 0 { 22.0 } else { 28.0 }
+                let speed = SpeciesDef::of(a.species).speed
                     * if a.action == 2 { 1.6 } else { 1.0 }
                     * if a.adult(self.tick) { 1.0 } else { 0.6 };
                 let step = (speed * DT).min(d - 4.0);
@@ -576,7 +638,7 @@ impl World {
             let action = a.action;
             let target = a.target as usize;
             if [0, 1].contains(&action) && a.timer >= 2.0 && (a.hunger > 20.0 || a.energy < 65.0) {
-                let q = if a.species == 0 { 1 } else { 3 };
+                let q = SpeciesDef::of(a.species).portion;
                 let eaten = if action == 0 {
                     if let Some(g) = self.wildlife.grass.get_mut(target) {
                         if g.stock >= q {
@@ -624,11 +686,8 @@ impl World {
                 } else {
                     (target, i)
                 };
-                let days = if self.wildlife.animals[mother].species == 0 {
-                    30
-                } else {
-                    200
-                };
+                let days = SpeciesDef::of(self.wildlife.animals[mother].species)
+                    .gestation_days as u64;
                 self.wildlife.animals[mother].pregnancy = Some(AnimalPregnancy {
                     father: father as u32,
                     due: self.tick + days * rest::DAY_TICKS,
@@ -661,7 +720,7 @@ impl World {
         if self.tick < p.due || !w.animals[mother].alive {
             return;
         }
-        let count = if w.animals[mother].species == 0 { 2 } else { 1 };
+        let count = SpeciesDef::of(w.animals[mother].species).litter as usize;
         let forest = w.animals[mother].forest;
         if w.animals[mother].hunger >= 50.0
             || w.animals[mother].energy < 30.0
@@ -734,7 +793,7 @@ impl World {
         let Some(a) = self.wildlife.animals.get(i) else {
             return serde_json::Value::Null;
         };
-        serde_json::json!({"x":a.x,"y":a.y,"id":i,"species":if a.species==0{"Rabbit"}else{"Deer"},"gender":if a.female{"Female"}else{"Male"},"age_days":a.age(self.tick),"adult":a.adult(self.tick),"alive":a.alive,"health":a.health,"hunger":a.hunger,"energy":a.energy,"mother":if a.mother==NONE{None}else{Some(a.mother)},"father":if a.father==NONE{None}else{Some(a.father)},"pregnancy_days_left":a.pregnancy.as_ref().map(|p|p.due.saturating_sub(self.tick) as f32/rest::DAY_TICKS as f32),"forest":a.forest,"action":NAMES[a.action as usize],"generation":a.genome.generation,"genome_nodes":a.genome.nodes.len(),"genome_genes":a.genome.genes.len(),"sensors":ANIMAL_SENSORS,"choices":self.animal_choices(i,&ForestStats::build(&self.wildlife)).iter().map(|c|serde_json::json!({"action":NAMES[c.action as usize],"score":c.score,"inputs":c.inputs.to_vec()})).collect::<Vec<_>>()})
+        serde_json::json!({"x":a.x,"y":a.y,"id":i,"species":SpeciesDef::of(a.species).name,"gender":if a.female{"Female"}else{"Male"},"age_days":a.age(self.tick),"adult":a.adult(self.tick),"alive":a.alive,"health":a.health,"hunger":a.hunger,"energy":a.energy,"mother":if a.mother==NONE{None}else{Some(a.mother)},"father":if a.father==NONE{None}else{Some(a.father)},"pregnancy_days_left":a.pregnancy.as_ref().map(|p|p.due.saturating_sub(self.tick) as f32/rest::DAY_TICKS as f32),"forest":a.forest,"action":NAMES[a.action as usize],"generation":a.genome.generation,"genome_nodes":a.genome.nodes.len(),"genome_genes":a.genome.genes.len(),"sensors":ANIMAL_SENSORS,"choices":self.animal_choices(i,&ForestStats::build(&self.wildlife)).iter().map(|c|serde_json::json!({"action":NAMES[c.action as usize],"score":c.score,"inputs":c.inputs.to_vec()})).collect::<Vec<_>>()})
     }
     pub(super) fn validate_wildlife(&self) -> Result<(), String> {
         let w = &self.wildlife;
@@ -751,7 +810,7 @@ impl World {
             }
         }
         for (i, a) in w.animals.iter().enumerate() {
-            if a.species > 1
+            if a.species as usize >= SPECIES.len()
                 || a.action > 5
                 || a.forest as usize >= w.forests.len()
                 || ![a.x, a.y, a.health, a.hunger, a.energy]

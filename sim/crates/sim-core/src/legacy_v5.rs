@@ -310,6 +310,7 @@ impl From<LegacyWorld> for World {
             commitments: Default::default(),
             hill: Hill::default(),
             map: crate::WorldMap::classic(old.seed),
+            explored: crate::Exploration::default(),
         }
     }
 }

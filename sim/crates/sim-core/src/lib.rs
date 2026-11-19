@@ -8,7 +8,7 @@ mod banking;
 mod legacy_v12;
 mod legacy_v13;
 pub use landscape::Hill;
-pub use worldmap::{MapSize, MapSpec, Terrain, WorldMap};
+pub use worldmap::{Exploration, MapSize, MapSpec, Terrain, WorldMap};
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;
@@ -386,6 +386,8 @@ pub struct World {
     commitments: commitment_memory::Commitments,
     #[serde(skip, default = "default_checkpoint_map")]
     pub map: WorldMap,
+    #[serde(skip)]
+    pub explored: Exploration,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -581,6 +583,7 @@ impl World {
             commitments: Default::default(),
             hill,
             map: WorldMap::new(spec),
+            explored: Exploration::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -781,6 +784,11 @@ impl World {
         w.sync_urban();
         w.sync_relationships();
         w.sync_shelters();
+        // Each settlement starts knowing its immediate surroundings.
+        for m in 0..w.markets.len() {
+            let (x, y) = (w.markets[m].x, w.markets[m].y);
+            w.explored.reveal(m, x, y, 500.0);
+        }
         w.refresh();
         Ok(w)
     }
@@ -1833,6 +1841,7 @@ impl World {
         self.banking_step();
         self.relationships_step();
         self.wildlife_step();
+        self.update_explored();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2181,6 +2190,7 @@ impl World {
             &self.work_memory,
             &self.commitments,
             &self.map,
+            &self.explored,
         ))
         .map_err(|e| e.to_string())?;
         let compressed =
@@ -2234,19 +2244,21 @@ impl World {
             return Err("Checkpoint length mismatch".into());
         }
         let mut world: Self = if &data[..8] == b"XXSAVE19" {
-            let (mut world, purchases, foraging, work, commitments, map): (
+            let (mut world, purchases, foraging, work, commitments, map, explored): (
                 Self,
                 food_memory::FoodMemory,
                 food_memory::FoodMemory,
                 work_memory::WorkMemory,
                 commitment_memory::Commitments,
                 WorldMap,
+                Exploration,
             ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
             world.commitments = commitments;
             world.map = map;
+            world.explored = explored;
             world
         } else if &data[..8] == b"XXSAVE18" {
             let (mut world, purchases, foraging, work, commitments): (
@@ -2287,13 +2299,17 @@ impl World {
             // Main used v15 for the widened genome. Early memory builds also used v15
             // and appended a purchase-memory payload to the same serialized world.
             world.map = WorldMap::classic(world.seed);
-            if let Ok((spec, [])) = postcard::take_from_bytes::<MapSpec>(memory) {
+            if let Ok((spec, remaining)) = postcard::take_from_bytes::<MapSpec>(memory) {
                 if spec.seed == world.seed
                     && spec.version == worldmap::GENERATOR_VERSION
                     && (0.0..=spec.width()).contains(&spec.home_x)
                     && (0.0..=spec.height()).contains(&spec.home_y)
                 {
                     world.map = WorldMap::new(spec);
+                    if !remaining.is_empty() {
+                        world.explored =
+                            postcard::from_bytes(remaining).map_err(|e| e.to_string())?;
+                    }
                 } else {
                     world.food_memory = postcard::from_bytes(memory).map_err(|e| e.to_string())?;
                 }
@@ -2569,6 +2585,12 @@ impl World {
         let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
         result["hill"] = serde_json::json!(self.hill);
         result["map"] = serde_json::json!(self.map.spec);
+        result["explored_chunks"] = serde_json::json!(self
+            .explored
+            .chunks
+            .iter()
+            .map(|s| s.len())
+            .collect::<Vec<_>>());
         result["wildlife"] = self.wildlife_summary();
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();

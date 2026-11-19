@@ -66,6 +66,8 @@ def server(binary, folder, checkpoint=None, scenario="protocol"):
     settings = SCENARIOS[scenario]
     command = [binary, "serve", "--port", "0", "--agents", str(settings["agents"]),
                "--seed", str(settings["seed"]), "--threads", "2", "--checkpoint", save]
+    if settings.get("map"):
+        command += ["--map", str(settings["map"])]
     if save.is_file():
         command.append("--load")
     with (folder / "backend.log").open("w") as log:
@@ -211,7 +213,7 @@ def player_lock(folder):
         yield
 
 
-def play(run, fresh=False):
+def play(run, scenario="founders", fresh=False):
     folder = run / "player" if fresh else Path(
         os.getenv("XIANXIA_PLAYER_DIR", Path.home() / ".xianxia-handoff")
     ).resolve()
@@ -220,7 +222,7 @@ def play(run, fresh=False):
         print(f"Fresh game profile: {folder}", flush=True)
     with player_lock(folder):
         binary = Path(shutil.copy2(backend(), run))
-        with server(binary, run, folder / "world.snapshot", "founders") as port:
+        with server(binary, run, folder / "world.snapshot", scenario) as port:
             subprocess.run([godot(), "--path", ROOT / "viewer", "--log-file", run / "viewer.log"],
                            env={**os.environ, "XIANXIA_PORT": str(port)}, check=True)
 
@@ -258,8 +260,12 @@ def main():
     tests.add_argument("suite", choices=["sim", "viewer", "connection", "protocol", "replay", "isolation", "labs", "world", "all"])
     for name in ["doctor", "package"]:
         sub.add_parser(name)
-    sub.add_parser("play").add_argument("--fresh", action="store_true",
-                                       help="Start with a new profile in this run's evidence folder")
+    play_command = sub.add_parser("play")
+    play_command.add_argument("--fresh", action="store_true",
+                              help="Start with a new profile in this run's evidence folder")
+    play_command.add_argument(
+        "--scenario", default="founders",
+        choices=[k for k, v in SCENARIOS.items() if "agents" in v])
     sub.add_parser("preview").add_argument("--fixture", choices=["town-shop"], default="town-shop")
     sub.add_parser("bench").add_argument("--scenario", choices=["mature-town"], default="mature-town")
     args = parser.parse_args()
@@ -291,7 +297,7 @@ def main():
         elif args.command == "package":
             package(run)
         else:
-            play(run, fresh=args.fresh)
+            play(run, scenario=args.scenario, fresh=args.fresh)
     except Exception as error:
         record(run / "result.json", {"args": vars(args), "passed": False, "error": repr(error)})
         raise

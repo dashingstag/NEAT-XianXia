@@ -163,15 +163,24 @@ mod tests {
         }
         let generated =
             World::new_with_size(8, 315, crate::Hill::default(), crate::MapSize::X4).unwrap();
-        let payload = postcard::to_allocvec(&(&generated, &generated.map)).unwrap();
-        let mut bytes = b"XXSAVE15".to_vec();
-        bytes.extend((payload.len() as u64).to_le_bytes());
-        bytes.extend(zstd::stream::encode_all(payload.as_slice(), 1).unwrap());
-        std::fs::write(&path, bytes).unwrap();
-        let restored = World::load(&path).unwrap();
-        assert_eq!(restored.map.spec, generated.map.spec);
-        restored.save(&path).unwrap();
-        assert_eq!(World::load(&path).unwrap().map.spec, generated.map.spec);
+        for has_exploration in [false, true] {
+            let payload = if has_exploration {
+                postcard::to_allocvec(&(&generated, &generated.map, &generated.explored)).unwrap()
+            } else {
+                postcard::to_allocvec(&(&generated, &generated.map)).unwrap()
+            };
+            let mut bytes = b"XXSAVE15".to_vec();
+            bytes.extend((payload.len() as u64).to_le_bytes());
+            bytes.extend(zstd::stream::encode_all(payload.as_slice(), 1).unwrap());
+            std::fs::write(&path, bytes).unwrap();
+            let restored = World::load(&path).unwrap();
+            assert_eq!(restored.map.spec, generated.map.spec);
+            assert_eq!(restored.explored.chunks.is_empty(), !has_exploration);
+            restored.save(&path).unwrap();
+            let replay = World::load(&path).unwrap();
+            assert_eq!(replay.map.spec, generated.map.spec);
+            assert_eq!(replay.explored.chunks, restored.explored.chunks);
+        }
         std::fs::remove_file(path).unwrap();
     }
 

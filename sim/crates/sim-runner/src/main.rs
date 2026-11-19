@@ -417,6 +417,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                             return Err("Step budget must be 1..10,000".into());
                         }
                         for _ in 0..ticks {
+                            world.watch_person(selected);
                             world.step(true);
                         }
                         world.check()?;
@@ -493,6 +494,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         }
         let mut budget = 32;
         while accumulator >= DT && budget > 0 {
+            world.watch_person(selected);
             world.step(true);
             accumulator -= DT;
             budget -= 1;
@@ -500,6 +502,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         if !paused && client.is_some() && advance_remaining > 0 {
             let mut batch = 32;
             while batch > 0 && advance_remaining > 0 {
+                world.watch_person(selected);
                 world.step(true);
                 advance_remaining -= 1;
                 batch -= 1;

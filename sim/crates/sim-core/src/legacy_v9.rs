@@ -67,6 +67,7 @@ impl From<LegacyWorld> for World {
             urban: Urban::default(),
             banking: Banking::default(),
             relationships: Relationships::default(),
+            watch: Default::default(),
         }
     }
 }

@@ -1120,6 +1120,103 @@ impl World {
         }
         out
     }
+    /// Read-only pre-tick availability probe. Shop counters count each premises once,
+    /// even when several catalog products pass. urban_candidates counts action/target pairs.
+    pub fn retail_supply_probe(&self, actor: Option<usize>) -> [(&'static str, u64); 13] {
+        let mut ready_count = 0u64;
+        let mut occupied_count = 0u64;
+        let mut open_count = 0u64;
+        let mut stocked_count = 0u64;
+        let mut open_stocked_count = 0u64;
+        let mut affordable_count = 0u64;
+        let mut fits_count = 0u64;
+        let mut urban_candidates_count = 0u64;
+        let mut can_fund_order_count = 0u64;
+        let mut matching_supplier_count = 0u64;
+        let mut funded_supplier_count = 0u64;
+        let mut pending_firm_job_count = 0u64;
+        let mut order_available_count = 0u64;
+        for (id, b) in self
+            .urban
+            .buildings
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.kind == 1 && b.ready)
+        {
+            ready_count += 1;
+            if b.owner == NONE {
+                continue;
+            }
+            occupied_count += 1;
+            let open = self.tick.saturating_sub(b.last_open) < 30;
+            let mut stocked = false;
+            let mut affordable = false;
+            let mut fits = false;
+            for sku in Self::catalog(b.line) {
+                if Self::inventory(b, sku) == 0 {
+                    continue;
+                }
+                stocked = true;
+                if let Some(i) = actor {
+                    let delivery = if sku == 16 { 2 } else { 0 };
+                    if self.agents.coins[i] >= Self::retail_price(sku) + delivery {
+                        affordable = true;
+                        fits |= match sku {
+                            9..=12 => self.agents.room(i) >= WEIGHTS[sku],
+                            14 | 15 => self.agents.room(i) >= WARE_WEIGHT[sku - 13],
+                            _ => true, // furniture is delivered, meat is consumed
+                        };
+                    }
+                }
+            }
+            let skus = Self::catalog(b.line);
+            let can_fund = |sku| b.cash >= Self::wholesale_price(sku) + 2;
+            let supplied = |sku| {
+                self.urban.buildings.iter().any(|f| {
+                    f.kind == 2 && f.ready && f.owner != NONE && Self::inventory(f, sku) > 0
+                })
+            };
+            can_fund_order_count += u64::from(skus.iter().any(|&sku| can_fund(sku)));
+            matching_supplier_count += u64::from(skus.iter().any(|&sku| supplied(sku)));
+            funded_supplier_count +=
+                u64::from(skus.iter().any(|&sku| can_fund(sku) && supplied(sku)));
+            pending_firm_job_count += u64::from(
+                self.urban
+                    .jobs
+                    .iter()
+                    .flatten()
+                    .any(|j| j.firm == id as u32),
+            );
+            order_available_count += u64::from(self.procurement(id).is_some());
+            open_count += u64::from(open);
+            stocked_count += u64::from(stocked);
+            open_stocked_count += u64::from(open && stocked);
+            affordable_count += u64::from(open && affordable);
+            fits_count += u64::from(open && fits);
+        }
+        if let Some(i) = actor.filter(|_| fits_count > 0) {
+            urban_candidates_count = self
+                .urban_offers(i)
+                .iter()
+                .filter(|c| c.action == Action::ShopGoods)
+                .count() as u64;
+        }
+        [
+            ("ready", ready_count),
+            ("occupied", occupied_count),
+            ("open", open_count),
+            ("stocked", stocked_count),
+            ("open_stocked", open_stocked_count),
+            ("affordable", affordable_count),
+            ("fits", fits_count),
+            ("urban_candidates", urban_candidates_count),
+            ("can_fund_order", can_fund_order_count),
+            ("matching_supplier", matching_supplier_count),
+            ("funded_supplier", funded_supplier_count),
+            ("pending_firm_job", pending_firm_job_count),
+            ("order_available", order_available_count),
+        ]
+    }
     fn catalog(line: u8) -> Vec<usize> {
         match line {
             0 => vec![14, 15],
@@ -2454,6 +2551,31 @@ mod tests {
         assert!(w.trace(4).unwrap().last_decision.is_none());
     }
 
+    #[test]
+    fn retail_probe_separates_stock_open_hours_and_affordability() {
+        let mut w = funded();
+        let shop = construct(&mut w, 1);
+        w.tick += 40;
+        w.urban.buildings[shop].line = 3;
+        w.urban.buildings[shop].owner = 2;
+        let probe = |w: &World| {
+            w.retail_supply_probe(Some(3))
+                .into_iter()
+                .collect::<BTreeMap<_, _>>()
+        };
+        let empty = probe(&w);
+        w.urban.buildings[shop].wares[4] = 1;
+        assert_eq!(probe(&w)["stocked"], empty["stocked"] + 1);
+        assert_eq!(probe(&w)["open_stocked"], empty["open_stocked"]);
+        w.urban.buildings[shop].last_open = w.tick;
+        w.agents.coins[3] = 0;
+        assert_eq!(probe(&w)["open_stocked"], empty["open_stocked"] + 1);
+        assert_eq!(probe(&w)["affordable"], 0);
+        w.agents.coins[3] = World::retail_price(17);
+        assert!(probe(&w)["fits"] > 0);
+        w.tick += 30;
+        assert_eq!(probe(&w)["open_stocked"], 0);
+    }
     #[test]
     fn two_buyers_compete_for_the_last_shop_meal() {
         let mut w = funded();

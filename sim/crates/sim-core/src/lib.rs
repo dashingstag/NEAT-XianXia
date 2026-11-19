@@ -14,6 +14,7 @@ mod urban;
 use banking::Banking;
 mod wealth;
 use urban::Urban;
+pub use wealth::WealthView;
 mod civic;
 mod economy;
 mod education;
@@ -2168,11 +2169,16 @@ impl World {
         self.check()
     }
     pub fn summary(&self) -> serde_json::Value {
+        let mut report = self.snapshot_metadata();
+        report["leaderboard"] = self.wealth_leaderboard();
+        report
+    }
+
+    fn snapshot_metadata(&self) -> serde_json::Value {
         let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":WORLD_WIDTH,"map_height":WORLD_HEIGHT,"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
         result["wildlife"] = self.wildlife_summary();
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
-        result["leaderboard"] = self.wealth_leaderboard();
         result["banking"] = self.banking_summary();
         result["relationships"] = self.relationships_summary();
         result["banks"] = result["banking"]["banks"].clone();
@@ -2190,6 +2196,23 @@ impl World {
         paused: bool,
         animal: Option<usize>,
     ) -> Vec<u8> {
+        self.viewer_snapshot(
+            limit,
+            selected,
+            paused,
+            animal,
+            Some(&self.wealth_leaderboard()),
+        )
+    }
+
+    pub fn viewer_snapshot(
+        &self,
+        limit: usize,
+        selected: Option<usize>,
+        paused: bool,
+        animal: Option<usize>,
+        leaderboard: Option<&serde_json::Value>,
+    ) -> Vec<u8> {
         let visible_convoys: std::collections::BTreeSet<usize> = self
             .convoys
             .iter()
@@ -2198,7 +2221,10 @@ impl World {
             .take(2000)
             .map(|(i, _)| i)
             .collect();
-        let mut metadata = self.summary();
+        let mut metadata = self.snapshot_metadata();
+        if let Some(board) = leaderboard {
+            metadata["leaderboard"] = board.clone();
+        }
         if let Some(id) = selected {
             metadata["selected"] = serde_json::to_value(self.trace(id)).unwrap_or_default();
         }

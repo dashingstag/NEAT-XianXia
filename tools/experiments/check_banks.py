@@ -3,6 +3,8 @@ import json
 from check_protocol import send, snapshot
 
 def check(stream):
+    assert "leaderboard" not in snapshot(stream)
+    send(stream, {"command":"watch_wealth","enabled":True})
     send(stream, {"command": "pause", "value": True})
     initial = snapshot(stream)
     assert initial["banking"]["loans"] and any(b["ready"] for b in initial["banks"])
@@ -15,9 +17,12 @@ def check(stream):
     send(stream, {"command": "step", "ticks": 50})
     expected = snapshot(stream)
     send(stream, {"command": "load"})
+    assert snapshot(stream)["leaderboard"] == initial["leaderboard"]
     send(stream, {"command": "step", "ticks": 50})
     restored = snapshot(stream)
     assert restored["banking"] == expected["banking"]
     assert restored["coins"] == expected["coins"]
     assert restored["leaderboard"] == expected["leaderboard"]
+    send(stream, {"command":"watch_wealth","enabled":False})
+    assert "leaderboard" not in snapshot(stream)
     print(json.dumps({"bank_protocol": "passed", "loan_replay": "passed", "active_loans": len(restored["banking"]["loans"])}))

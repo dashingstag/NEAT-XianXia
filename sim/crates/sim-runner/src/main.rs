@@ -199,6 +199,9 @@ fn run() -> Result<(), String> {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 enum Command {
+    WatchWealth {
+        enabled: bool,
+    },
     Pause {
         value: bool,
     },
@@ -341,6 +344,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
     let mut paused = true;
     let mut speed = 1.0f32;
     let mut advance_remaining = 0u64;
+    let mut wealth = sim_core::WealthView::default();
     let mut selected = Some(0usize);
     let mut selected_animal = None;
     let mut last = Instant::now();
@@ -358,6 +362,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
     loop {
         if client.is_none() {
             if let Ok((stream, _)) = listener.accept() {
+                wealth = Default::default();
                 client = Some(Client::new(stream)?);
                 eprintln!("Viewer connected");
             }
@@ -379,7 +384,12 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         for value in incoming {
             let result: Result<String, String> =
                 (|| match serde_json::from_value::<Command>(value).map_err(|e| e.to_string())? {
+                    Command::WatchWealth { enabled } => {
+                        wealth.subscribe(enabled);
+                        Ok("Wealth subscription updated".into())
+                    }
                     Command::MortalityTest { market, count } => {
+                        wealth.invalidate();
                         let n = world.mortality_test(market, count)?;
                         Ok(format!(
                             "Test: {n} nearby individuals died; run the simulation to observe jobs"
@@ -453,6 +463,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                     }
                     Command::Reset { agents, seed } => {
                         advance_remaining = 0;
+                        wealth.invalidate();
                         world = World::new(agents, seed)?;
                         selected = Some(0);
                         selected_animal = None;
@@ -470,6 +481,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                     }
                     Command::Load => {
                         advance_remaining = 0;
+                        wealth.invalidate();
                         world = World::load(&o.checkpoint)?;
                         paused = true;
                         selected = Some(0);
@@ -520,7 +532,13 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         }
         let snapshot = if now >= next_snapshot && client.is_some() {
             next_snapshot = now + Duration::from_millis(100);
-            Some(world.snapshot_with_wildlife(20_000, selected, paused, selected_animal))
+            Some(world.viewer_snapshot(
+                20_000,
+                selected,
+                paused,
+                selected_animal,
+                wealth.report(&world),
+            ))
         } else {
             None
         };

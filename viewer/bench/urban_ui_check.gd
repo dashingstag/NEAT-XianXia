@@ -1,6 +1,9 @@
 extends SceneTree
 # Uses a saved CLI report only. Never connects to the player's backend.
 class OfflineView extends "res://main.gd":
+	var commands: Array = []
+	func send(command: Dictionary) -> void:
+		commands.append(command)
 	func _connect() -> void:
 		pass
 	func _process(_delta: float) -> void:
@@ -40,6 +43,12 @@ func check_ui() -> void:
 		ui.status.text = "Offline town fixture"
 		return
 	assert(ui.counter.text.contains("BALANCED"))
+	ui.connected = true
+	ui.inspector_tabs.current_tab = ui.inspector_tabs.get_tab_idx_from_control(ui.inspector_tabs.get_node("Wealth"))
+	assert(ui.commands.back() == {"command":"watch_wealth","enabled":true})
+	ui.inspector_tabs.current_tab = 0
+	assert(ui.commands.back() == {"command":"watch_wealth","enabled":false})
+	ui.connected = false
 	assert(ui.markets.text.contains("DISTRICTS / PROPERTY / BUSINESS"))
 	assert(ui.markets.text.contains("Town"))
 	for job in world.urban.get("operator_jobs",[]):

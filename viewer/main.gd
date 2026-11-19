@@ -215,6 +215,7 @@ func _ready() -> void:
 	leaderboard.add_theme_font_size_override("normal_font_size",14)
 	leaderboard.meta_clicked.connect(func(meta: Variant): _select_agent(str(meta).to_int()))
 	wealth_panel.add_child(leaderboard)
+	inspector_tabs.tab_changed.connect(_watch_wealth)
 	var resource_panel := VBoxContainer.new()
 	resource_panel.name = "Add resources"
 	resource_panel.add_theme_constant_override("separation",12)
@@ -241,6 +242,10 @@ func _ready() -> void:
 	notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	layout.add_child(notice)
 	_connect()
+
+func _watch_wealth(_tab: int) -> void:
+	if connected:
+		send({"command":"watch_wealth","enabled":inspector_tabs.get_current_tab_control().name == "Wealth"})
 
 func _connect() -> void:
 	purchase_buyer = -1
@@ -501,6 +506,7 @@ func _process(_delta: float) -> void:
 		connected = true
 		status.text = "CONNECTED / Rust on loopback TCP"
 		send({"command":"select","agent":0})
+		_watch_wealth(inspector_tabs.current_tab)
 	var available := tcp.get_available_bytes()
 	if available > 0:
 		var response := tcp.get_data(available)
@@ -569,11 +575,14 @@ func _decode(data: PackedByteArray) -> void:
 	counter.text = "%s living / %s brains | %.1fs | %s decisions | %s sales | %s shipments | ledger %s" % [state.living_agents,state.allocated_agents,float(state.seconds),stats.get("decisions",0),stats.get("trades",0),stats.get("shipments",0),"BALANCED" if balanced else "ERROR"]
 	counter.text += " | %s convoys" % int(state.get("convoy_count",0))
 	var wealth: Dictionary = state.get("leaderboard",{})
-	var wealth_text := "[color=#a8cea0]Living people · estimated copper value[/color]\nClick a name to inspect.\n\n"
-	for row in wealth.get("rows",[]):
-		wealth_text += "[b]%s. [url=%s]%s[/url][/b]\n[color=#e5c78e]Net worth %s copper[/color] / %s\nCoins %s / assets %s / debt %s\nWallet %s · business cash %s · stored cash %s\nHomes %s (%s) · business stock %s\nBelongings / deliveries %s · businesses %s\n\n" % [int(row.rank),int(row.id),row.name,int(row.net_worth),row.village,int(row.coins),int(row.assets_value),int(row.get("debt",row.arrears)),int(row.wallet),int(row.business_cash),int(row.stored_cash),int(row.homes),int(row.homes_value),int(row.business_stock),int(row.belongings),int(row.businesses)]
-	wealth_text += "[color=#a8b5ac]%s[/color]" % wealth.get("valuation","Waiting for wealth data")
-	leaderboard.text = wealth_text
+	if state.has("leaderboard"):
+		var wealth_text := "[color=#a8cea0]Living people · estimated copper value[/color]\nClick a name to inspect.\n\n"
+		for row in wealth.get("rows",[]):
+			wealth_text += "[b]%s. [url=%s]%s[/url][/b]\n[color=#e5c78e]Net worth %s copper[/color] / %s\nCoins %s / assets %s / debt %s\nWallet %s · business cash %s · stored cash %s\nHomes %s (%s) · business stock %s\nBelongings / deliveries %s · businesses %s\n\n" % [int(row.rank),int(row.id),row.name,int(row.net_worth),row.village,int(row.coins),int(row.assets_value),int(row.get("debt",row.arrears)),int(row.wallet),int(row.business_cash),int(row.stored_cash),int(row.homes),int(row.homes_value),int(row.business_stock),int(row.belongings),int(row.businesses)]
+		wealth_text += "[color=#a8b5ac]%s[/color]" % wealth.get("valuation","Waiting for wealth data")
+		leaderboard.text = wealth_text
+	else:
+		leaderboard.text = "Waiting for wealth data"
 	var info: Variant = state.get("selected")
 	var animal: Variant = state.get("selected_animal")
 	vitals.visible = site_selection.is_empty()

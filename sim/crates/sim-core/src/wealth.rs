@@ -5,6 +5,43 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
 };
 
+/// Per-viewer subscription. Same-tick edits invalidate the cached revision.
+#[derive(Default)]
+pub struct WealthView {
+    enabled: bool,
+    cached: Option<(u64, serde_json::Value)>,
+    builds: u64,
+}
+
+impl WealthView {
+    pub fn subscribe(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.invalidate();
+        }
+    }
+    pub fn invalidate(&mut self) {
+        self.cached = None;
+    }
+    pub fn builds(&self) -> u64 {
+        self.builds
+    }
+    pub fn report(&mut self, world: &World) -> Option<&serde_json::Value> {
+        if !self.enabled {
+            return None;
+        }
+        if self
+            .cached
+            .as_ref()
+            .is_none_or(|(tick, _)| *tick != world.tick)
+        {
+            self.cached = Some((world.tick, world.wealth_leaderboard()));
+            self.builds += 1;
+        }
+        self.cached.as_ref().map(|(_, board)| board)
+    }
+}
+
 // Copper reference prices, independent of fluctuating bids and asks.
 const RAW_VALUE: [u64; GOODS] = [2, 4, 3, 3, 100, 10, 1, 6, 3, 18, 18, 18, 18];
 const WARE_VALUE: [u64; 5] = [9, 18, 16, 30, 4];
@@ -115,6 +152,30 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn subscription_reuses_only_the_current_world_revision() {
+        let mut w = World::new(64, 10).unwrap();
+        let mut view = WealthView::default();
+        assert!(view.report(&w).is_none());
+        assert_eq!(view.builds(), 0);
+        view.subscribe(true);
+        for _ in 0..3 {
+            assert_eq!(view.report(&w), Some(&w.wealth_leaderboard()));
+        }
+        assert_eq!(view.builds(), 1);
+        w.step(false);
+        assert_eq!(view.report(&w), Some(&w.wealth_leaderboard()));
+        assert_eq!(view.builds(), 2);
+        w.agents.coins[9] += 1000;
+        view.invalidate();
+        assert_eq!(view.report(&w), Some(&w.wealth_leaderboard()));
+        assert_eq!(view.builds(), 3);
+        view.subscribe(false);
+        assert!(view.report(&w).is_none());
+        view.subscribe(true);
+        assert_eq!(view.report(&w), Some(&w.wealth_leaderboard()));
+        assert_eq!(view.builds(), 4);
+    }
     #[test]
     fn ranking_is_stable_excludes_dead_and_does_not_change_the_world() {
         let mut w = World::new(64, 42).unwrap();

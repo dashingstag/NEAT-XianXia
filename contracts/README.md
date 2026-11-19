@@ -1,5 +1,7 @@
 # Runtime contracts
 
+Live viewers request the optional leaderboard with `{"command":"watch_wealth","enabled":true}` and unsubscribe by sending false. Each connection starts unsubscribed. Closed-tab frames omit the field. Subscribed frames include a complete ranking, including when paused, so a dropped frame cannot lose an update. The server reuses the ranking across unchanged ticks and invalidates it on load, reset and mortality edits. Full experiment summaries and offline town fixtures still include the ranking.
+
 ## Watched-purchase inspector contract
 
 For the last-item acceptance scenario, expose an optional `last_decision` on the selected person. A missing or null value means no captured decision. Keep the existing `choices` as a preview computed at inspection time. Capture the shop and owner IDs when deciding so a later ownership change cannot rewrite history.

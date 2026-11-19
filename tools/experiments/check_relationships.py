@@ -4,6 +4,7 @@ from pathlib import Path
 from check_protocol import send, snapshot
 
 def check(stream, out):
+    send(stream, {"command":"watch_wealth","enabled":True})
     send(stream, {"command": "pause", "value": True})
     send(stream, {"command": "step", "ticks": 1000})
     world = snapshot(stream)

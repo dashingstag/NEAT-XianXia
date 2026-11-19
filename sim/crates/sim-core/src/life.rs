@@ -215,6 +215,35 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn child_becomes_adult_after_checkpointed_age_boundary() {
+        let mut w = World::new(2, 42).unwrap();
+        w.prepare_family_demo().unwrap();
+        w.birth(1, 0);
+        let child = 2;
+        assert_eq!(w.people[child].age_days(w.tick), 0);
+        w.tick = 18 * 365 * rest::DAY_TICKS - 1;
+        assert_eq!(w.people[child].age_days(w.tick), 18 * 365 - 1);
+        assert!(!w.is_adult(child));
+        let (offers, count) = w.offer(child);
+        assert!(offers[..count]
+            .iter()
+            .all(|candidate| matches!(candidate.action, Action::Rest | Action::CareFamily)));
+
+        let path =
+            std::env::temp_dir().join(format!("xianxia-child-age-{}.snapshot", std::process::id()));
+        w.save(&path).unwrap();
+        let mut restored = World::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(restored.people[child].age_days(restored.tick), 18 * 365 - 1);
+        restored.step(false);
+        assert_eq!(restored.people[child].age_days(restored.tick), 18 * 365);
+        assert!(restored.is_adult(child));
+        let (offers, count) = restored.offer(child);
+        assert!(offers[..count]
+            .iter()
+            .any(|candidate| !matches!(candidate.action, Action::Rest | Action::CareFamily)));
+    }
+    #[test]
     fn relatives_and_children_cannot_take_adult_relationships_or_jobs() {
         let mut w = World::new(2, 42).unwrap();
         w.prepare_family_demo().unwrap();

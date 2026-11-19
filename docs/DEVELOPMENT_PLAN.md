@@ -1,6 +1,18 @@
 # Frontier development plan
 
-Drafted 19 November 2026. Goal: grow the settlement simulation into a procedurally generated frontier where ecology, new towns and cultivation emerge. Nothing here is implemented yet.
+Drafted 19 November 2026. Goal: grow the settlement simulation into a procedurally generated frontier where ecology, new towns and cultivation emerge.
+
+## Progress log and issues
+
+Branch `frontier/m0-foundations`. All commits keep the user's uncommitted `viewer/main.gd` goods-table change out of staging.
+
+- Cell-hash collision confirmed by `distant_dwellers_do_not_fuse_into_one_founding_group`; fixed with a 4096-stride cell key. Filed as GitHub issue [#17](https://github.com/dashingstag/NEAT-XianXia/issues/17) — resolved by commit `b94ff3a`, close after merge to main.
+- Legacy `Agents`/`Market` frozen into `legacy_v13` types; readers v6-v13 use them (`641b0ff`).
+- `INPUTS` widened 42 to 48 with reserved sensors 42-47; genome migration shifts hidden/output IDs on pre-15 saves; XXSAVE15 introduced (`1b53e06`).
+- Snapshot frame v2: animals moved from per-frame JSON to 16-byte records; viewer and protocol check updated (`2403ce5`). Godot-side decode unverified until a Godot install is available.
+- Action IDs reserved on the enum comment: 39-41 hunt/combat, 42-45 taming, 46-49 guild, 50-53 founding, 54-57 qi, 58-63 spare. `sim-runner soak` added (`59a249a`): `--seeds N --steps M` reports per-seed population/trade/ecology plus a world digest.
+- Re-scoped: spatial grid and bounds-literal cleanup moved to M1 (natural home with the map rewrite); per-family candidate caps deferred until new action families land in M3.
+- Blocked: `python tools/dev.py doctor` fails — Godot executable not installed; all viewer/protocol/interactive checks pending.
 
 ## Player-facing goals
 

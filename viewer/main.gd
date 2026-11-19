@@ -422,6 +422,25 @@ func _site_text() -> String:
 		"markets":
 			title = str(d.name)
 			body = "%s / %s residents\n\n[b]HOUSING[/b]\n%s completed blocks / %s beds\n\n[b]MARKET[/b]\nTreasury: %s copper units\nObserved sales: %s\n" % [d.stage,int(d.population),int(d.housing_blocks),int(d.housing_blocks)*32,int(d.coins),d.profile]
+			body += "\nGOODS held · offered@ask · wanted@bid · lifetime sold\n"
+			var products: Array = state.get("products",[])
+			var quotes: Array = d.get("quotes",[])
+			var stock: Array = d.get("stock",[])
+			var sales: Array = d.get("sales",[])
+			for k in range(mini(stock.size(),products.size())):
+				var q: Dictionary = quotes[k] if k<quotes.size() else {}
+				var offered := int(q.get("offered",0))
+				var wanted := int(q.get("remaining",0))
+				if int(stock[k])==0 and offered==0 and wanted==0:
+					continue
+				body += "%s: %s held" % [products[k],int(stock[k])]
+				if offered>0 or int(q.get("ask",0))>0:
+					body += " · %s @ %sc" % [offered,int(q.get("ask",0))]
+				if wanted>0 or int(q.get("bid",0))>0:
+					body += " · buys %s @ %sc" % [wanted,int(q.get("bid",0))]
+				if k<sales.size():
+					body += " · %s sold" % int(sales[k])
+				body += "\n"
 			if d.get("project") is Dictionary:
 				body += "\nBuilding %s / %.0f%% complete\n" % [d.project.kind,100.0*float(d.project.progress)/maxf(1.0,float(d.project.required))]
 		"house":

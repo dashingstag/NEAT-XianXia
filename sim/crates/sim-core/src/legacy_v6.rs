@@ -11,7 +11,7 @@ pub struct LegacyWorld {
     pub innovations: Innovations,
     #[serde(skip)]
     pub brains: Vec<Compiled>,
-    pub markets: Vec<Market>,
+    pub markets: Vec<legacy_v13::LegacyMarket>,
     pub patches: Vec<Patch>,
     pub roads: Vec<Road>,
     pub ledger: Ledger,
@@ -41,7 +41,7 @@ impl From<LegacyWorld> for World {
             genomes: old.genomes,
             innovations: old.innovations,
             brains: old.brains,
-            markets: old.markets,
+            markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches,
             roads: old.roads,
             ledger: old.ledger,
@@ -90,7 +90,7 @@ mod tests {
             genomes: w.genomes.clone(),
             innovations: w.innovations.clone(),
             brains: w.brains.clone(),
-            markets: w.markets.clone(),
+            markets: w.markets.iter().map(legacy_v13::to_legacy_market).collect(),
             patches: w.patches.clone(),
             roads: w.roads.clone(),
             ledger: w.ledger.clone(),
@@ -132,6 +132,6 @@ mod tests {
         assert_eq!(loaded.stocks(), expected);
         assert_eq!(loaded.coins(), w.coins());
         assert_eq!(loaded.social, vec![0.0; 12]);
-        assert_eq!(loaded.format, 14);
+        assert_eq!(loaded.format, 15);
     }
 }

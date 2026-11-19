@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEAT Brain Inspector — Xianxia</title>
+<style>
+  :root{--bg:#101014;--panel:#18181f;--line:#2a2a35;--txt:#e8e6df;--dim:#9a97a8;
+        --pos:#7fd08a;--neg:#e07a7a;--acc:#e0b45a;--input:#6fb7d8;--hidden:#c39bd8;--out:#e0b45a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:13px/1.45 "Segoe UI",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.5px}
+  header .sub{color:var(--dim);font-size:11px}
+  .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  button,input,select{background:#22222b;color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:4px 8px;font:inherit}
+  button{cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.primary{background:#3a2f1a;border-color:var(--acc)}
+  input[type=number]{width:80px}
+  input[type=text]{width:200px}
+  main{display:grid;grid-template-columns:290px 1fr 330px;gap:10px;padding:10px;height:calc(100vh - 49px)}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:0 0 8px}
+  h3{font-size:12px;margin:12px 0 6px}
+  label{display:block;margin:5px 0;color:var(--dim);font-size:11px}
+  label>input,label>select{display:block;width:100%;margin-top:2px;color:var(--txt)}
+  input[type=range]{width:100%}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px}
+  .chk{display:flex;gap:6px;align-items:center}
+  .chk input{width:auto}
+  .val{float:right;color:var(--txt);font-variant-numeric:tabular-nums}
+  svg{width:100%;display:block}
+  .node-in{fill:var(--input)} .node-h{fill:var(--hidden)} .node-o{fill:var(--out)}
+  .edge{stroke:var(--pos)} .edge.neg{stroke:var(--neg)}
+  .disabled{opacity:.15}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td,th{padding:3px 5px;border-bottom:1px solid var(--line);text-align:left}
+  .winner{background:rgba(224,180,90,.12)}
+  .winner td:first-child::before{content:"▶ ";color:var(--acc)}
+  .mono{font-family:Consolas,monospace;font-variant-numeric:tabular-nums}
+  .hint{color:var(--dim);font-size:11px;margin-top:6px}
+  .chip{display:inline-block;background:#22222b;border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin:2px;font-size:11px;cursor:pointer}
+  .chip:hover{border-color:var(--acc)}
+  .bar{height:5px;border-radius:2px;background:#2a2a35;margin-top:2px}
+  .bar>i{display:block;height:100%;border-radius:2px;background:var(--acc)}
+  .scroll{overflow:auto}
+  .sensor-row{display:flex;justify-content:space-between;gap:6px;align-items:baseline;font-size:11px;padding:1px 0}
+  .sensor-row b{font-weight:400;color:var(--dim)}
+  .sensor-row input[type=range]{width:110px}
+  circle{cursor:pointer}
+  circle.sel{stroke:#fff;stroke-width:1.5}
+  .contrib td{font-size:11px}
+  .contrib td.pos{color:var(--pos)} .contrib td.neg{color:var(--neg)}
+  .flow-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:4px}
+  .stat{color:var(--dim);font-size:11px}
+  .pill{border:1px solid var(--line);border-radius:10px;padding:0 8px;font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>NEAT Brain Inspector</h1>
+    <div class="sub">Faithful port of <code>sim/crates/neat-core</code> — same RNG, seeding, compilation &amp; feed-forward evaluation</div>
+  </div>
+  <div class="row">
+    <label style="margin:0">Seed <input id="seed" type="number" value="42" min="0" style="width:90px"></label>
+    <button id="seedBtn" class="primary">Seed genome</button>
+    <button id="importBtn">Import genome JSON…</button>
+    <input id="file" type="file" accept=".json" hidden>
+    <button id="exportBtn">Export genome</button>
+  </div>
+  <div class="row">
+    <span class="pill" id="gstats"></span>
+    <button id="mutW">Mutate weights</button>
+    <button id="mutN">Add node</button>
+    <button id="mutC">Add connection</button>
+    <label class="chk" style="margin:0"><input type="checkbox" id="showAll"> show all sensors</label>
+  </div>
+</header>
+<main>
+  <section id="left">
+    <h2>Agent state</h2>
+    <div class="row" style="margin-bottom:6px">
+      <select id="preset" style="flex:1"></select>
+      <button id="applyPreset">Apply</button>
+    </div>
+    <div class="grid2">
+      <label>Hunger 0–100 <input id="hunger" type="number" value="72" min="0" max="100"></label>
+      <label>Coins <input id="coins" type="number" value="35" min="0"></label>
+      <label>Energy 0–100 <input id="energy" type="number" value="80" min="0" max="100"></label>
+      <label>Rested meter 0–100 <input id="rested" type="number" value="40" min="0" max="100"></label>
+      <label>Happiness 0–100 <input id="happiness" type="number" value="55" min="0" max="100"></label>
+      <label>Social 0–100 <input id="social" type="number" value="50" min="0" max="100"></label>
+      <label>Load fraction 0–1 <input id="load" type="number" value="0.1" step="0.05" min="0" max="1"></label>
+      <label>Free capacity 0–1 <input id="room" type="number" value="0.9" step="0.05" min="0" max="1"></label>
+      <label>Tool benefit −1…1 <input id="toolb" type="number" value="0" step="0.1" min="-1" max="1"></label>
+      <label>Affinity −1…1 <input id="affinity" type="number" value="0" step="0.1" min="-1" max="1"></label>
+    </div>
+    <label>Aspiration
+      <select id="aspiration">
+        <option>Wealth</option><option>Blacksmith</option><option selected>Family</option>
+        <option>Farmer</option><option>Service</option><option>Teacher</option>
+        <option>Homeowner</option><option>Shopkeeper</option><option>Artisan</option>
+        <option>Hunter</option><option>Haulier</option><option value="">None</option>
+      </select></label>
+    <div class="grid2">
+      <label class="chk"><input type="checkbox" id="night"> Night</label>
+      <label class="chk"><input type="checkbox" id="restedBuff" checked> Rested buff</label>
+      <label class="chk"><input type="checkbox" id="adult" checked> Adult</label>
+      <label class="chk"><input type="checkbox" id="coinGrabber"> Coin-grabber trait</label>
+      <label class="chk"><input type="checkbox" id="nightOwl"> Night-owl trait</label>
+      <label class="chk"><input type="checkbox" id="educated"> Educated trait</label>
+    </div>
+    <h3>Goal (alignment / urgency)</h3>
+    <div class="grid2">
+      <label>Goal kind
+        <select id="goal"><option value="">None</option></select></label>
+      <label>Urgency 0–1 <input id="urgency" type="number" value="0.6" step="0.1" min="0" max="1"></label>
+    </div>
+    <h3>Frontier sensors (42–47)</h3>
+    <div id="frontier"></div>
+    <h3>Manual sensor override</h3>
+    <div id="overrides"></div>
+    <p class="hint">Overrides multiply nothing — they directly set the sensor value for every candidate, like ablation. Leave at “auto” to use the computed value.</p>
+  </section>
+
+  <section id="center">
+    <h2>Brain topology · activations for selected candidate</h2>
+    <svg id="graph" viewBox="0 0 900 980" preserveAspectRatio="xMidYMin meet"></svg>
+    <div class="hint">
+      Edge colour: green positive / red negative weight · width ∝ |weight| · dashed = disabled gene.
+      Node fill ∝ activation. Layout = topological depth (left→right), exactly the compiled evaluation order.
+      Scores are f64 math; the Rust game uses f32 — expect ≤1e-6 divergence.
+    </div>
+    <h3>Node inspector — click any node</h3>
+    <div id="nodeDetail" class="scroll" style="max-height:340px"></div>
+    <h3>Activations across the slate</h3>
+    <div id="compare" class="scroll" style="max-height:340px"></div>
+    <h3>Sensor values of selected candidate</h3>
+    <div id="sensorReadout" class="grid2"></div>
+  </section>
+
+  <section id="right">
+    <h2>Candidate slate — what the brain is offered</h2>
+    <p class="hint">Each row builds a 48-sensor vector the same way <code>sim-core</code>'s candidate closure does, then <code>Compiled::evaluate</code> scores it. The game commits to the highest score.</p>
+    <div class="row"><button id="addCand">+ Add candidate</button><button id="loadSlate">Load example slate</button></div>
+    <table id="cands"><thead><tr><th></th><th>Action</th><th>Kind</th><th>Need</th><th>Benefit</th><th>Risk</th><th>Dist</th><th>Price</th><th>Infra</th><th>Score</th></tr></thead><tbody></tbody></table>
+    <h3>Score bars</h3>
+    <div id="scoreBars"></div>
+  </section>
+</main>
+
+<script type="module">
+"use strict";
+/* ---------------------------------------------------------------------------
+ * Faithful JS port of sim/crates/neat-core (f32-rounded where it matters).
+ * -------------------------------------------------------------------------*/
+const INPUTS=48, MAX_NODES=96;
+const SENSORS=["need","benefit","risk","travel","price","continuity","food","timber","stone","fish","energy","infrastructure","gold_ore","silver_ore","copper_ore","wallet","currency_need","load_fraction","free_capacity","affordability","barter","payment_mode","night","rested_meter","rested_buff","bed_availability","night_rest","sleep_access","aspiration_wealth","aspiration_blacksmith","aspiration_family","aspiration_farmer","aspiration_public_service","goal_alignment","goal_urgency","happiness","coin_preference","night_owl","tool_benefit","adult","iron","rice","dread","qi_pressure","technique_memory","bond","quest_reward","unexplored"];
+const M64=(1n<<64n)-1n;
+const f32=Math.fround;
+const add32=(a,b)=>f32(f32(a)+f32(b));
+const mul32=(a,b)=>f32(f32(a)*f32(b));
+
+class Rng{
+  constructor(seed){this.s=BigInt(seed)&M64;}
+  next_u64(){
+    this.s=(this.s+0x9e3779b97f4a7c15n)&M64;
+    let z=this.s;
+    z=((z^(z>>30n))*0xbf58476d1ce4e5b9n)&M64;
+    z=((z^(z>>27n))*0x94d049bb133111ebn)&M64;
+    return (z^(z>>31n))&M64;
+  }
+  unit(){return f32(Number(this.next_u64()>>40n)/16777216.0);}
+  index(n){return Number(this.next_u64()%BigInt(Math.max(n,1)));}
+  signed(){return f32(this.unit()*2.0-1.0);}
+}
+class Innovations{
+  constructor(){this.next_node=INPUTS+5;this.next_gene=1;this.edges=new Map();this.splits=new Map();}
+  edge(from,to){
+    const k=from+","+to;
+    if(this.edges.has(k))return this.edges.get(k);
+    const id=this.next_gene++;this.edges.set(k,id);return id;
+  }
+}
+const Kind={Input:"Input",Tanh:"Tanh",Identity:"Identity",Output:"Output"};
+
+function seededGenome(rng,innov){
+  const nodes=[];
+  for(let id=0;id<INPUTS;id++)nodes.push({id,kind:Kind.Input,bias:0});
+  for(let i=0;i<4;i++)nodes.push({id:INPUTS+i,kind:Kind.Tanh,bias:f32(-0.3+mul32(rng.signed(),0.12))});
+  const output=INPUTS+4;
+  nodes.push({id:output,kind:Kind.Output,bias:mul32(rng.signed(),0.08)});
+  const genes=[];
+  const baseBySensor={0:1.7,1:1.1,2:-1.7,3:-0.9,4:0.5,5:0.4,10:0.12,11:0.3,15:0.1,16:0.35,17:-0.15,18:0.1,19:0.3,20:0.1,21:0.15,22:-0.05,23:0.05,24:0.05,25:0.1,26:1.4,27:0.25,33:0.65,34:0.25,35:-0.05,36:0.6,37:0.0,38:0.25,39:0.05,40:0.1,41:0.15};
+  for(let h=0;h<4;h++){
+    for(let sensor=0;sensor<INPUTS;sensor++){
+      const base=(sensor>=28&&sensor<=32)?0.7:(baseBySensor[sensor]??0);
+      const preference=(sensor===6+h)?mul32(rng.signed(),0.7):0;
+      const to=INPUTS+h;
+      genes.push({innovation:innov.edge(sensor,to),from:sensor,to,weight:add32(add32(base,preference),mul32(rng.signed(),0.17)),enabled:true});
+    }
+    const from=INPUTS+h;
+    genes.push({innovation:innov.edge(from,output),from,to:output,weight:f32(0.6+mul32(rng.unit(),0.6)),enabled:true});
+  }
+  return {generation:0,nodes,genes};
+}
+
+function compileGenome(g){
+  if(g.nodes.length>MAX_NODES)throw new Error("Brain exceeds node budget");
+  if(g.nodes.filter(n=>n.kind===Kind.Input).length!==INPUTS)throw new Error("Sensor schema mismatch");
+  const pending=[...g.nodes].sort((a,b)=>a.id-b.id);
+  const nodeIds=new Set(g.nodes.map(n=>n.id));
+  for(const gene of g.genes.filter(x=>x.enabled)){
+    const to=g.nodes.find(n=>n.id===gene.to);
+    if(!isFinite(gene.weight)||!nodeIds.has(gene.from)||!to||to.kind===Kind.Input)
+      throw new Error("Invalid edge");
+  }
+  if(new Set(g.nodes.map(n=>n.id)).size!==g.nodes.length)throw new Error("Duplicate node IDs");
+  const order=[];
+  while(pending.length){
+    const pos=pending.findIndex(n=>g.genes.filter(x=>x.enabled&&x.to===n.id)
+      .every(x=>order.some(p=>p.id===x.from)));
+    if(pos<0)throw new Error("Cycle in feed-forward genome");
+    order.push(pending.splice(pos,1)[0]);
+  }
+  const indexById=new Map(order.map((n,i)=>[n.id,i]));
+  const edges=[],cnodes=[];let output=-1;
+  for(let i=0;i<order.length;i++){
+    const n=order[i];
+    if(!isFinite(n.bias))throw new Error("Non-finite bias");
+    const start=edges.length;
+    const incoming=g.genes.filter(x=>x.enabled&&x.to===n.id).sort((a,b)=>a.innovation-b.innovation);
+    for(const ge of incoming)edges.push([indexById.get(ge.from),ge.weight]);
+    cnodes.push({kind:n.kind,bias:n.bias,start,len:edges.length-start,id:n.id});
+    if(n.kind===Kind.Output){if(output>=0)throw new Error("Multiple score outputs");output=i;}
+  }
+  if(output<0)throw new Error("Missing output");
+  return {nodes:cnodes,edges,output};
+}
+function evaluate(brain,inputs){
+  // mirrors Compiled::evaluate; f64 internally (Rust uses f32 — near-identical)
+  const values=new Array(MAX_NODES).fill(0);
+  let input=0;
+  for(let i=0;i<brain.nodes.length;i++){
+    const node=brain.nodes[i];
+    if(node.kind===Kind.Input){values[i]=inputs[input++];continue;}
+    let v=node.bias;
+    for(let e=node.start;e<node.start+node.len;e++){const[from,w]=brain.edges[e];v+=values[from]*w;}
+    values[i]=node.kind===Kind.Tanh?Math.tanh(v):v;
+  }
+  return {score:values[brain.output],values};
+}
+/* mutations (ports of Genome::mutate_weights / add_node / add_connection) */
+function mutateWeights(g,rng,rate=0.15){
+  for(const ge of g.genes)if(rng.unit()<rate)ge.weight=Math.min(3,Math.max(-3,f32(ge.weight+mul32(rng.signed(),0.3))));
+  for(const n of g.nodes)if(n.kind!==Kind.Input&&rng.unit()<rate)n.bias=Math.min(3,Math.max(-3,f32(n.bias+mul32(rng.signed(),0.2))));
+}
+function addNode(g,rng,reg){
+  if(g.nodes.length>=MAX_NODES)return false;
+  const enabled=g.genes.map((x,i)=>x.enabled?i:-1).filter(i=>i>=0);
+  if(!enabled.length)return false;
+  const index=enabled[rng.index(enabled.length)];
+  const old=g.genes[index];
+  let id;
+  if(reg.splits.has(old.innovation))id=reg.splits.get(old.innovation);
+  else{id=reg.next_node++;reg.splits.set(old.innovation,id);}
+  if(g.nodes.some(n=>n.id===id))return false;
+  old.enabled=false;
+  g.nodes.push({id,kind:Kind.Identity,bias:0});
+  g.genes.push({innovation:reg.edge(old.from,id),from:old.from,to:id,weight:1,enabled:true});
+  g.genes.push({innovation:reg.edge(id,old.to),from:id,to:old.to,weight:old.weight,enabled:true});
+  return true;
+}
+function addConnection(g,rng,reg){
+  for(let t=0;t<16;t++){
+    const a=g.nodes[rng.index(g.nodes.length)],b=g.nodes[rng.index(g.nodes.length)];
+    if(a.id===b.id||a.kind===Kind.Output||b.kind===Kind.Input||
+       g.genes.some(x=>x.from===a.id&&x.to===b.id))continue;
+    const gene={innovation:reg.edge(a.id,b.id),from:a.id,to:b.id,weight:rng.signed(),enabled:true};
+    g.genes.push(gene);
+    try{compileGenome(g);return true;}catch{g.genes.pop();}
+  }
+  return false;
+}
+
+/* ---------------------------------------------------------------------------
+ * Candidate sensor construction — mirrors the `add` closure in
+ * sim/crates/sim-core/src/lib.rs and `personal_inputs` in life.rs.
+ * -------------------------------------------------------------------------*/
+const ACTIONS=["Gather","BuyFood","Barter","WorkForFood","Trade","Deliver","Mint","Build","Gravedigger","BuildGraveyard","UrbanWork","OperateBusiness","Hunt","Farm","HarvestRice","CraftTool","Teach","Court","CareFamily","Rest","MakeCamp","Socialize","AttendSchool","BuyTool","EquipTool","ForageMeal","BorrowBusiness","BuyHome","LeaseBusiness","CollectEstate","Restock","Eat"];
+const KINDS=["berries(0)","timber(1)","stone(2)","fish(3)","gold_ore(4)","silver_ore(5)","copper_ore(6)","iron(7)","rice(8)","other(9)"];
+const GOAL_KINDS=["BusinessLoan","Save","Job","Craft","Farm","Marry","Rest","Eat","Trade","Tool","Child","Harvest","Teach","OwnHome","LeaseShop","Produce","Transport","Hunt"];
+const PAID=new Set(["Deliver","Mint","Trade","Build","Gravedigger","BuildGraveyard","CraftTool","BuildBank","BuildSchool","Teach","BuildTavern","Farm","UrbanWork","OperateBusiness","Hunt"]);
+const JOB_GOAL=new Set(["Gravedigger","BuildGraveyard","Farm","Build","BuildBank","BuildSchool","Teach","BuildTavern"]);
+const EAT_GOAL=new Set(["BuyFood","HarvestRice","ForageMeal"]);
+const TRADE_GOAL=new Set(["Trade","Deliver","Barter"]);
+const SERVICE_ASP=new Set(["Gravedigger","BuildGraveyard","Farm","Build","BuildBank","BuildSchool","Teach","BuildTavern"]);
+const EDUCATED_BOOST=new Set(["Build","BuildBank","BuildSchool","BuildTavern","BuildGraveyard","Gravedigger","Farm","Teach","CraftTool"]);
+
+function buildInputs(cand,st){
+  const x=new Array(INPUTS).fill(0);
+  const{action,kind,need,benefit,risk,travel,price,infrastructure,continuity}=cand;
+  const hunger=Math.min(1,st.hunger/100);
+  const edible=[0,3,8].includes(kind);
+  x[0]=need+((st.hunger>65&&(["BuyFood","Barter","WorkForFood","HarvestRice"].includes(action)||(action==="Gather"&&edible)))?1:0);
+  x[1]=benefit;x[2]=risk;
+  x[3]=Math.min(1,travel/1000);
+  x[4]=Math.max(-1,Math.min(1,price/8));
+  x[5]=continuity?0.25:0;
+  if(!["Gravedigger","BuildGraveyard"].includes(action)&&kind<4)x[6+kind]=1;
+  else if(kind>=4&&kind<=6)x[12+kind-4]=1;
+  x[15]=Math.min(1,st.coins/100);
+  x[16]=1/(1+st.coins/20);
+  x[17]=st.load;x[18]=st.room;
+  x[19]=["BuyFood","Trade"].includes(action)?Math.min(1,st.coins/Math.max(1,cand.ask??8)):0;
+  x[20]=["Barter","WorkForFood"].includes(action)?1:0;
+  x[21]=action==="WorkForFood"?-1:(["Mint","Deliver","Build","Gravedigger","BuildGraveyard","UrbanWork","OperateBusiness"].includes(action)?1:0);
+  x[22]=st.night?1:0;
+  x[23]=st.rested/100;
+  x[24]=st.restedBuff?1:0;
+  x[25]=action==="Rest"?1:0;
+  x[26]=action==="Rest"?x[22]*Math.max(0,1-st.hunger/70):0;
+  x[27]=action==="Rest"?1:(action==="MakeCamp"?0.5:0);
+  /* personal_inputs */
+  const paid=PAID.has(action);
+  x[28]=st.aspiration==="Wealth"&&paid?1:0;
+  x[29]=st.aspiration==="Blacksmith"&&(action==="CraftTool"||((action==="Gather"||action==="Deliver")&&kind===7))?1:0;
+  x[30]=st.aspiration==="Family"&&["Court","CareFamily"].includes(action)?1:0;
+  x[31]=st.aspiration==="Farmer"&&["Farm","HarvestRice"].includes(action)?1:0;
+  x[32]=(st.aspiration==="Teacher"&&action==="Teach")||(st.aspiration==="Service"&&SERVICE_ASP.has(action))?1:0;
+  if(st.goal){
+    const g=st.goal;
+    const aligns=
+      (g==="BusinessLoan"&&action==="BorrowBusiness")||
+      (g==="Save"&&paid)||
+      (g==="Job"&&JOB_GOAL.has(action))||
+      (g==="Craft"&&action==="CraftTool")||
+      (g==="Farm"&&action==="Farm")||
+      (g==="Marry"&&action==="Court")||
+      (g==="Rest"&&action==="Rest")||
+      (g==="Eat"&&(EAT_GOAL.has(action)||(action==="Gather"&&edible)))||
+      (g==="Trade"&&TRADE_GOAL.has(action))||
+      (g==="Tool"&&["BuyTool","EquipTool"].includes(action))||
+      (g==="Child"&&action==="CareFamily")||
+      (g==="Harvest"&&action==="HarvestRice")||
+      (g==="Teach"&&action==="Teach")||
+      (g==="OwnHome"&&action==="BuyHome")||
+      (g==="LeaseShop"&&action==="LeaseBusiness")||
+      (g==="Produce"&&action==="OperateBusiness")||
+      (g==="Transport"&&action==="UrbanWork")||
+      (g==="Hunt"&&action==="Hunt");
+    if(aligns){x[33]=1;x[34]=Math.max(x[34],st.urgency);}
+  }
+  if(action==="Socialize"){
+    x[0]=(1-st.social/100)*0.15; // no social-trait checkbox; base case
+    x[1]=0.25;
+  }
+  if(st.educated&&EDUCATED_BOOST.has(action))x[1]*=1.15;
+  x[35]=st.happiness/100;
+  x[36]=st.coinGrabber?(paid?1:(["Barter","WorkForFood"].includes(action)?-1:0)):0;
+  x[37]=st.nightOwl?1:0;
+  x[38]=st.toolb;
+  x[39]=st.adult?1:0;
+  x[40]=kind===7?1:0;
+  x[41]=kind===8?1:0;
+  /* post-personal */
+  x[1]+=st.affinity*0.1;
+  x[10]=st.energy/100;
+  x[11]=infrastructure;
+  /* frontier + manual overrides */
+  for(let s=42;s<48;s++)x[s]=st.frontier[s-42];
+  for(const[k,v]of Object.entries(st.overrides))if(v!==""&&!isNaN(+v))x[+k]=+v;
+  return x;
+}
+
+/* ---------------------------------------------------------------------------
+ * UI
+ * -------------------------------------------------------------------------*/
+const $=id=>document.getElementById(id);
+let genome=null,compiled=null,innov=new Innovations(),mutRng=new Rng(7);
+let candidates=[],selectedCand=0,overrides={},selectedNode=-1;
+
+/* compiled-position of the k-th Input node (k = sensor index) */
+function sensorOf(i){
+  let k=-1;
+  for(let j=0;j<=i;j++)if(compiled.nodes[j].kind===Kind.Input)k++;
+  return k;
+}
+function nodeName(i){
+  const n=compiled.nodes[i];
+  return n.kind===Kind.Input?`sensor ${sensorOf(i)} · ${SENSORS[sensorOf(i)]}`:`#${n.id} ${n.kind}`;
+}
+
+function agentState(){
+  const frontier=[...Array(6)].map((_,i)=>+$("fr"+i).value);
+  return{
+    hunger:+$("hunger").value,coins:+$("coins").value,energy:+$("energy").value,
+    rested:+$("rested").value,happiness:+$("happiness").value,social:+$("social").value,
+    load:+$("load").value,room:+$("room").value,toolb:+$("toolb").value,affinity:+$("affinity").value,
+    aspiration:$("aspiration").value||null,night:$("night").checked,restedBuff:$("restedBuff").checked,
+    adult:$("adult").checked,coinGrabber:$("coinGrabber").checked,nightOwl:$("nightOwl").checked,
+    educated:$("educated").checked,goal:$("goal").value||null,urgency:+$("urgency").value,
+    frontier,overrides
+  };
+}
+
+function setGenome(g,note){
+  genome=g;compiled=compileGenome(g);
+  $("gstats").textContent=`gen ${g.generation} · ${g.nodes.length} nodes · ${g.genes.filter(x=>x.enabled).length}/${g.genes.length} genes ${note??""}`;
+  renderAll();
+}
+
+/* graph layout: depth = longest enabled path */
+function layout(){
+  const idx=new Map(compiled.nodes.map((n,i)=>[n.id,i]));
+  const depth=new Array(compiled.nodes.length).fill(0);
+  for(let i=0;i<compiled.nodes.length;i++){
+    for(let e=compiled.nodes[i].start;e<compiled.nodes[i].start+compiled.nodes[i].len;e++)
+      depth[i]=Math.max(depth[i],depth[compiled.edges[e][0]]+1);
+  }
+  const maxD=Math.max(...depth,1);
+  const cols=new Map();
+  compiled.nodes.forEach((n,i)=>{
+    const d=n.kind===Kind.Output?maxD+1:depth[i];
+    if(!cols.has(d))cols.set(d,[]);cols.get(d).push(i);
+  });
+  const pos=new Map();
+  const H=980,W=900,padX=60;
+  for(const[d,col]of cols){
+    col.forEach((i,k)=>{
+      const y=(k+1)*H/(col.length+1);
+      pos.set(i,{x:padX+d*(W-2*padX)/(maxD+1),y});
+    });
+  }
+  return{pos,idx};
+}
+
+function renderGraph(inputs){
+  const{pos}=layout();
+  const{score,values}=evaluate(compiled,inputs);
+  if(selectedNode<0||selectedNode>=compiled.nodes.length)selectedNode=compiled.output;
+  const svg=$("graph");
+  const byId=new Map(compiled.nodes.map((n,i)=>[n.id,i]));
+  let s="";
+  /* edges */
+  compiled.nodes.forEach((n,i)=>{
+    for(let e=n.start;e<n.start+n.len;e++){
+      const[from,w]=compiled.edges[e];const a=pos.get(from),b=pos.get(i);
+      const neg=w<0?" neg":"";
+      let op=Math.min(1,Math.abs(w)/1.5)*0.85+0.15;
+      if(selectedNode>=0&&from!==selectedNode&&i!==selectedNode)op*=0.12;
+      const ww=Math.min(4,Math.abs(w)*1.6+0.4);
+      s+=`<line class="edge${neg}" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke-width="${ww}" opacity="${op}"/>`;
+    }
+  });
+  /* disabled genes */
+  for(const g of genome.genes.filter(x=>!x.enabled)){
+    if(byId.has(g.from)&&byId.has(g.to)){
+      const a=pos.get(byId.get(g.from)),b=pos.get(byId.get(g.to));
+      s+=`<line class="edge disabled" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke-width="0.6" stroke-dasharray="3 3" opacity="0.25"/>`;
+    }
+  }
+  /* nodes */
+  compiled.nodes.forEach((n,i)=>{
+    const p=pos.get(i);
+    const cls=n.kind===Kind.Input?"node-in":n.kind===Kind.Output?"node-o":"node-h";
+    const v=values[i];const glow=Math.min(1,Math.abs(v));
+    const r=n.kind===Kind.Input?4.5:n.kind===Kind.Output?9:6;
+    s+=`<circle class="${cls}${i===selectedNode?" sel":""}" data-i="${i}" cx="${p.x}" cy="${p.y}" r="${r+glow*4}" opacity="${0.35+0.65*glow}"><title>${nodeName(i)} = ${v.toFixed(4)} (bias ${n.bias.toFixed(3)})</title></circle>`;
+    if(n.kind===Kind.Output)
+      s+=`<text x="${p.x}" y="${p.y+26}" fill="var(--acc)" font-size="13" text-anchor="middle" class="mono">${score.toFixed(4)}</text>`;
+    if(n.kind===Kind.Input){
+      const si=compiled.nodes.slice(0,i+1).filter(q=>q.kind===Kind.Input).length-1;
+      const name=SENSORS[si];
+      if(Math.abs(inputs[si])>0.01||$("showAll").checked)
+        s+=`<text x="${p.x-8}" y="${p.y+3}" fill="var(--dim)" font-size="8" text-anchor="end">${name} ${inputs[si].toFixed(2)}</text>`;
+    }
+  });
+  svg.innerHTML=s;
+}
+
+function renderNodeDetail(x,values){
+  const i=selectedNode,n=compiled.nodes[i];
+  const geneByKey=new Map(genome.genes.filter(g=>g.enabled).map(g=>[g.from+"->"+g.to,g]));
+  const genomeNode=genome.nodes.find(g=>g.id===n.id);
+  let pre=n.bias;
+  const rows=[];
+  for(let e=n.start;e<n.start+n.len;e++){
+    const[from,w]=compiled.edges[e];
+    const c=values[from]*w;
+    pre+=c;
+    rows.push({from,w,c,gene:geneByKey.get(compiled.nodes[from].id+"->"+n.id)});
+  }
+  rows.sort((a,b)=>Math.abs(b.c)-Math.abs(a.c));
+  const post=n.kind===Kind.Input?x[sensorOf(i)]:(n.kind===Kind.Tanh?Math.tanh(pre):pre);
+  const fanout=[];
+  compiled.nodes.forEach((m,j)=>{
+    for(let e=m.start;e<m.start+m.len;e++)
+      if(compiled.edges[e][0]===i)fanout.push({to:j,w:compiled.edges[e][1]});
+  });
+  let h=`<div class="flow-head"><b>${nodeName(i)}</b><span class="stat">activation <span class="mono">${values[i].toFixed(4)}</span></span></div>`;
+  if(n.kind===Kind.Input){
+    h+=`<p class="hint">Sensors have no incoming edges — the value is fed straight in as <code>inputs[${sensorOf(i)}]</code> = ${x[sensorOf(i)].toFixed(4)}.</p>`;
+  }else{
+    h+=`<table class="contrib"><thead><tr><th>From</th><th>value</th><th>× weight</th><th>= contrib</th></tr></thead><tbody>`;
+    h+=`<tr><td><i>bias</i></td><td></td><td><input type="number" class="editBias" step="0.05" value="${n.bias.toFixed(3)}" style="width:70px"></td><td class="mono ${n.bias>=0?"pos":"neg"}">${n.bias.toFixed(4)}</td></tr>`;
+    for(const r of rows)
+      h+=`<tr><td>${nodeName(r.from)}</td><td class="mono">${values[r.from].toFixed(3)}</td><td class="mono"><input type="number" class="editW" data-k="${compiled.nodes[r.from].id}->${n.id}" step="0.05" value="${r.w.toFixed(3)}" style="width:70px"></td><td class="mono ${r.c>=0?"pos":"neg"}">${r.c.toFixed(4)}</td></tr>`;
+    h+=`</tbody></table><p class="mono">Σ = ${pre.toFixed(4)}${n.kind===Kind.Tanh?` → tanh → <b>${post.toFixed(4)}</b>`:n.kind===Kind.Output?` → <b>score ${post.toFixed(4)}</b>`:` → ${post.toFixed(4)} (identity)`}</p>`;
+    h+=`<p class="hint">Editing a weight or bias writes it into the genome and recompiles — same clamp-free write as a hand mutation.</p>`;
+  }
+  if(fanout.length){
+    fanout.sort((a,b)=>Math.abs(b.w)-Math.abs(a.w));
+    h+=`<h3>Feeds into (${fanout.length})</h3><table class="contrib"><tbody>`;
+    for(const f of fanout.slice(0,12))
+      h+=`<tr><td>${nodeName(f.to)}</td><td class="mono ${f.w>=0?"pos":"neg"}">w ${f.w.toFixed(3)}</td></tr>`;
+    h+=`</tbody></table>${fanout.length>12?`<p class="hint">…and ${fanout.length-12} more</p>`:""}`;
+  }
+  $("nodeDetail").innerHTML=h;
+  $("nodeDetail").querySelectorAll(".editW").forEach(inp=>inp.onchange=()=>{
+    const g=geneByKey.get(inp.dataset.k);
+    if(g&&isFinite(+inp.value)){g.weight=f32(+inp.value);compiled=compileGenome(genome);renderAll();}
+  });
+  const biasInp=$("nodeDetail").querySelector(".editBias");
+  if(biasInp)biasInp.onchange=()=>{
+    if(genomeNode&&isFinite(+biasInp.value)){genomeNode.bias=f32(+biasInp.value);compiled=compileGenome(genome);renderAll();}
+  };
+}
+
+function renderCompare(){
+  if(!candidates.length)return;
+  const hid=[];
+  compiled.nodes.forEach((n,i)=>{if(n.kind!==Kind.Input)hid.push(i);});
+  let h=`<table><thead><tr><th>node</th>`+candidates.map((c,i)=>
+    `<th${i===selectedCand?' style="color:var(--acc)"':""}>${c.action}</th>`).join("")+`</tr></thead><tbody>`;
+  for(const i of hid){
+    h+=`<tr><td class="${i===selectedNode?'':''}" data-i="${i}" style="cursor:pointer;${i===selectedNode?"color:var(--acc)":""}">${nodeName(i)}</td>`;
+    for(const c of candidates){
+      const v=evaluate(compiled,c._x).values[i];
+      const a=Math.min(1,Math.abs(v));
+      const col=v>=0?`rgba(127,208,138,${0.12+a*0.75})`:`rgba(224,122,122,${0.12+a*0.75})`;
+      h+=`<td class="mono" style="background:${col}">${v.toFixed(2)}</td>`;
+    }
+    h+=`</tr>`;
+  }
+  $("compare").innerHTML=h+`</tbody></table><p class="hint">Row = internal node, column = candidate. Click a row to inspect that node. Green/red = positive/negative activation intensity.</p>`;
+}
+
+function renderSensors(x){
+  $("sensorReadout").innerHTML=SENSORS.map((n,i)=>
+    `<div class="sensor-row"><b>${i} ${n}</b><span class="mono">${x[i].toFixed(3)}</span></div>`).join("");
+}
+
+function renderCands(){
+  const st=agentState();
+  const tb=$("cands").querySelector("tbody");
+  let best=-Infinity,bestI=-1;
+  const scored=candidates.map((c,i)=>{
+    c._x=buildInputs(c,st);
+    const r=evaluate(compiled,c._x);
+    c._score=r.score;
+    if(r.score>best){best=r.score;bestI=i;}
+    return r;
+  });
+  tb.innerHTML="";
+  candidates.forEach((c,i)=>{
+    const tr=document.createElement("tr");
+    if(i===bestI)tr.className="winner";
+    if(i===selectedCand)tr.style.outline="1px solid var(--acc)";
+    tr.innerHTML=`<td><input type="radio" name="sel" ${i===selectedCand?"checked":""}></td>
+      <td><select data-f="action">${ACTIONS.map(a=>`<option ${a===c.action?"selected":""}>${a}</option>`).join("")}</select></td>
+      <td><select data-f="kind">${KINDS.map((k2,ki)=>`<option value="${ki}" ${ki===c.kind?"selected":""}>${k2}</option>`).join("")}</select></td>
+      ${["need","benefit","risk","travel","price","infrastructure"].map(f=>
+        `<td><input type="number" data-f="${f}" value="${c[f]}" step="0.1" style="width:58px"></td>`).join("")}
+      <td class="mono"><b>${c._score.toFixed(4)}</b></td>`;
+    tr.querySelectorAll("[data-f]").forEach(el=>el.oninput=()=>{
+      const f=el.dataset.f;
+      c[f]=(f==="action")?el.value:(f==="kind"?+el.value:+el.value);
+      renderAll();
+    });
+    tr.querySelector("input[type=radio]").onchange=()=>{selectedCand=i;renderAll();};
+    tb.appendChild(tr);
+  });
+  /* score bars */
+  const lo=Math.min(...candidates.map(c=>c._score),0),hi=Math.max(...candidates.map(c=>c._score),0);
+  $("scoreBars").innerHTML=candidates.map((c,i)=>{
+    const pct=hi>lo?(c._score-lo)/(hi-lo)*100:50;
+    return `<div style="margin:4px 0"><span class="stat">${c.action} · ${c._score.toFixed(3)}</span><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join("");
+}
+
+function renderAll(){
+  const st=agentState();
+  renderCands();
+  if(candidates[selectedCand]){
+    const x=candidates[selectedCand]._x;
+    renderGraph(x);
+    renderNodeDetail(x,evaluate(compiled,x).values);
+    renderCompare();
+    renderSensors(x);
+  }
+}
+
+/* frontier sensors + overrides */
+$("frontier").innerHTML=SENSORS.slice(42).map((n,i)=>
+  `<label>${42+i} ${n}<input id="fr${i}" type="range" min="-1" max="1" step="0.05" value="0"></label>`).join("");
+$("overrides").innerHTML=`<p class="hint">sensor#=value, comma separated (e.g. <code>0=-1, 22=0</code>)</p><input type="text" id="ovr" placeholder="auto">`;
+$("ovr").oninput=e=>{
+  overrides={};
+  for(const part of e.target.value.split(",")){
+    const[k,v]=part.split("=").map(t=>t.trim());
+    if(k!==undefined&&v!==undefined&&k!=="")overrides[k]=v;
+  }
+  renderAll();
+};
+$("goal").innerHTML=`<option value="">None</option>`+GOAL_KINDS.map(g=>`<option>${g}</option>`).join("");
+
+/* presets */
+const PRESETS={
+  "Hungry at night":{hunger:82,coins:12,energy:35,rested:15,night:true,restedBuff:false,happiness:40},
+  "Morning market run":{hunger:30,coins:80,energy:95,rested:90,night:false,restedBuff:true,happiness:70},
+  "Loaded hauler":{hunger:45,coins:50,energy:70,load:0.85,room:0.15,night:false},
+  "Late-night owl":{hunger:55,coins:40,energy:60,rested:30,night:true,nightOwl:true},
+  "Broke & tired":{hunger:70,coins:2,energy:15,rested:10,happiness:25},
+};
+$("preset").innerHTML=Object.keys(PRESETS).map(k=>`<option>${k}</option>`).join("");
+$("applyPreset").onclick=()=>{
+  const p=PRESETS[$("preset").value];
+  for(const[k,v]of Object.entries(p)){
+    const el=$(k);
+    if(!el)continue;
+    if(el.type==="checkbox")el.checked=v;else el.value=v;
+  }
+  renderAll();
+};
+
+const SLATE=[
+  {action:"Gather",kind:0,need:1.6,benefit:0.5,risk:0.01,travel:180,price:0,infrastructure:0},
+  {action:"BuyFood",kind:0,need:2.1,benefit:0.9,risk:0.0,travel:60,price:6,infrastructure:0.8,ask:6},
+  {action:"Deliver",kind:1,need:0.4,benefit:0.8,risk:0.0,travel:340,price:9,infrastructure:0.4},
+  {action:"UrbanWork",kind:9,need:0.7,benefit:1.0,risk:0.03,travel:120,price:5,infrastructure:0.9},
+  {action:"Hunt",kind:9,need:0.8,benefit:0.9,risk:0.22,travel:260,price:0,infrastructure:0.1},
+  {action:"Rest",kind:9,need:0.2,benefit:0.6,risk:0.0,travel:40,price:0,infrastructure:0.6},
+  {action:"Socialize",kind:9,need:0.3,benefit:0.4,risk:0.0,travel:80,price:0,infrastructure:0.7},
+];
+$("loadSlate").onclick=()=>{candidates=SLATE.map(c=>({...c}));selectedCand=0;renderAll();};
+$("addCand").onclick=()=>{candidates.push({action:"Gather",kind:0,need:0.5,benefit:0.5,risk:0,travel:100,price:0,infrastructure:0});renderAll();};
+
+$("seedBtn").onclick=()=>{
+  innov=new Innovations();
+  setGenome(seededGenome(new Rng(+$("seed").value),innov),"(seeded like the game)");
+};
+$("exportBtn").onclick=()=>{
+  const blob=new Blob([JSON.stringify(genome)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="genome.json";a.click();
+};
+$("importBtn").onclick=()=>$("file").click();
+$("file").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  const g=JSON.parse(await f.text());
+  g.nodes.forEach(n=>{if(typeof n.kind==="object")n.kind=Object.keys(n.kind)[0];});
+  setGenome(g,"(imported)");
+};
+$("mutW").onclick=()=>{mutateWeights(genome,mutRng);genome.generation++;setGenome(genome,"(mutated)");};
+$("mutN").onclick=()=>{if(addNode(genome,mutRng,innov)){genome.generation++;setGenome(genome,"(+node)");}};
+$("mutC").onclick=()=>{if(addConnection(genome,mutRng,innov)){genome.generation++;setGenome(genome,"(+edge)");}};
+$("showAll").onchange=renderAll;
+$("graph").addEventListener("click",e=>{
+  const t=e.target.closest("[data-i]");
+  if(t){selectedNode=+t.dataset.i;renderAll();}
+});
+$("compare").addEventListener("click",e=>{
+  const t=e.target.closest("[data-i]");
+  if(t){selectedNode=+t.dataset.i;renderAll();}
+});
+for(const id of["hunger","coins","energy","rested","happiness","social","load","room","toolb","affinity","aspiration","night","restedBuff","adult","coinGrabber","nightOwl","educated","goal","urgency"])
+  $(id).oninput=renderAll;
+for(let i=0;i<6;i++)document.addEventListener("input",e=>{if(e.target.id==="fr"+i)renderAll();});
+
+/* init */
+candidates=SLATE.map(c=>({...c}));
+innov=new Innovations();
+setGenome(seededGenome(new Rng(42),innov),"(seeded like the game)");
+</script>
+</body>
+</html>

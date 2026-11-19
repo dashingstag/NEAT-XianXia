@@ -11,7 +11,7 @@ python_min = "3.11"
 node_major = 24
 
 [contracts]
-wire = 1
-save = 14
+wire = 2
+save = 18
 old_save = "fixtures/bank-v12.snapshot"
 town_frame = "fixtures/town-shop.json"

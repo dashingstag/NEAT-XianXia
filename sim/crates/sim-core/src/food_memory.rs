@@ -138,6 +138,33 @@ mod tests {
     use crate::{Action, Lot, World};
 
     #[test]
+    fn both_v15_layouts_load() {
+        let mut world = World::new(8, 315).unwrap();
+        world.food_memory.observe(0, 0, world.tick, true);
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-v15-layout-{}.snapshot",
+            std::process::id()
+        ));
+        for has_memory in [false, true] {
+            let payload = if has_memory {
+                postcard::to_allocvec(&(&world, &world.food_memory)).unwrap()
+            } else {
+                postcard::to_allocvec(&world).unwrap()
+            };
+            let mut bytes = b"XXSAVE15".to_vec();
+            bytes.extend((payload.len() as u64).to_le_bytes());
+            bytes.extend(zstd::stream::encode_all(payload.as_slice(), 1).unwrap());
+            std::fs::write(&path, bytes).unwrap();
+            let restored = World::load(&path).unwrap();
+            assert_eq!(
+                restored.food_memory.inputs(0, 0, world.tick)[0],
+                if has_memory { 1.0 } else { 0.0 }
+            );
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn purchase_memory_replays_and_changes_the_next_offer_once() {
         let mut world = World::new(8, 310).unwrap();
         let person = 0;

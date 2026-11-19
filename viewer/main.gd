@@ -430,6 +430,25 @@ func _site_text() -> String:
 		"markets":
 			title = str(d.name)
 			body = "%s / %s residents\n\n[b]HOUSING[/b]\n%s completed blocks / %s beds\n\n[b]MARKET[/b]\nTreasury: %s copper units\nObserved sales: %s\n" % [d.stage,int(d.population),int(d.housing_blocks),int(d.housing_blocks)*32,int(d.coins),d.profile]
+			body += "\nGOODS held · offered@ask · wanted@bid · lifetime sold\n"
+			var products: Array = state.get("products",[])
+			var quotes: Array = d.get("quotes",[])
+			var stock: Array = d.get("stock",[])
+			var sales: Array = d.get("sales",[])
+			for k in range(mini(stock.size(),products.size())):
+				var q: Dictionary = quotes[k] if k<quotes.size() else {}
+				var offered := int(q.get("offered",0))
+				var wanted := int(q.get("remaining",0))
+				if int(stock[k])==0 and offered==0 and wanted==0:
+					continue
+				body += "%s: %s held" % [products[k],int(stock[k])]
+				if offered>0 or int(q.get("ask",0))>0:
+					body += " · %s @ %sc" % [offered,int(q.get("ask",0))]
+				if wanted>0 or int(q.get("bid",0))>0:
+					body += " · buys %s @ %sc" % [wanted,int(q.get("bid",0))]
+				if k<sales.size():
+					body += " · %s sold" % int(sales[k])
+				body += "\n"
 			if d.get("project") is Dictionary:
 				body += "\nBuilding %s / %.0f%% complete\n" % [d.project.kind,100.0*float(d.project.progress)/maxf(1.0,float(d.project.required))]
 		"house":
@@ -552,20 +571,40 @@ func _decode(data: PackedByteArray) -> void:
 			if reply.get("ok",false) and notice.text.begins_with("Added resource site #"):
 				_select_site({"kind":"patches","id":int(notice.text.get_slice("#",1)),"market":-1})
 		return
-	if magic != "XNS1" or data.size() < 28 or data.decode_u16(4) != 1:
+	if magic != "XNS1" or data.size() < 32 or data.decode_u16(4) != 2:
 		return
 	paused = data.decode_u16(6) == 1
 	var count: int = data.decode_u32(20)
 	var json_length: int = data.decode_u32(24)
-	if 28+json_length+count*16 != data.size():
+	var animal_count: int = data.decode_u32(28)
+	if 32+json_length+(count+animal_count)*16 != data.size():
 		notice.text = "Snapshot size mismatch."
 		return
-	var decoded: Variant = JSON.parse_string(data.slice(28,28+json_length).get_string_from_utf8())
+	var decoded: Variant = JSON.parse_string(data.slice(32,32+json_length).get_string_from_utf8())
 	if not decoded is Dictionary:
 		return
 	state = decoded
 	state["paused"] = paused
-	field.receive(state,data.slice(28+json_length),count)
+	# Animals arrive as compact records after the people samples.
+	var animals: Array = []
+	var at := 32+json_length+count*16
+	for i in range(animal_count):
+		var rec := data.slice(at+i*16,at+(i+1)*16)
+		animals.append({
+			"id":rec.decode_u32(0),
+			"x":rec.decode_float(4),
+			"y":rec.decode_float(8),
+			"species":rec[12],
+			"action":rec[13],
+			"health":rec[14]&127,
+			"young":(rec[14]&128)!=0,
+			"heading":rec[15]/255.0*TAU,
+		})
+	var ecology: Dictionary = state.get("wildlife",{})
+	if animal_count > 0 or not ecology.has("animals"):
+		ecology["animals"] = animals
+		state["wildlife"] = ecology
+	field.receive(state,data.slice(32+json_length),count)
 	_update_focus_target()
 	pause_button.text = "Run" if paused else "Pause"
 	var inspected: int = int(state.get("selected",{}).get("id",-1)) if state.get("selected") is Dictionary else -1

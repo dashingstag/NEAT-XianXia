@@ -82,11 +82,11 @@ pub struct Animal {
     pub brain: Option<Compiled>,
 }
 impl Animal {
-    fn age(&self, tick: u64) -> u32 {
+    pub(super) fn age(&self, tick: u64) -> u32 {
         self.initial_age
             .saturating_add((tick.saturating_sub(self.born) / rest::DAY_TICKS) as u32)
     }
-    fn adult(&self, tick: u64) -> bool {
+    pub(super) fn adult(&self, tick: u64) -> bool {
         self.age(tick) >= if self.species == 0 { 90 } else { 365 }
     }
 }

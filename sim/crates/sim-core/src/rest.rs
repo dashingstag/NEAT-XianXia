@@ -179,8 +179,8 @@ mod tests {
         w.execute_rest(0);
         let bytes = w.snapshot(1, Some(0), true);
         let json_len = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
-        assert_ne!(bytes[28 + json_len + 12] & 64, 0);
-        assert_ne!(bytes[28 + json_len + 13] & 128, 0);
+        assert_ne!(bytes[32 + json_len + 12] & 64, 0);
+        assert_ne!(bytes[32 + json_len + 13] & 128, 0);
     }
     #[test]
     fn night_shelter_reservations_and_rest_status_replay_exactly() {

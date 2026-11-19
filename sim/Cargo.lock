@@ -327,6 +327,7 @@ name = "sim-runner"
 version = "0.1.0"
 dependencies = [
  "neat-core",
+ "postcard",
  "rayon",
  "serde",
  "serde_json",

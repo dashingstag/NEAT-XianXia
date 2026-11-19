@@ -22,6 +22,7 @@ struct Options {
     checkpoint: PathBuf,
     load: bool,
     serial: bool,
+    hill: sim_core::Hill,
 }
 fn options() -> Result<Options, String> {
     let mut args = env::args().skip(1);
@@ -39,6 +40,7 @@ fn options() -> Result<Options, String> {
         checkpoint: PathBuf::from("runs/viewer.snapshot"),
         load: false,
         serial: false,
+        hill: Default::default(),
     };
     while let Some(k) = args.next() {
         if k == "--load" {
@@ -51,6 +53,10 @@ fn options() -> Result<Options, String> {
         }
         let v = args.next().ok_or(format!("Missing value for {k}"))?;
         match k.as_str() {
+            "--hill-file" => {
+                o.hill = serde_json::from_slice(&fs::read(v).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?
+            }
             "--agents" => o.agents = v.parse().map_err(|_| "Invalid population")?,
             "--steps" => o.steps = v.parse().map_err(|_| "Invalid steps")?,
             "--seed" => o.seed = v.parse().map_err(|_| "Invalid seed")?,
@@ -110,7 +116,7 @@ fn run() -> Result<(), String> {
     let mut w = if o.load {
         World::load(&o.checkpoint)?
     } else {
-        World::new(o.agents, o.seed)?
+        World::new_with_hill(o.agents, o.seed, o.hill)?
     };
     if o.mode == "civic-demo" {
         for _ in 0..300 {
@@ -464,7 +470,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                     Command::Reset { agents, seed } => {
                         advance_remaining = 0;
                         wealth.invalidate();
-                        world = World::new(agents, seed)?;
+                        world = World::new_with_hill(agents, seed, world.hill)?;
                         selected = Some(0);
                         selected_animal = None;
                         paused = true;

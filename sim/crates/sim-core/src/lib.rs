@@ -6,6 +6,8 @@ use std::{collections::VecDeque, fs, io::Read, path::Path};
 mod agriculture;
 mod banking;
 mod legacy_v12;
+mod legacy_v13;
+pub use landscape::Hill;
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;
@@ -41,7 +43,7 @@ use travel::Convoy;
 
 pub const DT: f32 = 0.1;
 pub const GOODS: usize = 13;
-const CANDIDATES: usize = 64;
+pub const CANDIDATES: usize = 64;
 pub const WEIGHTS: [u32; GOODS] = [1, 4, 3, 2, 5, 4, 3, 4, 1, 4, 5, 3, 4];
 pub const MINT_VALUES: [u64; GOODS] = [0, 0, 0, 0, 100, 10, 1, 0, 0, 0, 0, 0, 0];
 pub const PRODUCTS: [&str; GOODS] = [
@@ -367,6 +369,7 @@ pub struct World {
     pub relationships: Relationships,
     #[serde(skip)]
     watch: Watch,
+    pub hill: Hill,
 }
 #[derive(Clone, Debug, Default)]
 struct Watch {
@@ -452,11 +455,15 @@ pub struct TraceChoice {
 
 impl World {
     pub fn new(count: usize, seed: u64) -> Result<Self, String> {
+        Self::new_with_hill(count, seed, Hill::default())
+    }
+    pub fn new_with_hill(count: usize, seed: u64, hill: Hill) -> Result<Self, String> {
+        hill.validate()?;
         if count == 0 || count > 1_200_000 {
             return Err("Population must be 1..1,200,000".into());
         }
         let mut w = Self {
-            format: 13,
+            format: 14,
             seed,
             rng: Rng(seed),
             tick: 0,
@@ -511,6 +518,7 @@ impl World {
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
+            hill,
         };
         for (id, (name, x, y)) in [
             ("Willow Reach", 180.0, 230.0),
@@ -793,6 +801,9 @@ impl World {
                 ..Default::default()
             };
         }
+    }
+    pub fn last_watched_decision(&self) -> Option<&serde_json::Value> {
+        self.watch.last.as_ref()
     }
     #[cfg(test)]
     fn offer(&self, i: usize) -> ([Candidate; CANDIDATES], usize) {
@@ -1937,7 +1948,7 @@ impl World {
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE13".to_vec();
+        let mut data = b"XXSAVE14".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -1952,7 +1963,8 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE13"
+            || (&data[..8] != b"XXSAVE14"
+                && &data[..8] != b"XXSAVE13"
                 && &data[..8] != b"XXSAVE12"
                 && &data[..8] != b"XXSAVE11"
                 && &data[..8] != b"XXSAVE10"
@@ -2016,6 +2028,10 @@ impl World {
             let old: legacy_v12::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
+        } else if &data[..8] == b"XXSAVE13" {
+            let old: legacy_v13::LegacyWorld =
+                postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            old.into()
         } else {
             postcard::from_bytes(&raw).map_err(|e| e.to_string())?
         };
@@ -2032,13 +2048,14 @@ impl World {
             }
         }
         world.social.resize(world.agents.len(), 0.0);
-        world.format = 13;
+        world.format = 14;
         if &data[..8] != b"XXSAVE08"
             && &data[..8] != b"XXSAVE09"
             && &data[..8] != b"XXSAVE10"
             && &data[..8] != b"XXSAVE11"
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
+            && &data[..8] != b"XXSAVE14"
         {
             world.init_wildlife();
         }
@@ -2047,6 +2064,7 @@ impl World {
             && &data[..8] != b"XXSAVE11"
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
+            && &data[..8] != b"XXSAVE14"
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2056,6 +2074,7 @@ impl World {
             && &data[..8] != b"XXSAVE11"
             && &data[..8] != b"XXSAVE12"
             && &data[..8] != b"XXSAVE13"
+            && &data[..8] != b"XXSAVE14"
         {
             world.relocate_fertile_land();
         }
@@ -2114,7 +2133,8 @@ impl World {
             self.matches.len(),
             self.genomes.len(),
         ];
-        if self.format != 13
+        self.hill.validate()?;
+        if self.format != 14
             || n == 0
             || n > 1_200_000
             || lengths.iter().any(|l| *l != n)
@@ -2176,6 +2196,7 @@ impl World {
 
     fn snapshot_metadata(&self) -> serde_json::Value {
         let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":WORLD_WIDTH,"map_height":WORLD_HEIGHT,"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
+        result["hill"] = serde_json::json!(self.hill);
         result["wildlife"] = self.wildlife_summary();
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();

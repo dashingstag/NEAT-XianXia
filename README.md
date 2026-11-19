@@ -48,3 +48,9 @@ Every command prints its own evidence directory under `.work/`. Override with `X
 ## License
 
 The project uses the [MIT license](LICENSE). Bundled Awesome Copilot resources retain their [upstream license and attribution](third_party/awesome-copilot/PROVENANCE.md).
+
+## Decision and terrain experiments
+
+Run the decision audit from the repository root with `cargo run --release --locked --manifest-path sim/Cargo.toml -p sim-core --example candidate_audit -- fixtures/bank-v12.snapshot`. Each output row describes a six-game-hour window and compares the observed parallel run with an unobserved serial continuation. Sampling alternates between the whole scheduled cohort and people within 120 world units of a market. Count reaching the root candidate limit separately from losing an offer. Domain-specific preselection happens earlier. The controlled stocked-shop window explicitly supplies accounted inventory at opening.
+
+For a synthetic world with a moved hill, run `cargo run --release --locked --manifest-path sim/Cargo.toml -p sim-runner -- verify --agents 256 --steps 10 --hill-file world/shifted-hill.json --checkpoint .work/shifted/world.snapshot`. Set XIANXIA_PLAYER_DIR to that separate profile directory and use the normal play launcher to view it. Terrain is initialized before forest and farm placement and travels with the checkpoint.

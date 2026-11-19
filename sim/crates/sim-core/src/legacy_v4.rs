@@ -226,6 +226,7 @@ impl From<LegacyWorld> for World {
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
+            hill: Hill::default(),
         }
     }
 }

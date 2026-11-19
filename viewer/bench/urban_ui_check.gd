@@ -39,6 +39,13 @@ func check_ui() -> void:
 		packet[28+k] = metadata[k]
 	ui.last_inspector_ms = -1000
 	ui._decode(packet)
+	if not world.has("hill"):
+		assert(ui.field.hill_footprint().get_center() == Vector2(1500,1380))
+	var original_world: Dictionary = ui.field.world
+	ui.field.world = original_world.duplicate()
+	ui.field.world.hill = {"x":1840,"y":720,"radius":180}
+	assert(ui.field.hill_footprint() == Rect2(1660,540,360,360))
+	ui.field.world = original_world
 	if "--preview" in args:
 		ui.status.text = "Offline town fixture"
 		return

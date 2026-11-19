@@ -334,6 +334,12 @@ func _tree_points(id: int, radius: float) -> PackedVector2Array:
 		tree_layouts[key] = trees
 	return tree_layouts[key]
 
+# Historical frames predate terrain metadata.
+func hill_footprint() -> Rect2:
+	var hill: Dictionary = world.get("hill",{"x":1500,"y":1380,"radius":360})
+	var radius := float(hill.radius)
+	return Rect2(Vector2(hill.x,hill.y)-Vector2.ONE*radius,Vector2.ONE*radius*2.0)
+
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO,size),Color("15231d"))
 	draw_set_transform(offset,0,Vector2(zoom,zoom))
@@ -358,8 +364,9 @@ func _draw() -> void:
 	for grass in world.get("wildlife",{}).get("grass",[]):
 		var fraction := float(grass.stock)/maxf(1.0,float(grass.capacity))
 		draw_circle(Vector2(grass.x,grass.y),7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
-	draw_circle(Vector2(1500,1380),360,Color("a1a486"))
-	draw_circle(Vector2(1530,1362),258,Color("afb195"))
+	var hill := hill_footprint()
+	draw_circle(hill.get_center(),hill.size.x/2.0,Color("a1a486"))
+	draw_circle(hill.get_center() + Vector2(30,-18) * (hill.size.x/720.0),hill.size.x*(258.0/720.0),Color("afb195"))
 	for y in range(45,1920,111):
 		draw_line(Vector2(2775,y),Vector2(2955,y-15),Color(0.7,0.9,0.9,0.18),1)
 	if show_zones:

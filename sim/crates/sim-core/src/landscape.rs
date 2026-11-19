@@ -1,12 +1,43 @@
 //! Explicit world-edit resources and deterministic woodland placement.
 use super::*;
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hill {
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+}
+impl Default for Hill {
+    fn default() -> Self {
+        Self {
+            x: 1500.0,
+            y: 1380.0,
+            radius: 360.0,
+        }
+    }
+}
+impl Hill {
+    pub(super) fn validate(self) -> Result<(), String> {
+        if self.radius.is_finite()
+            && self.radius > 0.0
+            && (self.radius..=WORLD_WIDTH - self.radius).contains(&self.x)
+            && (self.radius..=WORLD_HEIGHT - self.radius).contains(&self.y)
+        {
+            Ok(())
+        } else {
+            Err("Hill must fit inside the map".into())
+        }
+    }
+    pub(super) fn clearance(self, x: f32, y: f32) -> f32 {
+        dist(x, y, self.x, self.y) - self.radius
+    }
+}
 impl World {
     fn forest_ground_clear(&self, x: f32, y: f32, r: f32) -> bool {
         x - r >= 20.0
             && x + r <= 2670.0
             && y - r >= 20.0
             && y + r <= 1900.0
-            && dist(x, y, 1500.0, 1380.0) >= 360.0 + r + 25.0
+            && self.hill.clearance(x, y) >= r + 25.0
             && self
                 .patches
                 .iter()
@@ -146,7 +177,7 @@ impl World {
     pub(super) fn farm_ground(&self, x: f32, y: f32, r: f32) -> bool {
         (30.0 + r..=2650.0 - r).contains(&x)
             && (30.0 + r..=1880.0 - r).contains(&y)
-            && dist(x, y, 1500.0, 1380.0) > 360.0 + r
+            && self.hill.clearance(x, y) > r
             && self
                 .patches
                 .iter()
@@ -257,7 +288,7 @@ impl World {
             return Err("Choose clear ground away from existing sites".into());
         }
         if kind == 0
-            && (dist(x, y, 1500.0, 1380.0) < 385.0
+            && (self.hill.clearance(x, y) < 25.0
                 || self
                     .patches
                     .iter()
@@ -305,6 +336,25 @@ mod tests {
                     && dist(*x, *y, 1500.0, 1380.0) > 400.0
             })
             .unwrap()
+    }
+    #[test]
+    fn moved_hill_controls_placement_snapshot_and_checkpoint() {
+        let hill: Hill =
+            serde_json::from_str(include_str!("../../../../world/shifted-hill.json")).unwrap();
+        let w = World::new_with_hill(64, 42, hill).unwrap();
+        assert!(!w.farm_ground(hill.x, hill.y, 0.0));
+        assert!(!w.forest_ground_clear(hill.x, hill.y, 10.0));
+        assert!(w
+            .wildlife
+            .forests
+            .iter()
+            .all(|f| hill.clearance(f.x, f.y) >= f.radius));
+        assert_eq!(w.snapshot_metadata()["hill"], serde_json::json!(hill));
+        let file =
+            std::env::temp_dir().join(format!("shifted-hill-{}.snapshot", std::process::id()));
+        w.save(&file).unwrap();
+        assert_eq!(World::load(&file).unwrap().hill, hill);
+        std::fs::remove_file(file).unwrap();
     }
     #[test]
     fn woodland_clears_stone_and_settlements_without_minting_goods() {

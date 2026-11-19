@@ -188,6 +188,7 @@ impl From<LegacyWorld> for World {
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
+            hill: Hill::default(),
         }
     }
 }
@@ -242,7 +243,7 @@ mod tests {
         assert_eq!(loaded.stocks(), w.stocks());
         assert_eq!(loaded.coins(), w.coins());
         assert_eq!(loaded.wildlife.ledger.births, w.wildlife.ledger.births);
-        assert_eq!(loaded.format, 13);
+        assert_eq!(loaded.format, 14);
         loaded.check().unwrap();
     }
 }

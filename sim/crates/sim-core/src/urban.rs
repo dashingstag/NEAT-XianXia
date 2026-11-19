@@ -129,7 +129,7 @@ impl World {
             let t = &self.markets[m];
             let persona = if t.x > 2200.0 {
                 2
-            } else if dist(t.x, t.y, 1500.0, 1380.0) < 550.0 {
+            } else if self.hill.clearance(t.x, t.y) < 190.0 {
                 3
             } else {
                 1

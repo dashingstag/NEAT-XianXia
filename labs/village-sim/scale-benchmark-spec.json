@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed_not_measured",
+  "purpose": "More than one million persistent, individually controlled NEAT agents with an authoritative resource economy",
+  "referenceHardware": {
+    "physicalCpuCores": 16,
+    "hostMemoryGiB": 32,
+    "gpuRequiredForCpuBaseline": false,
+    "actualCpuModel": null,
+    "actualMemoryBandwidth": null,
+    "actualGpuModel": null
+  },
+  "populationCount": {
+    "targetLivingBrainBearingAgents": 1200000,
+    "excludeTerrainCellsBuildingsAndDecorations": true,
+    "requireIndividualGenotypeAndAcquiredState": true,
+    "benchmarkDistinctWeights": true,
+    "benchmarkHighlyDiverseTopologies": true
+  },
+  "brainBudget": {
+    "standardMaxTotalNodes": 64,
+    "standardMeanRetainedConnectionGenes": 256,
+    "standardMaxCandidatesPerDecision": 8,
+    "includeDisabledGenesAndCompilationInMemoryAccounting": true,
+    "allowSilentGenericBrainFallback": false,
+    "allowSilentGeneTruncation": false
+  },
+  "profiles": [
+    {
+      "id": "full_inference",
+      "population": 1200000,
+      "decisionsPerAgentPerSimulatedSecond": 1,
+      "candidatesPerDecision": 8,
+      "commitHz": 10,
+      "p95CommitWallMillisecondsTarget": 100,
+      "requireNoGrowingDecisionBacklog": true,
+      "measuredResult": null
+    },
+    {
+      "id": "playable_mixed_rate",
+      "population": 1200000,
+      "ordinaryDecisionHzRange": [0.2, 1],
+      "urgentLocalDecisionHzRange": [5, 20],
+      "maxBackgroundDecisionAgeSimulatedSeconds": 5,
+      "cameraControlsDecisionScheduling": false,
+      "commitHz": 10,
+      "measuredResult": null
+    },
+    {
+      "id": "viewer",
+      "population": 1200000,
+      "visibleIndividualAgents": 20000,
+      "targetFramesPerSecond": 30,
+      "reportSnapshotBandwidthAndInputLatency": true,
+      "measuredResult": null
+    },
+    {
+      "id": "memory_and_soak",
+      "population": 1200000,
+      "wallHours": 2,
+      "peakHostMemoryGiBTarget": 24,
+      "includeCheckpointsAndScratchBuffers": true,
+      "requireBoundedQueuesCachesAndArchives": true,
+      "measuredResult": null
+    }
+  ],
+  "scaleLadder": [10000, 100000, 300000, 1200000],
+  "stressCases": [
+    "high_topology_diversity",
+    "large_brain_cohort",
+    "dense_metropolis",
+    "skewed_market_order_depth",
+    "100000_simultaneous_wake_events",
+    "birth_and_mutation_churn",
+    "regional_ownership_migration",
+    "mass_conscription_and_levy",
+    "port_and_shipping_congestion",
+    "checkpoint_during_peak_load"
+  ],
+  "mandatorySemanticGates": [
+    "all_resource_and_money_transfers_conserved",
+    "recipe_inputs_account_for_produced_outputs",
+    "cargo_has_single_authoritative_custody",
+    "births_create_no_free_inventory",
+    "country_is_separate_from_settlement_size",
+    "economic_profile_uses_completed_sales_and_provenance",
+    "economic_labels_cannot_change_simulation_results",
+    "render_viewpoint_cannot_change_simulation_results",
+    "no_settlement_label_grants_assets_or_production",
+    "checkpoint_preserves_individual_brains_and_random_state"
+  ],
+  "measurementRequiredFields": [
+    "build_revision",
+    "compiler_and_runtime_configuration",
+    "hardware",
+    "seed",
+    "simulated_time_per_wall_second",
+    "living_brain_bearing_agent_count",
+    "brain_decisions_and_candidate_scores_per_second",
+    "node_and_gene_distributions",
+    "topology_cache_hit_rate",
+    "decision_age_and_missed_deadlines",
+    "commit_time_percentiles",
+    "peak_host_and_device_memory",
+    "transaction_and_conservation_failures",
+    "render_workload_and_snapshot_bandwidth"
+  ]
+}

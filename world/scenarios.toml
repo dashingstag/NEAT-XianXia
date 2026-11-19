@@ -1,0 +1,11 @@
+[founders]
+agents = 10000
+seed = 42
+
+[protocol]
+agents = 1000
+seed = 77
+
+[mature-town]
+checkpoint = "fixtures/bank-v12.snapshot"
+steps = 100

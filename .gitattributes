@@ -1,0 +1,6 @@
+* text=auto
+*.snapshot binary
+*.gd text eol=lf
+*.rs text eol=lf
+*.py text eol=lf
+fixtures/town-shop.json -text

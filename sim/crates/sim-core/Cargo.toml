@@ -1,0 +1,14 @@
+[package]
+name = "sim-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neat-core = { path = "../neat-core" }
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+postcard.workspace = true
+zstd.workspace = true
+

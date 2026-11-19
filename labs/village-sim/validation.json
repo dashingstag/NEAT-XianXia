@@ -1,0 +1,203 @@
+[
+  {
+    "seed": 7,
+    "seconds": 1799.9999999994584,
+    "population": 5,
+    "formedAt": 116.69999999999764,
+    "buildings": [
+      "House",
+      "Market",
+      "House",
+      "House",
+      "House"
+    ],
+    "statistics": {
+      "trades": 9,
+      "kills": 13,
+      "deaths": 9,
+      "foodEaten": 553,
+      "arrived": 14
+    },
+    "ledger": {
+      "food": {
+        "initial": 184,
+        "imported": 40,
+        "renewed": 379,
+        "consumed": 553,
+        "built": 0,
+        "stock": 50,
+        "error": 0
+      },
+      "wood": {
+        "initial": 144,
+        "imported": 0,
+        "renewed": 76,
+        "consumed": 0,
+        "built": 88,
+        "stock": 132,
+        "error": 0
+      },
+      "stone": {
+        "initial": 84,
+        "imported": 0,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 24,
+        "stock": 60,
+        "error": 0
+      },
+      "coin": {
+        "initial": 48,
+        "imported": 64,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 0,
+        "stock": 112,
+        "error": 0
+      },
+      "jade": {
+        "initial": 1,
+        "imported": 0,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 0,
+        "stock": 1,
+        "error": 0
+      }
+    }
+  },
+  {
+    "seed": 42,
+    "seconds": 1799.9999999994584,
+    "population": 5,
+    "formedAt": 35.500000000000234,
+    "buildings": [
+      "House",
+      "Market",
+      "House",
+      "House",
+      "House"
+    ],
+    "statistics": {
+      "trades": 11,
+      "kills": 13,
+      "deaths": 9,
+      "foodEaten": 554,
+      "arrived": 14
+    },
+    "ledger": {
+      "food": {
+        "initial": 188,
+        "imported": 40,
+        "renewed": 376,
+        "consumed": 554,
+        "built": 0,
+        "stock": 50,
+        "error": 0
+      },
+      "wood": {
+        "initial": 144,
+        "imported": 0,
+        "renewed": 71,
+        "consumed": 0,
+        "built": 88,
+        "stock": 127,
+        "error": 0
+      },
+      "stone": {
+        "initial": 84,
+        "imported": 0,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 24,
+        "stock": 60,
+        "error": 0
+      },
+      "coin": {
+        "initial": 48,
+        "imported": 64,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 0,
+        "stock": 112,
+        "error": 0
+      },
+      "jade": {
+        "initial": 2,
+        "imported": 0,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 0,
+        "stock": 2,
+        "error": 0
+      }
+    }
+  },
+  {
+    "seed": 109,
+    "seconds": 1799.9999999994584,
+    "population": 4,
+    "formedAt": 61.500000000000604,
+    "buildings": [
+      "House",
+      "Market",
+      "House",
+      "House",
+      "House"
+    ],
+    "statistics": {
+      "trades": 11,
+      "kills": 13,
+      "deaths": 10,
+      "foodEaten": 556,
+      "arrived": 14
+    },
+    "ledger": {
+      "food": {
+        "initial": 184,
+        "imported": 40,
+        "renewed": 395,
+        "consumed": 556,
+        "built": 0,
+        "stock": 63,
+        "error": 0
+      },
+      "wood": {
+        "initial": 144,
+        "imported": 0,
+        "renewed": 76,
+        "consumed": 0,
+        "built": 88,
+        "stock": 132,
+        "error": 0
+      },
+      "stone": {
+        "initial": 84,
+        "imported": 0,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 24,
+        "stock": 60,
+        "error": 0
+      },
+      "coin": {
+        "initial": 48,
+        "imported": 64,
+        "renewed": 0,
+        "consumed": 0,
+        "built": 0,
+        "stock": 112,
+        "error": 0
+      },
+      "jade": {
+        "initial": 1,
+        "imported": 0,
+        "renewed": 2,
+        "consumed": 0,
+        "built": 0,
+        "stock": 3,
+        "error": 0
+      }
+    }
+  }
+]

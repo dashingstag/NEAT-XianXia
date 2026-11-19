@@ -1,0 +1,48 @@
+name: Verify Xianxia
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install pinned Rust and Godot
+        shell: pwsh
+        run: |
+          $rust = python -c "import tomllib; print(tomllib.load(open('project.toml','rb'))['toolchain']['rust'])"
+          rustup toolchain install $rust --profile minimal
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "RUSTUP_TOOLCHAIN=$rust" >> $env:GITHUB_ENV
+          $version = python -c "import tomllib; print(tomllib.load(open('project.toml','rb'))['toolchain']['godot'])"
+          $build = "Godot_v$version-stable_win64"
+          $dir = Join-Path $env:RUNNER_TEMP godot
+          $archive = Join-Path $env:RUNNER_TEMP godot.zip
+          Invoke-WebRequest "https://github.com/godotengine/godot/releases/download/$version-stable/$build.exe.zip" -OutFile $archive
+          Expand-Archive $archive $dir
+          $exe = Get-ChildItem $dir -Recurse -Filter '*_console.exe' | Select-Object -First 1
+          if (!$exe) { throw 'Godot console executable missing' }
+          "GODOT_BIN=$($exe.FullName)" >> $env:GITHUB_ENV
+      - run: python tools/dev.py doctor
+      - run: python tools/sync_skills.py --check
+      - run: python tools/dev.py test all
+      - run: python tools/dev.py package
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification
+          include-hidden-files: true
+          path: |
+            .work/**/result.json
+            .work/**/replay.json
+            .work/**/isolation.json
+            .work/**/viewer.txt
+            .work/**/backend.log
+            .work/**/xianxia.zip

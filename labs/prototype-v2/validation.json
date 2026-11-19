@@ -1,0 +1,168 @@
+{
+  "seed": 42,
+  "generations": 10,
+  "population": 12,
+  "baseline": {
+    "fitness": 1.1979258333333334,
+    "detail": [
+      {
+        "preset": "Roadside ambush",
+        "reward": 1.1387166666666664,
+        "hp": 0.9967999999999999,
+        "progress": 0.18,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Village famine",
+        "reward": 1.0582333333333338,
+        "hp": 0.9904000000000004,
+        "progress": 0.09,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Spirit spring",
+        "reward": 1.5415999999999999,
+        "hp": 0.9943999999999998,
+        "progress": 0.6839999999999999,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Distant rival",
+        "reward": 1.2531625000000004,
+        "hp": 0.9651625000000005,
+        "progress": 0.36,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Quiet recovery",
+        "reward": 0.9979166666666667,
+        "hp": 1,
+        "progress": 0,
+        "helped": 0,
+        "unprovoked": 0
+      }
+    ]
+  },
+  "best": {
+    "fitness": 1.2984833333333334,
+    "detail": [
+      {
+        "preset": "Roadside ambush",
+        "reward": 1.2666333333333333,
+        "hp": 0.9967999999999999,
+        "progress": 0.15,
+        "helped": 0.22,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Village famine",
+        "reward": 1.0726333333333338,
+        "hp": 0.9904000000000004,
+        "progress": 0.108,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Spirit spring",
+        "reward": 1.6336,
+        "hp": 0.9951999999999999,
+        "progress": 0.7979999999999999,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Distant rival",
+        "reward": 1.2627999999999995,
+        "hp": 0.9267999999999994,
+        "progress": 0.42,
+        "helped": 0,
+        "unprovoked": 0
+      },
+      {
+        "preset": "Quiet recovery",
+        "reward": 1.2567499999999998,
+        "hp": 0.99,
+        "progress": 0,
+        "helped": 0.3899999999999999,
+        "unprovoked": 0
+      }
+    ]
+  },
+  "history": [
+    {
+      "generation": 1,
+      "best": 1.2496925,
+      "mean": 1.1965333333333332,
+      "nodes": 5
+    },
+    {
+      "generation": 2,
+      "best": 1.2708125,
+      "mean": 1.2354438888888888,
+      "nodes": 5
+    },
+    {
+      "generation": 3,
+      "best": 1.2709725000000003,
+      "mean": 1.250863611111111,
+      "nodes": 5
+    },
+    {
+      "generation": 4,
+      "best": 1.2709725000000003,
+      "mean": 1.2533261111111111,
+      "nodes": 5
+    },
+    {
+      "generation": 5,
+      "best": 1.2709725000000003,
+      "mean": 1.258414652777778,
+      "nodes": 5
+    },
+    {
+      "generation": 6,
+      "best": 1.2729,
+      "mean": 1.2664758333333337,
+      "nodes": 5
+    },
+    {
+      "generation": 7,
+      "best": 1.2984833333333334,
+      "mean": 1.271712291666667,
+      "nodes": 6
+    },
+    {
+      "generation": 8,
+      "best": 1.2984833333333334,
+      "mean": 1.279753888888889,
+      "nodes": 6
+    },
+    {
+      "generation": 9,
+      "best": 1.2984833333333334,
+      "mean": 1.2923566666666668,
+      "nodes": 6
+    },
+    {
+      "generation": 10,
+      "best": 1.2984833333333334,
+      "mean": 1.2717634305555556,
+      "nodes": 6
+    }
+  ],
+  "audit": {
+    "seed": 42,
+    "generations": 100,
+    "cases": 2500,
+    "finiteFailures": 0,
+    "gateFailures": 0,
+    "maxWeight": 3,
+    "flips": 246,
+    "saturation": 0.4072941176470588,
+    "passed": true
+  }
+}

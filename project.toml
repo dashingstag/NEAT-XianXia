@@ -1,0 +1,17 @@
+[project]
+name = "NEAT Xianxia"
+sim = "sim/Cargo.toml"
+viewer = "viewer"
+world = "world/scenarios.toml"
+
+[toolchain]
+rust = "1.99.1"
+godot = "4.6.3"
+python_min = "3.11"
+node_major = 24
+
+[contracts]
+wire = 1
+save = 13
+old_save = "fixtures/bank-v12.snapshot"
+town_frame = "fixtures/town-shop.json"

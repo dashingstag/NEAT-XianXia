@@ -1,0 +1,1337 @@
+{
+  "step": 0.1,
+  "runs": [
+    {
+      "seed": 7,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 5,
+      "statistics": {
+        "trades": 100,
+        "kills": 13,
+        "deaths": 9,
+        "foodEaten": 547,
+        "arrived": 14,
+        "crafted": 32,
+        "treatments": 5,
+        "wages": 64,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v4",
+        "quartermasterId": "v13",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "Han Tao leads the council; Ren Song manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 378,
+          "produced": 0,
+          "consumed": 556,
+          "built": 0,
+          "stock": 46,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 87,
+          "produced": 0,
+          "consumed": 46,
+          "built": 88,
+          "stock": 97,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 23,
+          "built": 24,
+          "stock": 37,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 1,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 26,
+          "produced": 0,
+          "consumed": 18,
+          "built": 0,
+          "stock": 32,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 23,
+          "consumed": 17,
+          "built": 0,
+          "stock": 6,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 9,
+          "consumed": 5,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 7,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 5,
+      "statistics": {
+        "trades": 102,
+        "kills": 13,
+        "deaths": 9,
+        "foodEaten": 538,
+        "arrived": 14,
+        "crafted": 36,
+        "treatments": 4,
+        "wages": 124,
+        "levies": 101,
+        "mobilized": 16,
+        "refusals": 0,
+        "guardSeconds": 1039.9000000001497
+      },
+      "council": {
+        "leaderId": "v2",
+        "quartermasterId": "v1",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 378,
+          "produced": 0,
+          "consumed": 546,
+          "built": 0,
+          "stock": 56,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 85,
+          "produced": 0,
+          "consumed": 56,
+          "built": 88,
+          "stock": 85,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 28,
+          "built": 24,
+          "stock": 32,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 1,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 25,
+          "produced": 0,
+          "consumed": 16,
+          "built": 0,
+          "stock": 33,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 28,
+          "consumed": 20,
+          "built": 0,
+          "stock": 8,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 8,
+          "consumed": 4,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 42,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 5,
+      "statistics": {
+        "trades": 98,
+        "kills": 13,
+        "deaths": 9,
+        "foodEaten": 530,
+        "arrived": 14,
+        "crafted": 34,
+        "treatments": 11,
+        "wages": 63,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v1",
+        "quartermasterId": "v11",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "Shen Wu leads the council; An Rui manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 188,
+          "imported": 40,
+          "renewed": 376,
+          "produced": 0,
+          "consumed": 545,
+          "built": 0,
+          "stock": 59,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 85,
+          "produced": 0,
+          "consumed": 38,
+          "built": 88,
+          "stock": 103,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 19,
+          "built": 24,
+          "stock": 41,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 2,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 2,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 50,
+          "produced": 0,
+          "consumed": 30,
+          "built": 0,
+          "stock": 44,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 19,
+          "consumed": 13,
+          "built": 0,
+          "stock": 6,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 15,
+          "consumed": 11,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 42,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 123,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 545,
+        "arrived": 14,
+        "crafted": 40,
+        "treatments": 10,
+        "wages": 127,
+        "levies": 109,
+        "mobilized": 15,
+        "refusals": 0,
+        "guardSeconds": 956.700000000149
+      },
+      "council": {
+        "leaderId": "v3",
+        "quartermasterId": "v1",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 188,
+          "imported": 40,
+          "renewed": 373,
+          "produced": 0,
+          "consumed": 559,
+          "built": 0,
+          "stock": 42,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 82,
+          "produced": 0,
+          "consumed": 52,
+          "built": 88,
+          "stock": 86,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 26,
+          "built": 24,
+          "stock": 34,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 2,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 2,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 40,
+          "produced": 0,
+          "consumed": 28,
+          "built": 0,
+          "stock": 36,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 26,
+          "consumed": 17,
+          "built": 0,
+          "stock": 9,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 14,
+          "consumed": 10,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 109,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 105,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 576,
+        "arrived": 14,
+        "crafted": 33,
+        "treatments": 5,
+        "wages": 57,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v9",
+        "quartermasterId": "v12",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "Li Hua leads the council; Xiao Yu manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 388,
+          "produced": 0,
+          "consumed": 585,
+          "built": 0,
+          "stock": 27,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 89,
+          "produced": 0,
+          "consumed": 48,
+          "built": 88,
+          "stock": 97,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 24,
+          "built": 24,
+          "stock": 36,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 30,
+          "produced": 0,
+          "consumed": 18,
+          "built": 0,
+          "stock": 36,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 24,
+          "consumed": 18,
+          "built": 0,
+          "stock": 6,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 9,
+          "consumed": 5,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 109,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 100,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 586,
+        "arrived": 14,
+        "crafted": 33,
+        "treatments": 7,
+        "wages": 103,
+        "levies": 112,
+        "mobilized": 16,
+        "refusals": 0,
+        "guardSeconds": 854.8000000001258
+      },
+      "council": {
+        "leaderId": "v4",
+        "quartermasterId": "v3",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 388,
+          "produced": 0,
+          "consumed": 597,
+          "built": 0,
+          "stock": 15,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 89,
+          "produced": 0,
+          "consumed": 44,
+          "built": 88,
+          "stock": 101,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 22,
+          "built": 24,
+          "stock": 38,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 30,
+          "produced": 0,
+          "consumed": 22,
+          "built": 0,
+          "stock": 32,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 22,
+          "consumed": 15,
+          "built": 0,
+          "stock": 7,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 11,
+          "consumed": 7,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 13,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 7,
+      "statistics": {
+        "trades": 95,
+        "kills": 13,
+        "deaths": 7,
+        "foodEaten": 599,
+        "arrived": 14,
+        "crafted": 37,
+        "treatments": 8,
+        "wages": 64,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v11",
+        "quartermasterId": "v4",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "An Rui leads the council; Han Tao manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 402,
+          "produced": 0,
+          "consumed": 611,
+          "built": 0,
+          "stock": 15,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 70,
+          "produced": 0,
+          "consumed": 50,
+          "built": 88,
+          "stock": 76,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 25,
+          "built": 24,
+          "stock": 35,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 33,
+          "produced": 0,
+          "consumed": 24,
+          "built": 0,
+          "stock": 33,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 25,
+          "consumed": 18,
+          "built": 0,
+          "stock": 7,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 12,
+          "consumed": 8,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 13,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 97,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 579,
+        "arrived": 14,
+        "crafted": 33,
+        "treatments": 5,
+        "wages": 118,
+        "levies": 111,
+        "mobilized": 16,
+        "refusals": 0,
+        "guardSeconds": 999.5000000001587
+      },
+      "council": {
+        "leaderId": "v6",
+        "quartermasterId": "v0",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 402,
+          "produced": 0,
+          "consumed": 588,
+          "built": 0,
+          "stock": 38,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 75,
+          "produced": 0,
+          "consumed": 48,
+          "built": 88,
+          "stock": 83,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 24,
+          "built": 24,
+          "stock": 36,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 25,
+          "produced": 0,
+          "consumed": 18,
+          "built": 0,
+          "stock": 31,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 24,
+          "consumed": 14,
+          "built": 0,
+          "stock": 10,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 9,
+          "consumed": 5,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 88,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 7,
+      "statistics": {
+        "trades": 93,
+        "kills": 13,
+        "deaths": 7,
+        "foodEaten": 591,
+        "arrived": 14,
+        "crafted": 34,
+        "treatments": 8,
+        "wages": 71,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v2",
+        "quartermasterId": "v6",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "Bai He leads the council; Yun Fei manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 398,
+          "produced": 0,
+          "consumed": 600,
+          "built": 0,
+          "stock": 22,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 77,
+          "produced": 0,
+          "consumed": 50,
+          "built": 88,
+          "stock": 83,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 25,
+          "built": 24,
+          "stock": 35,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 3,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 23,
+          "produced": 0,
+          "consumed": 18,
+          "built": 0,
+          "stock": 29,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 25,
+          "consumed": 20,
+          "built": 0,
+          "stock": 5,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 9,
+          "consumed": 8,
+          "built": 0,
+          "stock": 1,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 88,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 97,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 565,
+        "arrived": 14,
+        "crafted": 40,
+        "treatments": 8,
+        "wages": 123,
+        "levies": 111,
+        "mobilized": 15,
+        "refusals": 0,
+        "guardSeconds": 855.900000000126
+      },
+      "council": {
+        "leaderId": "v2",
+        "quartermasterId": "v4",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 397,
+          "produced": 0,
+          "consumed": 577,
+          "built": 0,
+          "stock": 44,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 89,
+          "produced": 0,
+          "consumed": 56,
+          "built": 88,
+          "stock": 89,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 28,
+          "built": 24,
+          "stock": 32,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 3,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 28,
+          "produced": 0,
+          "consumed": 24,
+          "built": 0,
+          "stock": 28,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 28,
+          "consumed": 17,
+          "built": 0,
+          "stock": 11,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 12,
+          "consumed": 8,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 202,
+      "mode": "civilian",
+      "seconds": 1799.9999999994584,
+      "population": 6,
+      "statistics": {
+        "trades": 112,
+        "kills": 13,
+        "deaths": 8,
+        "foodEaten": 542,
+        "arrived": 14,
+        "crafted": 39,
+        "treatments": 5,
+        "wages": 76,
+        "levies": 28,
+        "mobilized": 0,
+        "refusals": 0,
+        "guardSeconds": 0
+      },
+      "council": {
+        "leaderId": "v2",
+        "quartermasterId": "v12",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": -60,
+        "muster": null,
+        "notice": "Bai He leads the council; Xiao Yu manages supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 376,
+          "produced": 0,
+          "consumed": 552,
+          "built": 0,
+          "stock": 48,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 80,
+          "produced": 0,
+          "consumed": 58,
+          "built": 88,
+          "stock": 78,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 29,
+          "built": 24,
+          "stock": 31,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 32,
+          "produced": 0,
+          "consumed": 20,
+          "built": 0,
+          "stock": 36,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 29,
+          "consumed": 22,
+          "built": 0,
+          "stock": 7,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 10,
+          "consumed": 5,
+          "built": 0,
+          "stock": 5,
+          "error": 0
+        }
+      }
+    },
+    {
+      "seed": 202,
+      "mode": "mobilized",
+      "seconds": 1799.9999999994584,
+      "population": 7,
+      "statistics": {
+        "trades": 123,
+        "kills": 13,
+        "deaths": 7,
+        "foodEaten": 561,
+        "arrived": 14,
+        "crafted": 37,
+        "treatments": 6,
+        "wages": 117,
+        "levies": 111,
+        "mobilized": 16,
+        "refusals": 0,
+        "guardSeconds": 993.5000000001573
+      },
+      "council": {
+        "leaderId": "v7",
+        "quartermasterId": "v3",
+        "legitimacy": 0.7,
+        "priority": "balanced",
+        "levyAt": 1620.099999999622,
+        "muster": null,
+        "notice": "2/2 mobilized; 0 refused. Vacancies may reflect exemptions, health, or missing supplies."
+      },
+      "ledger": {
+        "food": {
+          "initial": 184,
+          "imported": 40,
+          "renewed": 376,
+          "produced": 0,
+          "consumed": 571,
+          "built": 0,
+          "stock": 29,
+          "error": 0
+        },
+        "wood": {
+          "initial": 144,
+          "imported": 0,
+          "renewed": 80,
+          "produced": 0,
+          "consumed": 54,
+          "built": 88,
+          "stock": 82,
+          "error": 0
+        },
+        "stone": {
+          "initial": 84,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 27,
+          "built": 24,
+          "stock": 33,
+          "error": 0
+        },
+        "coin": {
+          "initial": 48,
+          "imported": 64,
+          "renewed": 0,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 112,
+          "error": 0
+        },
+        "jade": {
+          "initial": 1,
+          "imported": 0,
+          "renewed": 2,
+          "produced": 0,
+          "consumed": 0,
+          "built": 0,
+          "stock": 3,
+          "error": 0
+        },
+        "herb": {
+          "initial": 24,
+          "imported": 0,
+          "renewed": 27,
+          "produced": 0,
+          "consumed": 20,
+          "built": 0,
+          "stock": 31,
+          "error": 0
+        },
+        "tool": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 27,
+          "consumed": 17,
+          "built": 0,
+          "stock": 10,
+          "error": 0
+        },
+        "medicine": {
+          "initial": 0,
+          "imported": 0,
+          "renewed": 0,
+          "produced": 10,
+          "consumed": 6,
+          "built": 0,
+          "stock": 4,
+          "error": 0
+        }
+      }
+    }
+  ]
+}

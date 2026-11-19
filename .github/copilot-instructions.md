@@ -1,0 +1,1 @@
+Start at AGENTS.md for ownership and domain invariants. Use the commands in README.md from the repository root. Project skills are discoverable in .github/skills. Edit their canonical versions under skills, then run python tools/sync_skills.py.

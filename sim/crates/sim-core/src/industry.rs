@@ -211,35 +211,40 @@ impl World {
     pub(super) fn expand_map_and_food(&mut self) {
         let scale = (self.agents.len() as u64).div_ceil(1000).max(1);
         let initial = self.ledger.initial.iter().all(|&n| n == 0);
-        for i in 0..self.agents.len() {
-            self.agents.x[i] *= 3.0;
-            self.agents.y[i] *= 3.0;
-        }
-        for m in &mut self.markets {
-            m.x *= 3.0;
-            m.y *= 3.0;
-        }
-        for s in &mut self.shelters {
-            s.x *= 3.0;
-            s.y *= 3.0;
-        }
-        for c in self.convoys.iter_mut().flatten() {
-            c.x *= 3.0;
-            c.y *= 3.0;
-            c.goal_x *= 3.0;
-            c.goal_y *= 3.0;
-        }
-        for g in &mut self.graveyards {
-            g.x *= 3.0;
-            g.y *= 3.0;
-        }
-        for c in &mut self.corpses {
-            c.x *= 3.0;
-            c.y *= 3.0;
+        let classic = self.map.spec.size == MapSize::Classic;
+        if classic {
+            for i in 0..self.agents.len() {
+                self.agents.x[i] *= 3.0;
+                self.agents.y[i] *= 3.0;
+            }
+            for m in &mut self.markets {
+                m.x *= 3.0;
+                m.y *= 3.0;
+            }
+            for s in &mut self.shelters {
+                s.x *= 3.0;
+                s.y *= 3.0;
+            }
+            for c in self.convoys.iter_mut().flatten() {
+                c.x *= 3.0;
+                c.y *= 3.0;
+                c.goal_x *= 3.0;
+                c.goal_y *= 3.0;
+            }
+            for g in &mut self.graveyards {
+                g.x *= 3.0;
+                g.y *= 3.0;
+            }
+            for c in &mut self.corpses {
+                c.x *= 3.0;
+                c.y *= 3.0;
+            }
+            for p in &mut self.patches {
+                p.x *= 3.0;
+                p.y *= 3.0;
+            }
         }
         for p in &mut self.patches {
-            p.x *= 3.0;
-            p.y *= 3.0;
             if p.kind == 0 {
                 p.capacity = 600 * scale;
                 if initial {
@@ -248,9 +253,15 @@ impl World {
                 p.renewal = 3.0 * scale as f64;
             }
         }
+        // Historical caps on the classic layout; generated maps use
+        // land bounds instead.
+        let cap_x = if classic { 2620.0 } else { self.map.spec.width() - 20.0 };
+        let cap_y = if classic { 1750.0 } else { self.map.spec.height() - 20.0 };
+        let ring_x = if classic { 2670.0 } else { self.map.spec.width() - 20.0 };
+        let ring_y = if classic { 1880.0 } else { self.map.spec.height() - 20.0 };
         for m in 0..self.markets.len().min(3) {
-            let x = (self.markets[m].x + 180.0).min(2620.0);
-            let y = (self.markets[m].y + 130.0).min(1750.0);
+            let x = (self.markets[m].x + 180.0).min(cap_x);
+            let y = (self.markets[m].y + 130.0).min(cap_y);
             self.patches.push(Patch {
                 id: self.patches.len() as u32,
                 kind: 7,
@@ -264,7 +275,11 @@ impl World {
             });
             self.ledger.initial[7] += 1000 * scale;
             self.fertility.push(FertileRegion {
-                x: (self.markets[m].x + 235.0).min(2590.0),
+                x: (self.markets[m].x + 235.0).min(if classic {
+                    2590.0
+                } else {
+                    self.map.spec.width() - 20.0
+                }),
                 y: self.markets[m].y + 90.0,
                 width: 180.0,
                 height: 160.0,
@@ -274,8 +289,8 @@ impl World {
             if m > 0 {
                 for j in 0..6 {
                     let angle = j as f32 * std::f32::consts::TAU / 6.0;
-                    let px = (self.markets[m].x + angle.cos() * 230.0).clamp(20.0, 2670.0);
-                    let py = (self.markets[m].y + angle.sin() * 230.0).clamp(20.0, 1880.0);
+                    let px = (self.markets[m].x + angle.cos() * 230.0).clamp(20.0, ring_x);
+                    let py = (self.markets[m].y + angle.sin() * 230.0).clamp(20.0, ring_y);
                     self.patches.push(Patch {
                         id: self.patches.len() as u32,
                         kind: 0,

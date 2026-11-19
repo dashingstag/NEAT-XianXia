@@ -329,6 +329,7 @@ impl From<LegacyWorld> for World {
             relationships: old.relationships,
             watch: Default::default(),
             hill: Hill::default(),
+            map: crate::WorldMap::classic(old.seed),
         }
     }
 }

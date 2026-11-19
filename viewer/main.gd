@@ -1,4 +1,6 @@
 extends Control
+const PersonInspector = preload("res://person_inspector.gd")
+var purchase_buyer := -1
 const Field = preload("res://field.gd")
 var tcp := StreamPeerTCP.new()
 var incoming := PackedByteArray()
@@ -176,7 +178,7 @@ func _ready() -> void:
 	vitals.add_child(rested_bar)
 	detail = RichTextLabel.new()
 	detail.bbcode_enabled = true
-	detail.meta_clicked.connect(func(meta: Variant): _select_agent(str(meta).to_int()))
+	detail.meta_clicked.connect(_inspect_link)
 	detail.add_theme_font_size_override("normal_font_size",15)
 	detail.custom_minimum_size = Vector2(350,200)
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -241,6 +243,7 @@ func _ready() -> void:
 	_connect()
 
 func _connect() -> void:
+	purchase_buyer = -1
 	tcp.disconnect_from_host()
 	incoming.clear()
 	connected = false
@@ -253,6 +256,8 @@ func _connect() -> void:
 	last_connect = Time.get_ticks_msec() / 1000.0
 
 func send(command: Dictionary) -> void:
+	if command.get("command") in ["load","reset"]:
+		purchase_buyer = -1
 	if tcp.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 		notice.text = "Native backend is disconnected. Start run-server.ps1."
 		return
@@ -263,7 +268,39 @@ func send(command: Dictionary) -> void:
 	frame.append_array(body)
 	tcp.put_data(frame)
 
-func _select_agent(id: int) -> void:
+func _buyer_link() -> String:
+	return "[url=buyer]Return to buyer #%s[/url]\n\n" % purchase_buyer if purchase_buyer >= 0 else ""
+
+func _inspect_link(meta: Variant) -> void:
+	var link := str(meta)
+	if link == "buyer" and purchase_buyer >= 0:
+		_select_agent(purchase_buyer)
+		return
+	if link.is_valid_int():
+		_select_agent(link.to_int())
+		return
+	var parts := link.split("/")
+	if parts.size() == 2 and parts[0] == "owner" and parts[1].is_valid_int():
+		_select_agent(parts[1].to_int(), true)
+		return
+	if parts.size() != 3 or not parts[1].is_valid_int() or not parts[2].is_valid_int():
+		return
+	var id := parts[2].to_int()
+	if parts[0] == "seller":
+		purchase_buyer = parts[1].to_int()
+		_select_agent(id, true)
+	elif parts[0] == "shop":
+		var buildings: Array = state.get("urban",{}).get("buildings",[])
+		if id < 0 or id >= buildings.size() or int(buildings[id].id) != id:
+			notice.text = "Recorded shop is unavailable."
+			return
+		purchase_buyer = parts[1].to_int()
+		_select_site({"kind":"urban_buildings","id":id,"market":int(buildings[id].market)}, true)
+		detail.text = _buyer_link() + _site_text()
+
+func _select_agent(id: int, keep_buyer := false) -> void:
+	if not keep_buyer:
+		purchase_buyer = -1
 	site_selection.clear()
 	field.site_focus = false
 	inspector_tabs.current_tab = 0
@@ -274,6 +311,7 @@ func _select_agent(id: int) -> void:
 	send({"command":"select","agent":id})
 
 func _select_animal(id: int) -> void:
+	purchase_buyer = -1
 	site_selection.clear()
 	field.site_focus = false
 	inspector_tabs.current_tab = 0
@@ -311,7 +349,9 @@ func _animal_text(animal: Dictionary) -> String:
 	text += "\nSensors: need, benefit, risk, distance, fertility, continuity, species, hunger, energy, health, nearby people, grass, density, night and adulthood."
 	return text
 
-func _select_site(site: Dictionary) -> void:
+func _select_site(site: Dictionary, keep_buyer := false) -> void:
+	if not keep_buyer:
+		purchase_buyer = -1
 	site_selection = site
 	field.site_focus = true
 	field.selected = -1
@@ -400,7 +440,7 @@ func _site_text() -> String:
 		"urban_buildings":
 			title = ["Private home",["Clothes shop","Tool shop","Furniture shop","Butcher shop"][int(d.line)],["Hunter lodge","Cobbler","Blacksmith","Carpenter"][int(d.line)]][int(d.kind)]
 			body = "Status: %s\n" % ("Complete" if d.ready else "Requires forest clearance" if d.needs_clear else "Builder contract posted")
-			body += "Owner: %s / renter: %s\n" % ["Village" if d.owner==null else "Person #"+str(int(d.owner)),"Vacant" if d.renter==null else "Person #"+str(int(d.renter))]
+			body += "Owner: %s / renter: %s\n" % ["Village" if d.owner==null else "[url=owner/%s]Person #%s[/url]" % [int(d.owner),int(d.owner)],"Vacant" if d.renter==null else "Person #"+str(int(d.renter))]
 			body += "Price %s copper / rent %s per day\nArrears %s / business cash %s\n" % [int(d.price),int(d.rent),int(d.arrears),int(d.cash)]
 			if int(d.kind)>0:
 				body += "Lease entry: 8 fee + 50 working capital\nMarketplace pays 2/day for operating shifts.\nMade %s / retail units sold %s\n" % [int(d.made),int(d.sold)]
@@ -538,7 +578,7 @@ func _decode(data: PackedByteArray) -> void:
 	var animal: Variant = state.get("selected_animal")
 	vitals.visible = site_selection.is_empty()
 	if not site_selection.is_empty():
-		detail.text = _site_text()
+		detail.text = _buyer_link() + _site_text()
 	elif animal is Dictionary:
 		happiness_label.text = "Health / selected animal"
 		rest_label.text = "Food energy / selected animal"
@@ -550,67 +590,8 @@ func _decode(data: PackedByteArray) -> void:
 		rest_label.text = "Rested meter / selected person"
 		var person: Dictionary = info.get("person",{})
 		happiness_bar.value = float(person.get("happiness",50))
-		var text := "[color=#e5c78e][font_size=20]INDIVIDUAL MIND / #%s[/font_size][/color]\n" % int(info.id)
-		text += "[b]%s[/b] / %s / age %.1f\n" % [person.get("name","Unnamed"),person.get("gender",""),float(person.get("age_years",0))]
-		text += "Social score: %.0f/100 / optional benefit\n" % float(person.get("social_score",0))
-		text += "Schooling: %s/10 days / %s\n" % [int(person.get("school_days",0)),"Qualified to teach" if person.get("teacher_eligible",false) else "Not yet qualified to teach"]
-		if "Educated" in person.get("traits",[]):
-			text += "Village jobs: +15% coin entitlement\n"
-			text += "Education bonus balance: %.2f copper\n" % float(person.get("education_bonus_pending",0))
-		for building in state.get("urban",{}).get("buildings",[]):
-			if building.owner==int(info.id) or building.renter==int(info.id):
-				text += "%s #%s / %s copper per day\n" % [["Home","Shop","Workshop"][int(building.kind)],int(building.id),int(building.rent)]
-		for loan in state.get("banking",{}).get("loans",[]):
-			if int(loan.person)==int(info.id):
-				text += "Business loan: %s principal + %s interest / %s%% annual\nRate fixed for %.1f more days%s\n" % [int(loan.principal),int(loan.interest),int(loan.annual_rate_percent),float(loan.days_to_reprice)," / repayment overdue" if loan.overdue else ""]
-		text += "Traits: %s\nAspiration: %s\n" % [", ".join(person.get("traits",[])),person.get("aspiration","")]
-		var spouse: Variant = person.get("spouse")
-		text += "Spouse: %s / children %s\n" % [str(spouse.get("name",""))+" #"+str(int(spouse.id)) if spouse is Dictionary else "Unmarried",str(person.get("children",[]))]
-		var pregnancy: Variant = person.get("pregnancy")
-		if pregnancy is Dictionary:
-			text += "Pregnancy: trimester %s / %.1f days remaining%s\n" % [int(pregnancy.trimester),float(pregnancy.days_until_birth)," / settlement required" if pregnancy.settlement_required else ""]
-		text += "[color=#a8cea0]SHORT-TERM GOALS[/color]\n"
-		for goal in person.get("goals",[]):
-			text += "%s: %s/%s / %.1f days left\n" % [goal.kind,int(goal.progress),int(goal.target),float(goal.days_left)]
-		text += "\nEquipment: %s\n" % str(person.get("tools",[]))
-		text += "Health %.0f · energy %.0f · hunger %.0f\nCoins %s · cargo %s %s\n\n" % [info.health,info.energy,info.hunger,info.coins,info.cargo,info.product]
-		text += "Carrying %s / %s weight · wallet weighs 1 when nonempty\n" % [info.get("carried_weight",0),info.get("capacity",0)]
 		rested_bar.value = float(info.get("rested_meter",0.0))
-		text += "Rested %.0f/100 / %s / %s\n%s\n" % [float(info.get("rested_meter",0)),"RESTED BUFF" if info.get("rested",false) else "Unrested","SLEEPING" if info.get("sleeping",false) else "Awake",str(info.get("rest_location",""))]
-		if info.get("job") is Dictionary:
-			var job: Dictionary = info.job
-			text += "[color=#e8c080]%s / %s c on completion[/color]\n%s\n" % [job.job,int(job.reward),job.phase]
-		text += str(info.get("travel","")) + "\n\n"
-		var relationships: Array = person.get("relationships",[])
-		text += "[color=#a8cea0]RELATIONSHIPS / %s OF 50[/color]\n" % relationships.size()
-		if relationships.is_empty():
-			text += "No relationships yet.\n"
-		for relationship in relationships:
-			var tone := "#a8cea0" if int(relationship.score)>0 else "#dd9c91"
-			text += "[url=%s]%s[/url] [color=%s]%+d[/color]%s%s\n%s / drift check in %.1f days\n" % [int(relationship.id),relationship.name,tone,int(relationship.score)," / family" if relationship.family else ""," / shared trait" if relationship.shared_trait else "",", ".join(relationship.contexts),float(relationship.days_to_drift)]
-			text += "Roll +1: %s%% / -1: %s%%\n" % [int(relationship.positive_chance_percent),int(relationship.negative_chance_percent)]
-		var decision = info.get("last_decision")
-		if decision is Dictionary:
-			text += "\nLast decision at tick %s: %s (target %s)\n" % [decision.decision_tick,decision.action,decision.target]
-			if decision.get("candidate_counts") is Dictionary:
-				for family in decision.candidate_counts:
-					var totals = decision.candidate_counts[family]
-					if totals[1] > 0:
-						text += "At decision: %s admitted %s, omitted %s\n" % [family,totals[0],totals[1]]
-		else:
-			text += "\nNo decision captured yet.\n"
-		var purchase = info.get("last_purchase")
-		if purchase is Dictionary:
-			text += "Shop %s / owner %s / %s at tick %s / charged %s / shop %s / levy %s\n" % [purchase.shop_id,purchase.owner_id,purchase.outcome,purchase.resolution_tick,purchase.buyer_charge,purchase.shop_proceeds,purchase.market_levy]
-		for family in info.get("candidate_counts",{}):
-			var counts = info.candidate_counts[family]
-			if counts[1] > 0:
-				text += "%s: %s admitted, %s omitted\n" % [family,counts[0],counts[1]]
-		text += "\n[color=#a8cea0]CURRENT POLICY PREVIEW[/color]\n"
-		text += "%s nodes / %s genes\n" % [int(info.genome_nodes),int(info.genome_genes)]
-		for choice in info.get("choices",[]):
-			text += "%s %s → %.3f\n" % [choice.action,choice.product,float(choice.score)]
-		detail.text = text
+		detail.text = _buyer_link() + PersonInspector.describe(info,state)
 	var ecology: Dictionary = state.get("wildlife",{})
 	var grass: Dictionary = ecology.get("grass_account",{})
 	var lines := "[color=#a8cea0]WOODLAND WILDLIFE[/color]\nRabbits %s / deer %s / births %s / deaths %s\nGrass %s / eaten %s / berries eaten %s\n\n" % [int(ecology.get("rabbits",0)),int(ecology.get("deer",0)),int(ecology.get("births",0)),int(ecology.get("deaths",0)),int(grass.get("stock",0)),int(grass.get("eaten",0)),int(ecology.get("berries_eaten",0))]

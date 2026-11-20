@@ -1961,6 +1961,8 @@ impl World {
                         aboard: Vec::new(),
                         departed: false,
                         docked_since: self.tick,
+                        path: Vec::new(),
+                        leg: 0,
                     });
                 }
             } else if let Some(p) = self.water.ports.get_mut(port) {

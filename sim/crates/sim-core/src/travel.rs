@@ -77,6 +77,9 @@ pub struct Ship {
     pub aboard: Vec<u32>,
     pub departed: bool,
     pub docked_since: u64,
+    /// Waypoints for the current leg, computed once per crossing.
+    pub path: Vec<(f32, f32)>,
+    pub leg: u16,
 }
 
 /// Water-route reporting state. Persisted so pending reports survive
@@ -369,6 +372,8 @@ mod tests {
             aboard: Vec::new(),
             departed: false,
             docked_since: w.tick,
+            path: Vec::new(),
+            leg: 0,
         });
         for i in 0..8u32 {
             w.water.ports[0].queue.push(i);
@@ -386,6 +391,143 @@ mod tests {
         for i in 0..8usize {
             let d = dist(w.agents.x[i], w.agents.y[i], lx, by);
             assert!(d < 40.0, "rider {i} left {d} from the far dock");
+        }
+    }
+    #[test]
+    fn end_to_end_strand_report_port_ship() {
+        // The whole M8 chain on one seed: a walker strands at a shore,
+        // carries the blockage home, the zoned village plans and escrows a
+        // port, a builder finishes the dock, a crew launches the ferry and
+        // a queued assembly crosses the water aboard it.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        // The span must be a real ferry gap: land-blocked for walkers but
+        // still sailable. Collect stripes from the raster, then keep the
+        // first the routers agree on.
+        let r = w.map.raster();
+        let mut candidates = Vec::new();
+        for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 2 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                let mut k = i + 1;
+                while k < r.cols - 1 && r.terrain[j * r.cols + k] == Terrain::Water as u8 {
+                    k += 1;
+                }
+                if k > i + 1 && k < r.cols - 1 {
+                    let t = r.terrain[j * r.cols + k];
+                    if t != Terrain::Water as u8 {
+                        candidates.push((
+                            (i as f32 + 0.5) * r.cell,
+                            (j as f32 + 0.5) * r.cell,
+                            (k as f32 + 0.5) * r.cell,
+                        ));
+                    }
+                }
+            }
+        }
+        let mut span = None;
+        for (bx, by, lx) in candidates {
+            if w.route_between(bx, by, lx, by).is_none()
+                && w.route_over_water(bx, by, lx, by).is_some()
+            {
+                span = Some((bx, by, lx));
+                break;
+            }
+        }
+        let Some((bx, by, lx)) = span else { return };
+        // Stage 1 — agent 0 strands: two probes 700 ticks apart with no
+        // progress push a pending report.
+        w.agents.home[0] = 0;
+        w.agents.x[0] = bx;
+        w.agents.y[0] = by;
+        w.walk_toward(0, lx, by, 1.0);
+        w.tick += 700;
+        w.walk_toward(0, lx, by, 1.0);
+        assert!(
+            w.water.pending.iter().any(|p| p.agent == 0),
+            "stranded walker carries a report"
+        );
+        // Stage 2 — the bearer reaches home ground and delivers it.
+        w.agents.x[0] = w.markets[0].x;
+        w.agents.y[0] = w.markets[0].y;
+        w.update_water_reports();
+        assert_eq!(w.water.blocks.len(), 1, "report delivered to the village");
+        // Stage 3 — the zoned village escrows materials and posts the
+        // near-side shipwright job.
+        w.urban.states[0].zoned = true;
+        w.markets[0].coins = 500;
+        w.markets[0].add(1, 60, 0);
+        w.markets[0].add(2, 4, 0);
+        w.plan_ports();
+        assert_eq!(w.water.ports.len(), 1);
+        let port = w.water.ports[0].clone();
+        let near = w
+            .urban
+            .jobs
+            .iter()
+            .enumerate()
+            .find_map(|(id, j)| j.as_ref().filter(|j| j.kind == 4 && j.source == 0).map(|_| id))
+            .expect("near-side build job posted");
+        // Stage 4 — a builder stands on the site and finishes the dock.
+        w.agents.action[1] = Action::UrbanWork;
+        w.agents.target[1] = near as u32;
+        w.agents.x[1] = port.x;
+        w.agents.y[1] = port.y;
+        for _ in 0..200 {
+            w.execute_urban_job(1);
+            if w.water.ports[0].near_done {
+                break;
+            }
+        }
+        assert!(w.water.ports[0].near_done, "dock built");
+        // Stage 5 — the gap is land-blocked, so the port is a ferry and
+        // the village commissions a ship on the next planning pass.
+        assert!(w.water.ports[0].ferry, "land-blocked gap needs a ferry");
+        w.plan_ports();
+        let ship_job = w
+            .urban
+            .jobs
+            .iter()
+            .enumerate()
+            .find_map(|(id, j)| j.as_ref().filter(|j| j.kind == 4 && j.source == 2).map(|_| id))
+            .expect("ship commissioned once the dock stands");
+        w.agents.action[1] = Action::UrbanWork;
+        w.agents.target[1] = ship_job as u32;
+        for _ in 0..200 {
+            w.execute_urban_job(1);
+            if !w.water.ships.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(w.water.ships.len(), 1, "ferry launched");
+        // Stage 6 — stranded walkers queue at the dock when their target
+        // is genuinely unreachable over land; the join predicate is
+        // asserted directly, then eight riders board and cross.
+        let (ax, ay) = (port.x, port.y);
+        w.agents.x[0] = ax;
+        w.agents.y[0] = ay;
+        let expect_join = w.route_between(ax, ay, port.lx, port.ly).is_none()
+            && w.route_between(port.lx, port.ly, port.lx, port.ly + 8.0).is_some();
+        assert_eq!(w.try_board(0, port.lx, port.ly + 8.0), expect_join);
+        for i in 0..8u32 {
+            w.water.ports[0].queue.push(i);
+            w.agents.x[i as usize] = ax;
+            w.agents.y[i as usize] = ay;
+        }
+        for _ in 0..6000 {
+            w.ship_step();
+            if w.water.ships[0].at_far {
+                break;
+            }
+        }
+        assert!(w.water.ships[0].at_far, "ferry crossed the gap");
+        assert!(w.water.ships[0].aboard.is_empty(), "riders disembarked");
+        for i in 0..8usize {
+            assert!(
+                dist(w.agents.x[i], w.agents.y[i], port.lx, port.ly) < 40.0,
+                "rider {i} stands at the landing"
+            );
         }
     }
     #[test]
@@ -565,6 +707,46 @@ mod tests {
         w.tick = 10;
         w.travel_step();
         assert_eq!(w.convoys.iter().flatten().count(), 3);
+    }
+    #[test]
+    fn only_departed_convoys_hide_members_in_viewer_records() {
+        let mut w = travelers(3);
+        w.convoys = vec![
+            Some(Convoy {
+                members: vec![0],
+                x: 180.0,
+                y: 230.0,
+                goal_x: 0.0,
+                goal_y: 0.0,
+                created: 0,
+                departed: true,
+            }),
+            Some(Convoy {
+                members: vec![1],
+                x: 240.0,
+                y: 230.0,
+                goal_x: 0.0,
+                goal_y: 0.0,
+                created: 0,
+                departed: false,
+            }),
+        ];
+        for membership in w.agents.convoy.iter_mut() {
+            *membership = NONE;
+        }
+        w.agents.convoy[0] = 0;
+        w.agents.convoy[1] = 1;
+        let bytes = w.snapshot(3, None, true);
+        let jsonlen = u32::from_le_bytes(bytes[24..28].try_into().unwrap()) as usize;
+        let flags = |id: u32| {
+            bytes[32 + jsonlen..32 + jsonlen + 48]
+                .chunks_exact(16)
+                .find(|r| u32::from_le_bytes(r[..4].try_into().unwrap()) == id)
+                .map(|r| r[12] & 128 != 0)
+        };
+        assert_eq!(flags(0), Some(true), "departed member hidden");
+        assert_eq!(flags(1), Some(false), "rallying member visible");
+        assert_eq!(flags(2), Some(false), "independent agent visible");
     }
     #[test]
     fn convoy_center_is_faster_than_solo_and_deaths_release() {
@@ -961,6 +1143,141 @@ impl World {
         self.map.spec.size == MapSize::Classic
             || self.map.terrain_at(x, y) != Terrain::Water
     }
+    /// Water-only A* between two docks on the same coarse grid the road
+    /// router uses, pass cells inverted: every sample must be water or
+    /// river, except inside a 32-unit mooring zone at either dock. The
+    /// crossing a port actually needs is then precomputed once per leg,
+    /// which lets ferries round headlands that stall greedy steering.
+    fn route_over_water(
+        &mut self,
+        ax: f32,
+        ay: f32,
+        bx: f32,
+        by: f32,
+    ) -> Option<Vec<(f32, f32)>> {
+        const CELL: f32 = 64.0;
+        let cols = (self.map.spec.width() / CELL).ceil() as usize;
+        let rows = (self.map.spec.height() / CELL).ceil() as usize;
+        let wet_at = |x: f32, y: f32| {
+            matches!(
+                self.map.terrain_at(x, y),
+                Terrain::Water | Terrain::River
+            )
+        };
+        let mooring = |x: f32, y: f32| dist(x, y, ax, ay) < 32.0 || dist(x, y, bx, by) < 32.0;
+        let mut pass = vec![false; cols * rows];
+        for j in 0..rows {
+            for i in 0..cols {
+                let cx = (i as f32 + 0.5) * CELL;
+                let cy = (j as f32 + 0.5) * CELL;
+                let q = CELL * 0.25;
+                pass[j * cols + i] = mooring(cx, cy)
+                    || [(cx, cy), (cx - q, cy - q), (cx + q, cy + q), (cx - q, cy + q), (cx + q, cy - q)]
+                        .into_iter()
+                        .all(|(x, y)| wet_at(x, y));
+            }
+        }
+        let cell_of = |x: f32, y: f32| {
+            (
+                (x / CELL).clamp(0.0, (cols - 1) as f32) as usize,
+                (y / CELL).clamp(0.0, (rows - 1) as f32) as usize,
+            )
+        };
+        let (si, sj) = cell_of(ax, ay);
+        let (gi, gj) = cell_of(bx, by);
+        use std::collections::BinaryHeap;
+        let mut g = vec![u64::MAX; cols * rows];
+        let mut from = vec![usize::MAX; cols * rows];
+        let mut heap = BinaryHeap::new();
+        let h = |i: usize, j: usize| {
+            let di = i.abs_diff(gi);
+            let dj = j.abs_diff(gj);
+            (di.max(dj) * 10 + di.min(dj) * 4) as u64
+        };
+        let start = sj * cols + si;
+        pass[start] = true;
+        g[start] = 0;
+        heap.push((std::cmp::Reverse(h(si, sj)), start));
+        let goal = gj * cols + gi;
+        pass[goal] = true;
+        let mut found = false;
+        while let Some((std::cmp::Reverse(_), at)) = heap.pop() {
+            if at == goal {
+                found = true;
+                break;
+            }
+            let (i, j) = (at % cols, at / cols);
+            for dj in -1i32..=1 {
+                for di in -1i32..=1 {
+                    if di == 0 && dj == 0 {
+                        continue;
+                    }
+                    let (ni, nj) = (i as i32 + di, j as i32 + dj);
+                    if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
+                        continue;
+                    }
+                    let n = nj as usize * cols + ni as usize;
+                    if !pass[n]
+                        || (di != 0 && dj != 0
+                            && (!pass[j * cols + ni as usize]
+                                || !pass[nj as usize * cols + i]))
+                    {
+                        continue;
+                    }
+                    let cost = g[at] + if di == 0 || dj == 0 { 10 } else { 14 };
+                    if cost < g[n] {
+                        g[n] = cost;
+                        from[n] = at;
+                        heap.push((
+                            std::cmp::Reverse(cost + h(ni as usize, nj as usize)),
+                            n,
+                        ));
+                    }
+                }
+            }
+        }
+        if !found {
+            return None;
+        }
+        let mut cells = vec![goal];
+        let mut at = goal;
+        while at != start {
+            at = from[at];
+            cells.push(at);
+        }
+        cells.reverse();
+        let mut raw: Vec<(f32, f32)> = vec![(ax, ay)];
+        raw.extend(cells.iter().map(|&c| {
+            (
+                (c % cols) as f32 * CELL + CELL * 0.5,
+                (c / cols) as f32 * CELL + CELL * 0.5,
+            )
+        }));
+        raw.push((bx, by));
+        // Smooth with a wet line-of-sight pass (mooring zones stay open).
+        let wet_shot = |ax: f32, ay: f32, bx: f32, by: f32| {
+            let d = dist(ax, ay, bx, by);
+            let n = (d / 16.0).ceil().max(1.0) as usize;
+            (1..n).all(|k| {
+                let t = k as f32 / n as f32;
+                let (x, y) = (ax + (bx - ax) * t, ay + (by - ay) * t);
+                wet_at(x, y) || mooring(x, y)
+            })
+        };
+        let mut path = vec![raw[0]];
+        let mut cursor = 0;
+        while cursor < raw.len() - 1 {
+            let mut far = cursor + 1;
+            for k in (cursor + 2)..raw.len() {
+                if wet_shot(raw[cursor].0, raw[cursor].1, raw[k].0, raw[k].1) {
+                    far = k;
+                }
+            }
+            path.push(raw[far]);
+            cursor = far;
+        }
+        Some(path)
+    }
     /// Water-only mirror of `steer` for ferries: the direct step wins
     /// when it stays on water or river, otherwise the smallest rotation
     /// that does. Ships may nose onto the dock shore to board.
@@ -1119,6 +1436,14 @@ impl World {
             }
             let (sx, sy) = (self.water.ships[si].x, self.water.ships[si].y);
             let d = dist(sx, sy, other.0, other.1);
+            if self.water.ships[si].path.is_empty() {
+                // Route the crossing once; a lake with no wet path at all
+                // falls back to the direct line and stalls at the shore.
+                self.water.ships[si].path = self
+                    .route_over_water(sx, sy, other.0, other.1)
+                    .unwrap_or_else(|| vec![(sx, sy), (other.0, other.1)]);
+                self.water.ships[si].leg = 1;
+            }
             if d < 14.0 {
                 // Disembark everyone at the new dock; each resumes its own
                 // action with the far shore now underfoot.
@@ -1135,13 +1460,26 @@ impl World {
                 s.at_far = !s.at_far;
                 s.departed = false;
                 s.docked_since = self.tick;
-                s.x = other.0 + (other.0 - dock.0) / d.max(1.0) * -10.0;
-                s.y = other.1 + (other.1 - dock.1) / d.max(1.0) * -10.0;
+                s.path = Vec::new();
+                s.leg = 0;
+                let span = dist(dock.0, dock.1, other.0, other.1).max(1.0);
+                s.x = other.0 + (other.0 - dock.0) / span * 10.0;
+                s.y = other.1 + (other.1 - dock.1) / span * 10.0;
                 continue;
+            }
+            // Follow the routed leg; each waypoint hands off to the next.
+            let (wx, wy) = {
+                let s = &self.water.ships[si];
+                s.path[(s.leg as usize).min(s.path.len() - 1)]
+            };
+            if dist(sx, sy, wx, wy) < 8.0
+                && (self.water.ships[si].leg as usize) < self.water.ships[si].path.len() - 1
+            {
+                self.water.ships[si].leg += 1;
             }
             let step = (5.0 * DT).min(d);
             if let Some((nx, ny)) =
-                self.sail_steer(sx, sy, other.0, other.1, step, si % 2 == 0, dock)
+                self.sail_steer(sx, sy, wx, wy, step, si % 2 == 0, dock)
             {
                 self.water.ships[si].x = nx;
                 self.water.ships[si].y = ny;
@@ -1418,6 +1756,13 @@ impl World {
             (lx, ly) = self.map.dry_ground(lx, ly);
             let id = self.water.ports.len() as u32;
             let land_link = self.route_between(px, py, lx, ly).is_some();
+            // A ferry only makes sense when water actually carries a ship
+            // across; a landlocked dead-end gets no port at all.
+            let sea_link = !land_link && self.route_over_water(px, py, lx, ly).is_some();
+            if !land_link && !sea_link {
+                done.push(bi);
+                continue;
+            }
             self.water.ports.push(Port {
                 market: b.market,
                 x: px,

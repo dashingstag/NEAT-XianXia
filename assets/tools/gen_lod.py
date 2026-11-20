@@ -35,17 +35,17 @@ PATCH_COLORS = ["#a95d76", "#365a38", "#d0ccb1", "#bce1df",
                 "#edc65d", "#c8d6df", "#ba7650", "#8d949b"]
 # field.gd overview palette: palette[action] for actions 0..5 (+clamp),
 # plus sleeping and dead overrides.
-ACTION_DOTS = [("Rest", "e5c985"), ("Gather", "90c99a"), ("Deliver", "e2bb78"),
-               ("Buy food", "99c8d7"), ("Build", "cbb1de"),
-               ("Trade / other", "df9c78"), ("Sleeping", "b5cce3"),
-               ("Dead", "686a60")]
+ACTION_DOTS = [("Rest", "#e5c985"), ("Gather", "#90c99a"), ("Deliver", "#e2bb78"),
+               ("Buy food", "#99c8d7"), ("Build", "#cbb1de"),
+               ("Trade / other", "#df9c78"), ("Sleeping", "#b5cce3"),
+               ("Dead", "#686a60")]
 ZONE_COLORS = {"residential": "#77b7ed", "commercial": "#f4ce75",
                "industrial": "#c49ae6"}
-ANIMAL_DOT = {"rabbit": ("f0e8d5", 2.2), "deer": ("dcba80", 3.3),
-              "boar": ("6b5a48", 2.6), "pheasant": ("8a5a3d", 2.2),
-              "fox": ("b06a3e", 2.6), "crane": ("f0ede4", 2.4),
-              "spirit-deer": ("9ecfc4", 3.3), "spirit-fox": ("b8b0d0", 2.6),
-              "qilin-colt": ("d4c9a8", 3.3)}
+ANIMAL_DOT = {"rabbit": ("#f0e8d5", 2.2), "deer": ("#dcba80", 3.3),
+              "boar": ("#6b5a48", 2.6), "pheasant": ("#8a5a3d", 2.2),
+              "fox": ("#b06a3e", 2.6), "crane": ("#f0ede4", 2.4),
+              "spirit-deer": ("#9ecfc4", 3.3), "spirit-fox": ("#b8b0d0", 2.6),
+              "qilin-colt": ("#d4c9a8", 3.3)}
 
 
 def save(img, *path):
@@ -228,7 +228,7 @@ def dot_convoy(d, s):
 
 def dot_rally(d, s):
     arc(d, (12, 13), 7, 0, 360, "#e4e4be", s, 1.4)
-    for i, c in enumerate(["e5c985", "90c99a", "df9c78"]):
+    for i, c in enumerate(["#e5c985", "#90c99a", "#df9c78"]):
         px(d, (9 + i * 3, 12 + (i % 2) * 3), 1.6, c, s)
 
 
@@ -628,6 +628,13 @@ def mini(im, w):
     return im.resize((w, w), Image.NEAREST)
 
 
+def stamp(img, im, x, y, w, s):
+    """Paste im resized to `w` local units, centred at local (x, y), on a
+    supersampled cell canvas whose scale is s."""
+    big = im.resize((int(w * s), int(w * s)), Image.NEAREST)
+    img.paste(big, (int((x - w / 2) * s), int((y - w / 2) * s)), big)
+
+
 def settlement_frames(stage):
     """LOD2/3 cell: market centre + housing ring + stage hallmark."""
     well = site_cell(dict(shape="market"))
@@ -637,27 +644,25 @@ def settlement_frames(stage):
     frames = []
     for f in range(FRAMES):
         img, d, s = cell(64)
-        px(d, (32, 36), 26, fade("b7ac88", 110), s)
+        px(d, (32, 36), 26, fade("b7ac88", 70), s)
+        arc(d, (32, 36), 26, 0, 360, fade("b7ac88", 120), s, 1.0)
         if stage == "camp":
-            for (x, y) in [(20, 40), (44, 42)]:
-                im = mini(shelter, 26)
-                img.paste(im, (int(x - 13), int(y - 13)), im)
-            r = 1.6 + 0.5 * math.sin(f * math.tau / FRAMES * 2)
-            px(d, (32, 44), r + 1, fade("ff9a5a", 170), s)
-            px(d, (32, 44), r, PAL["fire"], s)
+            for (x, y) in [(18, 42), (46, 42)]:
+                stamp(img, shelter, x, y, 24, s)
+            r = 1.8 + 0.5 * math.sin(f * math.tau / FRAMES * 2)
+            px(d, (32, 46), r + 1.2, fade("ff9a5a", 170), s)
+            px(d, (32, 46), r, PAL["fire"], s)
         else:
             n = 4 if stage == "village" else 6
             for k in range(n):
                 a = math.tau * k / n + 0.5
-                x, y = 32 + 20 * math.cos(a), 36 + 16 * math.sin(a)
-                im = mini(home, 22)
-                img.paste(im, (int(x - 11), int(y - 11)), im)
+                x, y = 32 + 20 * math.cos(a), 38 + 12 * math.sin(a)
+                stamp(img, home, x, y, 22, s)
                 if stage == "town" and f % 4 == k % 4:
-                    px(d, (x, y + 4), 1.6, fade("f4c77a", 200), s)
+                    px(d, (x, y + 5), 1.8, fade("f4c77a", 210), s)
             if stage == "town":
-                im = mini(bank, 24)
-                img.paste(im, (int(32 - 12), int(52 - 12)), im)
-            img.paste(mini(well, 28), (int(32 - 14), int(30 - 14)), mini(well, 28))
+                stamp(img, bank, 32, 55, 20, s)
+            stamp(img, well, 32, 31, 26, s)
             ripple(d, s, f, 32, 36, 3, 7, "5d97a6", n=2, w=0.9)
         frames.append(finish(img))
     return frames
@@ -700,8 +705,7 @@ def rally_frames():
         arc(d, (32, 36), r, 0, 360, "#e4e4be", s, 1.6)
         for i, spec in enumerate(specs):
             x = 18 + i * 14
-            img_person = mini(person_cell(spec, "walk", f + i * 3), 22)
-            img.paste(img_person, (x - 11, 36 - 11), img_person)
+            stamp(img, person_cell(spec, "walk", f + i * 3), x, 36, 18, s)
         frames.append(finish(img))
     return frames
 
@@ -775,9 +779,9 @@ def grove_frames():
     for f in range(FRAMES):
         img, d, s = cell(64)
         px(d, (32, 40), 26, fade("617f53", 160), s)
-        for im, x, y in [(mini(gen[f], 30), 16, 42), (mini(pine[f], 32), 34, 34),
-                         (mini(willow[f], 30), 50, 44)]:
-            img.paste(im, (int(x - im.width / 2), int(y - im.height / 2)), im)
+        stamp(img, gen[f], 16, 42, 26, s)
+        stamp(img, pine[f], 34, 34, 28, s)
+        stamp(img, willow[f], 50, 44, 26, s)
         frames.append(finish(img))
     return frames
 
@@ -904,6 +908,10 @@ def emit_anim(oid, frames):
     return p1, p2
 
 
+def emit_l2(oid, frames):
+    return rel(save(frames[0], "l2", f"{oid}.png"))
+
+
 def parked_l2(family, name):
     return f"parked/{family}/{name}.png"
 
@@ -934,8 +942,8 @@ def main():
                           "town": dot_town}[stage]))
         frames = settlement_frames(stage)
         emit_anim(f"settlement-{stage}", frames)
-        row("settlements", f"settlement-{stage}", label, l1,
-            f"parked/lod/anim/settlement-{stage}.png",
+        l2 = emit_l2(f"settlement-{stage}", frames)
+        row("settlements", f"settlement-{stage}", label, l1, l2,
             f"parked/lod/apng/settlement-{stage}.png", FRAMES,
             "LOD1 shape is the live field.gd marker; market well + housing ring drawn at LOD2+")
     # market well as its own object
@@ -1084,7 +1092,7 @@ def main():
              "generated-map watercourse"),
             ("road", "Road (built)", road_frames, _d(dot_road),
              "polyline corridor; dashed when unbuilt"),
-            ("lotus", "Lotus cluster", None, _d(dot_patch("5a8a5e", 4.4)),
+            ("lotus", "Lotus cluster", None, _d(dot_patch("#5a8a5e", 4.4)),
              "coast-edge accent flora"),
             ("mist", "Qi mist", None, _d(dot_mist),
              "immortal-site ambience"),
@@ -1100,7 +1108,7 @@ def main():
             l2 = parked_l2("terrain-flora-xianxia", oid)
         else:
             frames = frames_fn()
-            l2 = f"parked/lod/anim/{oid}.png"
+            l2 = emit_l2(oid, frames)
         emit_anim(oid, frames)
         row("terrain", oid, name, l1, l2, f"parked/lod/apng/{oid}.png",
             FRAMES, note)
@@ -1112,7 +1120,7 @@ def main():
         "parked/lod/l2/action-dots.png", 0,
         "LOD1 person dot is colored by current action: " +
         ", ".join(n for n, _ in ACTION_DOTS))
-    emit_dot("person", _d(dot_person("e5c985")))
+    emit_dot("person", _d(dot_person("#e5c985")))
     for col, (fid, name, spec) in enumerate(MORTALS + IMMORTALS):
         rspec = person_spec(col, spec)
         l1 = "parked/lod/dots/person.png"
@@ -1164,7 +1172,7 @@ def main():
             frames = frames_fn()
         emit_anim(oid, frames)
         l2 = (parked_l2("discovery-fx", "reveal") if oid == "reveal"
-              else f"parked/lod/anim/{oid}.png")
+              else emit_l2(oid, frames))
         row("overlays", oid, name, l1, l2, f"parked/lod/apng/{oid}.png",
             len(frames), note)
 

@@ -259,6 +259,34 @@ func _draw_shore(view: Rect2) -> void:
 			for s in range(0, lines.size(), 2):
 				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, 0.38), 1.6, true)
 
+# Fidelity-3 water motion: a pale bead creeps downstream along each river
+# stroke and the shore dashes breathe, both on the field's shader_clock so a
+# paused world holds the frame.
+func _draw_river_flow(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var bucket: Array = river_buckets.get(Vector2i(bx, by), [])
+			if bucket.is_empty():
+				continue
+			var lines: PackedVector2Array = bucket[0]
+			var widths: PackedFloat32Array = bucket[1]
+			for s in range(0, lines.size(), 2):
+				var t := fposmod(field.shader_clock * 0.30 + float(s / 2) * 0.19, 1.0)
+				var bead := lines[s].lerp(lines[s + 1], t)
+				draw_circle(bead, widths[s / 2] * 0.45 + 1.2, Color(0.82, 0.95, 0.93, 0.45))
+
+func _draw_shore_anim(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var lines: PackedVector2Array = shore_buckets.get(Vector2i(bx, by), PackedVector2Array())
+			for s in range(0, lines.size(), 2):
+				var pulse := 0.24 + 0.20 * sin(field.shader_clock * 2.1 + float(s) * 0.61)
+				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, pulse), 1.8, true)
+
 func _glyph(rel_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
 	var t: Texture2D = field._tex(rel_path)
 	if t == null:
@@ -299,11 +327,15 @@ func _draw() -> void:
 		_draw_hill_art(forest_view)
 	else:
 		_draw_rivers(forest_view)
+		if field.fidelity == 3:
+			_draw_river_flow(forest_view)
 		if field.fidelity == 1:
 			_draw_shore(forest_view)
 		else:
 			_draw_strokes(border_buckets, forest_view, Color(0.20, 0.24, 0.18, 0.45), 2.5)
 			_draw_region_labels(forest_view)
+			if field.fidelity == 3:
+				_draw_shore_anim(forest_view)
 	var markets: Array = field.world.get("markets", [])
 	var forests: Array = field.world.get("wildlife", {}).get("forests", [])
 	# Paint the woodland floor before canopies so neighboring groves read together.
@@ -396,7 +428,10 @@ func _draw_coast_art(view: Rect2) -> void:
 	draw_polyline(waterline, Color("dacb9f"), 3.0, true)
 	for y in range(30, int(field.map_height), 78):
 		var x := 2720.0 + 10.0 * sin(float(y) / 100.0)
-		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, 0.19), 2.0, true)
+		var foam := 0.19
+		if field.fidelity == 3:
+			foam = 0.10 + 0.13 * sin(field.shader_clock * 1.9 + float(y) * 0.05)
+		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, foam), 2.0, true)
 
 func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
 	for market in markets:

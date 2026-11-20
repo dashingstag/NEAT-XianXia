@@ -1,0 +1,882 @@
+[
+ {
+  "cat": "settlements",
+  "id": "settlement-camp",
+  "name": "Settlement \u2014 camp",
+  "l1": "parked/lod/dots/settlement-camp.png",
+  "l2": "parked/lod/l2/settlement-camp.png",
+  "l3": "parked/lod/apng/settlement-camp.png",
+  "frames": 8,
+  "note": "LOD1 shape is the live field.gd marker; market well + housing ring drawn at LOD2+"
+ },
+ {
+  "cat": "settlements",
+  "id": "settlement-village",
+  "name": "Settlement \u2014 village",
+  "l1": "parked/lod/dots/settlement-village.png",
+  "l2": "parked/lod/l2/settlement-village.png",
+  "l3": "parked/lod/apng/settlement-village.png",
+  "frames": 8,
+  "note": "LOD1 shape is the live field.gd marker; market well + housing ring drawn at LOD2+"
+ },
+ {
+  "cat": "settlements",
+  "id": "settlement-town",
+  "name": "Settlement \u2014 town",
+  "l1": "parked/lod/dots/settlement-town.png",
+  "l2": "parked/lod/l2/settlement-town.png",
+  "l3": "parked/lod/apng/settlement-town.png",
+  "frames": 8,
+  "note": "LOD1 shape is the live field.gd marker; market well + housing ring drawn at LOD2+"
+ },
+ {
+  "cat": "settlements",
+  "id": "market-well",
+  "name": "Market centre well",
+  "l1": "parked/lod/dots/market-well.png",
+  "l2": "parked/site-glyphs-xianxia/market.png",
+  "l3": "parked/lod/apng/market.png",
+  "frames": 8,
+  "note": "Well ripple + bucket bob at LOD3"
+ },
+ {
+  "cat": "buildings",
+  "id": "home",
+  "name": "Home",
+  "l1": "parked/lod/dots/home.png",
+  "l2": "parked/site-glyphs-xianxia/home.png",
+  "l3": "parked/lod/apng/home.png",
+  "frames": 8,
+  "note": "Housing blocks + kind-0 urban buildings"
+ },
+ {
+  "cat": "buildings",
+  "id": "shop-clothes",
+  "name": "Shop \u2014 clothier",
+  "l1": "parked/lod/dots/shop-clothes.png",
+  "l2": "parked/site-glyphs-xianxia/shop-clothes.png",
+  "l3": "parked/lod/apng/shop-clothes.png",
+  "frames": 8,
+  "note": "kind 1, line 0"
+ },
+ {
+  "cat": "buildings",
+  "id": "shop-tools",
+  "name": "Shop \u2014 tools",
+  "l1": "parked/lod/dots/shop-tools.png",
+  "l2": "parked/site-glyphs-xianxia/shop-tools.png",
+  "l3": "parked/lod/apng/shop-tools.png",
+  "frames": 8,
+  "note": "kind 1, line 1"
+ },
+ {
+  "cat": "buildings",
+  "id": "shop-furniture",
+  "name": "Shop \u2014 furniture",
+  "l1": "parked/lod/dots/shop-furniture.png",
+  "l2": "parked/site-glyphs-xianxia/shop-furniture.png",
+  "l3": "parked/lod/apng/shop-furniture.png",
+  "frames": 8,
+  "note": "kind 1, line 2"
+ },
+ {
+  "cat": "buildings",
+  "id": "shop-butcher",
+  "name": "Shop \u2014 butcher",
+  "l1": "parked/lod/dots/shop-butcher.png",
+  "l2": "parked/site-glyphs-xianxia/shop-butcher.png",
+  "l3": "parked/lod/apng/shop-butcher.png",
+  "frames": 8,
+  "note": "kind 1, line 3"
+ },
+ {
+  "cat": "buildings",
+  "id": "workshop-hunter",
+  "name": "Workshop \u2014 hunter",
+  "l1": "parked/lod/dots/workshop-hunter.png",
+  "l2": "parked/site-glyphs-xianxia/workshop-hunter.png",
+  "l3": "parked/lod/apng/workshop-hunter.png",
+  "frames": 8,
+  "note": "kind 2, line 0"
+ },
+ {
+  "cat": "buildings",
+  "id": "workshop-cobbler",
+  "name": "Workshop \u2014 cobbler",
+  "l1": "parked/lod/dots/workshop-cobbler.png",
+  "l2": "parked/site-glyphs-xianxia/workshop-cobbler.png",
+  "l3": "parked/lod/apng/workshop-cobbler.png",
+  "frames": 8,
+  "note": "kind 2, line 1"
+ },
+ {
+  "cat": "buildings",
+  "id": "workshop-blacksmith",
+  "name": "Workshop \u2014 blacksmith",
+  "l1": "parked/lod/dots/workshop-blacksmith.png",
+  "l2": "parked/site-glyphs-xianxia/workshop-blacksmith.png",
+  "l3": "parked/lod/apng/workshop-blacksmith.png",
+  "frames": 8,
+  "note": "kind 2, line 2"
+ },
+ {
+  "cat": "buildings",
+  "id": "workshop-carpenter",
+  "name": "Workshop \u2014 carpenter",
+  "l1": "parked/lod/dots/workshop-carpenter.png",
+  "l2": "parked/site-glyphs-xianxia/workshop-carpenter.png",
+  "l3": "parked/lod/apng/workshop-carpenter.png",
+  "frames": 8,
+  "note": "kind 2, line 3"
+ },
+ {
+  "cat": "buildings",
+  "id": "bank",
+  "name": "Bank \u2014 pagoda",
+  "l1": "parked/lod/dots/bank.png",
+  "l2": "parked/site-glyphs-xianxia/bank.png",
+  "l3": "parked/lod/apng/bank.png",
+  "frames": 8,
+  "note": "town bank, rate label"
+ },
+ {
+  "cat": "buildings",
+  "id": "tavern",
+  "name": "Tavern",
+  "l1": "parked/lod/dots/tavern.png",
+  "l2": "parked/site-glyphs-xianxia/tavern.png",
+  "l3": "parked/lod/apng/tavern.png",
+  "frames": 8,
+  "note": "visitors/32 + lantern landmark"
+ },
+ {
+  "cat": "buildings",
+  "id": "school",
+  "name": "School",
+  "l1": "parked/lod/dots/school.png",
+  "l2": "parked/site-glyphs-xianxia/school.png",
+  "l3": "parked/lod/apng/school.png",
+  "frames": 8,
+  "note": "paifang gate landmark"
+ },
+ {
+  "cat": "buildings",
+  "id": "farm",
+  "name": "Rice farm",
+  "l1": "parked/lod/dots/farm.png",
+  "l2": "parked/site-glyphs-xianxia/farm.png",
+  "l3": "parked/lod/apng/farm.png",
+  "frames": 8,
+  "note": "mature vs growing paddy"
+ },
+ {
+  "cat": "buildings",
+  "id": "graveyard",
+  "name": "Graveyard",
+  "l1": "parked/lod/dots/graveyard.png",
+  "l2": "parked/site-glyphs-xianxia/graveyard.png",
+  "l3": "parked/lod/apng/graveyard.png",
+  "frames": 8,
+  "note": "buried_count/capacity steles"
+ },
+ {
+  "cat": "buildings",
+  "id": "shelter",
+  "name": "Roadside camp",
+  "l1": "parked/lod/dots/shelter.png",
+  "l2": "parked/site-glyphs-xianxia/shelter.png",
+  "l3": "parked/lod/apng/shelter.png",
+  "frames": 8,
+  "note": "bed occupancy ring"
+ },
+ {
+  "cat": "buildings",
+  "id": "jobboard",
+  "name": "Job board",
+  "l1": "parked/lod/dots/jobboard.png",
+  "l2": "parked/site-glyphs-xianxia/jobboard.png",
+  "l3": "parked/lod/apng/jobboard.png",
+  "frames": 8,
+  "note": "vacancies + nearby bodies dot"
+ },
+ {
+  "cat": "buildings",
+  "id": "mine-gold",
+  "name": "Gold mine",
+  "l1": "parked/lod/dots/mine-gold.png",
+  "l2": "parked/site-glyphs-xianxia/mine-gold.png",
+  "l3": "parked/lod/apng/mine-gold.png",
+  "frames": 8,
+  "note": "patch kind 4"
+ },
+ {
+  "cat": "buildings",
+  "id": "mine-silver",
+  "name": "Silver mine",
+  "l1": "parked/lod/dots/mine-silver.png",
+  "l2": "parked/lod/l2/mine-silver.png",
+  "l3": "parked/lod/apng/mine-silver.png",
+  "frames": 8,
+  "note": "patch kind 5 (reuses mine glyph today)"
+ },
+ {
+  "cat": "buildings",
+  "id": "mine-copper",
+  "name": "Copper mine",
+  "l1": "parked/lod/dots/mine-copper.png",
+  "l2": "parked/lod/l2/mine-copper.png",
+  "l3": "parked/lod/apng/mine-copper.png",
+  "frames": 8,
+  "note": "patch kind 6 (reuses mine glyph today)"
+ },
+ {
+  "cat": "buildings",
+  "id": "mine-iron",
+  "name": "Iron mine",
+  "l1": "parked/lod/dots/mine-iron.png",
+  "l2": "parked/site-glyphs-xianxia/mine-iron.png",
+  "l3": "parked/lod/apng/mine-iron.png",
+  "frames": 8,
+  "note": "patch kind 7"
+ },
+ {
+  "cat": "buildings",
+  "id": "gate",
+  "name": "Mountain gate",
+  "l1": "parked/lod/dots/gate.png",
+  "l2": "parked/site-glyphs-xianxia/gate.png",
+  "l3": "parked/lod/apng/gate.png",
+  "frames": 8,
+  "note": "immortal site \u2014 dormant"
+ },
+ {
+  "cat": "buildings",
+  "id": "pavilion",
+  "name": "Pavilion",
+  "l1": "parked/lod/dots/pavilion.png",
+  "l2": "parked/site-glyphs-xianxia/pavilion.png",
+  "l3": "parked/lod/apng/pavilion.png",
+  "frames": 8,
+  "note": "immortal site \u2014 dormant"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-berries",
+  "name": "Berries",
+  "l1": "parked/lod/dots/patch-berries.png",
+  "l2": "parked/terrain-flora-xianxia/berries.png",
+  "l3": "parked/lod/apng/patch-berries.png",
+  "frames": 8,
+  "note": "dots scale with stock"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-timber",
+  "name": "Timber stand",
+  "l1": "parked/lod/dots/patch-timber.png",
+  "l2": "parked/terrain-flora-xianxia/timber.png",
+  "l3": "parked/lod/apng/patch-timber.png",
+  "frames": 8,
+  "note": "larger crown radius"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-stone",
+  "name": "Stone outcrop",
+  "l1": "parked/lod/dots/patch-stone.png",
+  "l2": "parked/terrain-flora-xianxia/stone.png",
+  "l3": "parked/lod/apng/patch-stone.png",
+  "frames": 8,
+  "note": "resource patch"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-fish",
+  "name": "Fish shoal",
+  "l1": "parked/lod/dots/patch-fish.png",
+  "l2": "parked/terrain-flora-xianxia/fish.png",
+  "l3": "parked/lod/apng/patch-fish.png",
+  "frames": 8,
+  "note": "coastal food source"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-gold",
+  "name": "Gold ore",
+  "l1": "parked/lod/dots/patch-gold.png",
+  "l2": "parked/site-glyphs-xianxia/mine-gold.png",
+  "l3": "parked/lod/apng/patch-gold.png",
+  "frames": 8,
+  "note": "mine diamond at LOD1"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-silver",
+  "name": "Silver ore",
+  "l1": "parked/lod/dots/patch-silver.png",
+  "l2": "parked/lod/l2/mine-silver.png",
+  "l3": "parked/lod/apng/patch-silver.png",
+  "frames": 8,
+  "note": "resource patch"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-copper",
+  "name": "Copper ore",
+  "l1": "parked/lod/dots/patch-copper.png",
+  "l2": "parked/lod/l2/mine-copper.png",
+  "l3": "parked/lod/apng/patch-copper.png",
+  "frames": 8,
+  "note": "resource patch"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-iron",
+  "name": "Iron ore",
+  "l1": "parked/lod/dots/patch-iron.png",
+  "l2": "parked/site-glyphs-xianxia/mine-iron.png",
+  "l3": "parked/lod/apng/patch-iron.png",
+  "frames": 8,
+  "note": "resource patch"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-herbs",
+  "name": "Herb patch",
+  "l1": "parked/lod/dots/patch-herbs.png",
+  "l2": "parked/terrain-flora-xianxia/herbs.png",
+  "l3": "parked/lod/apng/patch-herbs.png",
+  "frames": 8,
+  "note": "dormant \u2014 future kind"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-spirit-herbs",
+  "name": "Spirit herb",
+  "l1": "parked/lod/dots/patch-spirit-herbs.png",
+  "l2": "parked/terrain-flora-xianxia/spirit-herbs.png",
+  "l3": "parked/lod/apng/patch-spirit-herbs.png",
+  "frames": 8,
+  "note": "dormant \u2014 rare qi herb"
+ },
+ {
+  "cat": "patches",
+  "id": "patch-mushrooms",
+  "name": "Mushroom ring",
+  "l1": "parked/lod/dots/patch-mushrooms.png",
+  "l2": "parked/terrain-flora-xianxia/mushrooms.png",
+  "l3": "parked/lod/apng/patch-mushrooms.png",
+  "frames": 8,
+  "note": "dormant \u2014 future kind"
+ },
+ {
+  "cat": "terrain",
+  "id": "pine",
+  "name": "Pine",
+  "l1": "parked/lod/dots/pine.png",
+  "l2": "parked/terrain-flora-xianxia/pine.png",
+  "l3": "parked/lod/apng/pine.png",
+  "frames": 8,
+  "note": "cool groves"
+ },
+ {
+  "cat": "terrain",
+  "id": "bamboo",
+  "name": "Bamboo",
+  "l1": "parked/lod/dots/bamboo.png",
+  "l2": "parked/terrain-flora-xianxia/bamboo.png",
+  "l3": "parked/lod/apng/bamboo.png",
+  "frames": 8,
+  "note": "coastal groves"
+ },
+ {
+  "cat": "terrain",
+  "id": "willow",
+  "name": "Willow",
+  "l1": "parked/lod/dots/willow.png",
+  "l2": "parked/terrain-flora-xianxia/willow.png",
+  "l3": "parked/lod/apng/willow.png",
+  "frames": 8,
+  "note": "waterside groves"
+ },
+ {
+  "cat": "terrain",
+  "id": "plum",
+  "name": "Plum",
+  "l1": "parked/lod/dots/plum.png",
+  "l2": "parked/terrain-flora-xianxia/plum.png",
+  "l3": "parked/lod/apng/plum.png",
+  "frames": 8,
+  "note": "~1 in 7 accent"
+ },
+ {
+  "cat": "terrain",
+  "id": "tree-generic",
+  "name": "Generic tree",
+  "l1": "parked/lod/dots/tree-generic.png",
+  "l2": "parked/terrain-flora-xianxia/tree-generic.png",
+  "l3": "parked/lod/apng/tree-generic.png",
+  "frames": 8,
+  "note": "default grove tree"
+ },
+ {
+  "cat": "terrain",
+  "id": "forest-grove",
+  "name": "Forest grove",
+  "l1": "parked/lod/dots/forest-grove.png",
+  "l2": "parked/lod/l2/forest-grove.png",
+  "l3": "parked/lod/apng/forest-grove.png",
+  "frames": 8,
+  "note": "canopy layer + floor, every-3rd tree at LOD1"
+ },
+ {
+  "cat": "terrain",
+  "id": "grass",
+  "name": "Grass patch",
+  "l1": "parked/lod/dots/grass.png",
+  "l2": "parked/lod/l2/grass.png",
+  "l3": "parked/lod/apng/grass.png",
+  "frames": 8,
+  "note": "grazing regrowth for wildlife"
+ },
+ {
+  "cat": "terrain",
+  "id": "fertility",
+  "name": "Fertility region",
+  "l1": "parked/lod/dots/fertility.png",
+  "l2": "parked/lod/l2/fertility.png",
+  "l3": "parked/lod/apng/fertility.png",
+  "frames": 8,
+  "note": "farm placement tint"
+ },
+ {
+  "cat": "terrain",
+  "id": "hill",
+  "name": "Hill",
+  "l1": "parked/lod/dots/hill.png",
+  "l2": "parked/lod/l2/hill.png",
+  "l3": "parked/lod/apng/hill.png",
+  "frames": 8,
+  "note": "classic terrain landmark"
+ },
+ {
+  "cat": "terrain",
+  "id": "coast",
+  "name": "Coast / water",
+  "l1": "parked/lod/dots/coast.png",
+  "l2": "parked/lod/l2/coast.png",
+  "l3": "parked/lod/apng/coast.png",
+  "frames": 8,
+  "note": "shore + waterline waves"
+ },
+ {
+  "cat": "terrain",
+  "id": "river",
+  "name": "River",
+  "l1": "parked/lod/dots/river.png",
+  "l2": "parked/lod/l2/river.png",
+  "l3": "parked/lod/apng/river.png",
+  "frames": 8,
+  "note": "generated-map watercourse"
+ },
+ {
+  "cat": "terrain",
+  "id": "road",
+  "name": "Road (built)",
+  "l1": "parked/lod/dots/road.png",
+  "l2": "parked/lod/l2/road.png",
+  "l3": "parked/lod/apng/road.png",
+  "frames": 8,
+  "note": "polyline corridor; dashed when unbuilt"
+ },
+ {
+  "cat": "terrain",
+  "id": "lotus",
+  "name": "Lotus cluster",
+  "l1": "parked/lod/dots/lotus.png",
+  "l2": "parked/terrain-flora-xianxia/lotus.png",
+  "l3": "parked/lod/apng/lotus.png",
+  "frames": 8,
+  "note": "coast-edge accent flora"
+ },
+ {
+  "cat": "terrain",
+  "id": "mist",
+  "name": "Qi mist",
+  "l1": "parked/lod/dots/mist.png",
+  "l2": "parked/terrain-flora-xianxia/mist.png",
+  "l3": "parked/lod/apng/mist.png",
+  "frames": 8,
+  "note": "immortal-site ambience"
+ },
+ {
+  "cat": "terrain",
+  "id": "unknown-site",
+  "name": "Undiscovered site",
+  "l1": "parked/lod/dots/unknown-site.png",
+  "l2": "parked/terrain-flora-xianxia/unknown-site.png",
+  "l3": "parked/lod/apng/unknown-site.png",
+  "frames": 8,
+  "note": "procedural-expansion marker"
+ },
+ {
+  "cat": "terrain",
+  "id": "fog",
+  "name": "Unexplored mist",
+  "l1": "parked/lod/dots/fog.png",
+  "l2": "parked/lod/l2/fog.png",
+  "l3": "parked/lod/apng/fog.png",
+  "frames": 8,
+  "note": "explored-chunk fog layer"
+ },
+ {
+  "cat": "people",
+  "id": "action-dots",
+  "name": "Villager action colors",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/lod/l2/action-dots.png",
+  "l3": "parked/lod/l2/action-dots.png",
+  "frames": 0,
+  "note": "LOD1 person dot is colored by current action: Rest, Gather, Deliver, Buy food, Build, Trade / other, Sleeping, Dead"
+ },
+ {
+  "cat": "people",
+  "id": "farmer-straw",
+  "name": "Farmer \u2014 straw hat",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/farmer-straw.png",
+  "l3": "parked/lod/apng/farmer-straw-walk.png",
+  "frames": 8,
+  "note": "atlas col 0; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "farmer-douli",
+  "name": "Farmer \u2014 douli hat",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/farmer-douli.png",
+  "l3": "parked/lod/apng/farmer-douli-walk.png",
+  "frames": 8,
+  "note": "atlas col 1; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "fieldhand",
+  "name": "Field hand \u2014 headwrap",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/fieldhand.png",
+  "l3": "parked/lod/apng/fieldhand-walk.png",
+  "frames": 8,
+  "note": "atlas col 2; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "reaper",
+  "name": "Reaper",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/reaper.png",
+  "l3": "parked/lod/apng/reaper-walk.png",
+  "frames": 8,
+  "note": "atlas col 3; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "porter",
+  "name": "Porter \u2014 shoulder pole",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/porter.png",
+  "l3": "parked/lod/apng/porter-walk.png",
+  "frames": 8,
+  "note": "atlas col 4; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "laborer",
+  "name": "Laborer",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/laborer.png",
+  "l3": "parked/lod/apng/laborer-walk.png",
+  "frames": 8,
+  "note": "atlas col 5; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "artisan",
+  "name": "Artisan \u2014 apron",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/artisan.png",
+  "l3": "parked/lod/apng/artisan-walk.png",
+  "frames": 8,
+  "note": "atlas col 6; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "smith",
+  "name": "Smith",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/smith.png",
+  "l3": "parked/lod/apng/smith-walk.png",
+  "frames": 8,
+  "note": "atlas col 7; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "merchant",
+  "name": "Merchant \u2014 futou hat",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/merchant.png",
+  "l3": "parked/lod/apng/merchant-walk.png",
+  "frames": 8,
+  "note": "atlas col 8; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "trader",
+  "name": "Trader \u2014 ledger scroll",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/trader.png",
+  "l3": "parked/lod/apng/trader-walk.png",
+  "frames": 8,
+  "note": "atlas col 9; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "fisher",
+  "name": "Fisher \u2014 reed cape",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/fisher.png",
+  "l3": "parked/lod/apng/fisher-walk.png",
+  "frames": 8,
+  "note": "atlas col 10; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "elder",
+  "name": "Elder \u2014 staff",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/elder.png",
+  "l3": "parked/lod/apng/elder-walk.png",
+  "frames": 8,
+  "note": "atlas col 11; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "swordsman",
+  "name": "Swordsman cultivator (dormant)",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/swordsman.png",
+  "l3": "parked/lod/apng/swordsman-walk.png",
+  "frames": 8,
+  "note": "atlas col 12; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "cultivator",
+  "name": "Robed cultivator (dormant)",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/cultivator.png",
+  "l3": "parked/lod/apng/cultivator-walk.png",
+  "frames": 8,
+  "note": "atlas col 13; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "elder-sage",
+  "name": "Elder sage (dormant)",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/elder-sage.png",
+  "l3": "parked/lod/apng/elder-sage-walk.png",
+  "frames": 8,
+  "note": "atlas col 14; work cycle strip also emitted"
+ },
+ {
+  "cat": "people",
+  "id": "spirit-envoy",
+  "name": "Spirit envoy (dormant)",
+  "l1": "parked/lod/dots/person.png",
+  "l2": "parked/villager-atlas-v2/stances/spirit-envoy.png",
+  "l3": "parked/lod/apng/spirit-envoy-walk.png",
+  "frames": 8,
+  "note": "atlas col 15; work cycle strip also emitted"
+ },
+ {
+  "cat": "wildlife",
+  "id": "rabbit",
+  "name": "Rabbit",
+  "l1": "parked/lod/dots/rabbit.png",
+  "l2": "parked/animal-table-xianxia/rabbit.png",
+  "l3": "parked/lod/apng/rabbit.png",
+  "frames": 4,
+  "note": "atlas col 0; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "deer",
+  "name": "Deer",
+  "l1": "parked/lod/dots/deer.png",
+  "l2": "parked/animal-table-xianxia/deer.png",
+  "l3": "parked/lod/apng/deer.png",
+  "frames": 4,
+  "note": "atlas col 1; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "boar",
+  "name": "Boar (dormant)",
+  "l1": "parked/lod/dots/boar.png",
+  "l2": "parked/animal-table-xianxia/boar.png",
+  "l3": "parked/lod/apng/boar.png",
+  "frames": 4,
+  "note": "atlas col 2; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "pheasant",
+  "name": "Pheasant (dormant)",
+  "l1": "parked/lod/dots/pheasant.png",
+  "l2": "parked/animal-table-xianxia/pheasant.png",
+  "l3": "parked/lod/apng/pheasant.png",
+  "frames": 4,
+  "note": "atlas col 3; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "fox",
+  "name": "Fox (dormant)",
+  "l1": "parked/lod/dots/fox.png",
+  "l2": "parked/animal-table-xianxia/fox.png",
+  "l3": "parked/lod/apng/fox.png",
+  "frames": 4,
+  "note": "atlas col 4; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "crane",
+  "name": "Crane (dormant)",
+  "l1": "parked/lod/dots/crane.png",
+  "l2": "parked/animal-table-xianxia/crane.png",
+  "l3": "parked/lod/apng/crane.png",
+  "frames": 4,
+  "note": "atlas col 5; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "spirit-deer",
+  "name": "Spirit deer (dormant)",
+  "l1": "parked/lod/dots/spirit-deer.png",
+  "l2": "parked/animal-table-xianxia/spirit-deer.png",
+  "l3": "parked/lod/apng/spirit-deer.png",
+  "frames": 4,
+  "note": "atlas col 6; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "spirit-fox",
+  "name": "Spirit fox (dormant)",
+  "l1": "parked/lod/dots/spirit-fox.png",
+  "l2": "parked/animal-table-xianxia/spirit-fox.png",
+  "l3": "parked/lod/apng/spirit-fox.png",
+  "frames": 4,
+  "note": "atlas col 7; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "wildlife",
+  "id": "qilin-colt",
+  "name": "Qilin colt (dormant)",
+  "l1": "parked/lod/dots/qilin-colt.png",
+  "l2": "parked/animal-table-xianxia/qilin-colt.png",
+  "l3": "parked/lod/apng/qilin-colt.png",
+  "frames": 4,
+  "note": "atlas col 8; graze/flee/dead rows exist in atlas"
+ },
+ {
+  "cat": "overlays",
+  "id": "convoy",
+  "name": "Trade convoy",
+  "l1": "parked/lod/dots/convoy.png",
+  "l2": "parked/lod/l2/convoy.png",
+  "l3": "parked/lod/apng/convoy.png",
+  "frames": 8,
+  "note": "cart + member count; LOD1-only draw today"
+ },
+ {
+  "cat": "overlays",
+  "id": "rally",
+  "name": "Convoy rally point",
+  "l1": "parked/lod/dots/rally.png",
+  "l2": "parked/lod/l2/rally.png",
+  "l3": "parked/lod/apng/rally.png",
+  "frames": 8,
+  "note": "pre-departure gathering marker"
+ },
+ {
+  "cat": "overlays",
+  "id": "selection",
+  "name": "Selection ring",
+  "l1": "parked/lod/dots/selection.png",
+  "l2": "parked/lod/l2/selection.png",
+  "l3": "parked/lod/apng/selection.png",
+  "frames": 8,
+  "note": "person/animal/site focus ring"
+ },
+ {
+  "cat": "overlays",
+  "id": "zone-residential",
+  "name": "Zone \u2014 residential",
+  "l1": "parked/lod/dots/zone-residential.png",
+  "l2": "parked/lod/l2/zone-residential.png",
+  "l3": "parked/lod/apng/zone-residential.png",
+  "frames": 8,
+  "note": "show_zones overlay"
+ },
+ {
+  "cat": "overlays",
+  "id": "zone-commercial",
+  "name": "Zone \u2014 commercial",
+  "l1": "parked/lod/dots/zone-commercial.png",
+  "l2": "parked/lod/l2/zone-commercial.png",
+  "l3": "parked/lod/apng/zone-commercial.png",
+  "frames": 8,
+  "note": "show_zones overlay"
+ },
+ {
+  "cat": "overlays",
+  "id": "zone-industrial",
+  "name": "Zone \u2014 industrial",
+  "l1": "parked/lod/dots/zone-industrial.png",
+  "l2": "parked/lod/l2/zone-industrial.png",
+  "l3": "parked/lod/apng/zone-industrial.png",
+  "frames": 8,
+  "note": "show_zones overlay"
+ },
+ {
+  "cat": "overlays",
+  "id": "trade-route",
+  "name": "Trade route",
+  "l1": "parked/lod/dots/trade-route.png",
+  "l2": "parked/lod/l2/trade-route.png",
+  "l3": "parked/lod/apng/trade-route.png",
+  "frames": 8,
+  "note": "cumulative road cargo overlay"
+ },
+ {
+  "cat": "overlays",
+  "id": "reveal",
+  "name": "Discovery reveal",
+  "l1": "parked/lod/dots/reveal.png",
+  "l2": "parked/discovery-fx/reveal.png",
+  "l3": "parked/lod/apng/reveal.png",
+  "frames": 4,
+  "note": "existing 4-frame fx contract"
+ },
+ {
+  "cat": "scene",
+  "id": "scene",
+  "name": "Street scene composite",
+  "l1": "parked/lod/scene-l1.png",
+  "l2": "parked/lod/scene-l2.png",
+  "l3": "parked/lod/scene-l3.png",
+  "frames": 8,
+  "note": "one market street at all three levels"
+ }
+]

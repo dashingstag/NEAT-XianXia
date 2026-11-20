@@ -183,8 +183,9 @@ def viewer(run, preview=False):
 
 def labs():
     for folder in sorted((ROOT / "labs").iterdir()):
-        subprocess.run(["node", "--test", *sorted(folder.glob("*.tests.mjs")), folder / "tests.mjs"],
-                       cwd=folder, check=True)
+        tests = sorted(folder.glob("*.tests.mjs")) + [p for p in [folder / "tests.mjs"] if p.is_file()]
+        if tests:
+            subprocess.run(["node", "--test", *tests], cwd=folder, check=True)
 
 
 def connection_check(run):

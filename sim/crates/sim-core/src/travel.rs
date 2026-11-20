@@ -659,8 +659,15 @@ impl World {
     pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
         if let Some((nx, ny)) = self.steer(x, y, tx, ty, step) {
-            self.agents.x[i] = nx;
-            self.agents.y[i] = ny;
+            // Rivers are forded at half speed: the mover still makes
+            // absolute progress each tick, it just crosses more slowly.
+            let f = if self.map.terrain_at(nx, ny) == Terrain::River {
+                0.5
+            } else {
+                1.0
+            };
+            self.agents.x[i] = x + (nx - x) * f;
+            self.agents.y[i] = y + (ny - y) * f;
         }
     }
     pub(super) fn travel_step(&mut self) {

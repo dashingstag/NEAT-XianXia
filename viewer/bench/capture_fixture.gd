@@ -33,11 +33,20 @@ func capture() -> void:
 	packet.encode_u32(24, metadata.size())
 	packet.append_array(metadata)
 	ui._decode(packet)
+	var fixture: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(args[0]))
+	if fixture.has("map_layers"):
+		var started := Time.get_ticks_usec()
+		ui.field.terrain.set_map_layers(fixture.map_layers)
+		print("Built terrain texture in %.1f ms" % ((Time.get_ticks_usec()-started)/1000.0))
 	var market: Dictionary = world.markets[0]
 	for shot in SHOTS:
 		ui.field.magnification = shot[1]
 		ui.field.camera_center = Vector2(market.x, market.y) if shot[1] > 1.0 else Vector2(ui.field.map_width, ui.field.map_height) * 0.5
 		ui.field._resize()
+		var target := SHOTS.find(shot) + 1
+		while ui.field.fidelity < target and ui.field.magnification < 4000.0:
+			ui.field.magnification *= 1.25
+			ui.field._resize()
 		for i in range(4):
 			await process_frame
 		await RenderingServer.frame_post_draw

@@ -2,9 +2,86 @@ extends Node2D
 # Ground, coast, hill, woodland, clearings, settlement ground and roads.
 # Drawn behind the field so sites, wildlife and people stay on top.
 var field: Control
+var ground := Ground.new()
+var map_key := ""
+var requested_key := ""
+
+# Smoothly filtered generated-map ground, drawn before the layer's own strokes.
+class Ground extends Node2D:
+	var field: Control
+	var texture: Texture2D
+	func _ready() -> void:
+		show_behind_parent = true
+		texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO,field.size),Color("15231d"))
+		draw_set_transform(field.offset,0,Vector2(field.zoom,field.zoom))
+		var map := Rect2(0, 0, field.map_width, field.map_height)
+		if texture != null and not field._classic_terrain():
+			draw_texture_rect(texture, map, false)
+		else:
+			draw_rect(map, Color("93a575"))
 
 func _ready() -> void:
 	show_behind_parent = true
+	ground.field = field
+	add_child(ground)
+
+# True once per generated map so the viewer asks the backend for its rasters.
+func wants_map_layers() -> bool:
+	if field._classic_terrain():
+		return false
+	var key := JSON.stringify(field.world.get("map", {}))
+	if key == map_key or key == requested_key:
+		return false
+	requested_key = key
+	return true
+
+func set_map_layers(layers: Dictionary) -> void:
+	var terrain: Dictionary = layers.get("terrain", {})
+	if terrain.is_empty():
+		return
+	ground.texture = ImageTexture.create_from_image(terrain_image(terrain))
+	map_key = JSON.stringify(layers.get("map", {}))
+	requested_key = ""
+	queue_redraw()
+
+const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575")]
+
+# One pixel per generator cell: class colour, light from the north-west, sandy
+# shores and a faint jade cast where qi gathers.
+static func terrain_image(terrain: Dictionary) -> Image:
+	var cols := int(terrain.cols)
+	var rows := int(terrain.rows)
+	var classes := Marshalls.base64_to_raw(terrain.classes)
+	var elevation := Marshalls.base64_to_raw(terrain.elevation)
+	var qi := Marshalls.base64_to_raw(terrain.qi)
+	assert(classes.size() == cols*rows and elevation.size() == cols*rows and qi.size() == cols*rows)
+	var pixels := PackedByteArray()
+	pixels.resize(cols*rows*4)
+	for j in range(rows):
+		for i in range(cols):
+			var at := j*cols+i
+			var kind := mini(int(classes[at]), TERRAIN_COLORS.size()-1)
+			var e := elevation[at]/255.0
+			var color: Color = TERRAIN_COLORS[kind]
+			if kind == 0:
+				color = color.lerp(Color("5d8c8f"), clampf(e/0.34, 0.0, 1.0)*0.8)
+			else:
+				var nw := elevation[maxi(j-1,0)*cols+maxi(i-1,0)]/255.0
+				var se := elevation[mini(j+1,rows-1)*cols+mini(i+1,cols-1)]/255.0
+				var light := clampf((se-nw)*7.0, -0.22, 0.22)
+				color = color.lightened(light) if light > 0.0 else color.darkened(-light)
+				if kind == 1:
+					color = color.lerp(Color("c9c6b4"), clampf((e-0.78)*4.0, 0.0, 0.6))
+				if e < 0.38:
+					color = color.lerp(Color("c7bd91"), clampf((0.38-e)/0.04, 0.0, 1.0)*0.7)
+				color = color.lerp(Color("8fd3c4"), qi[at]/255.0*0.35)
+			pixels[at*4] = color.r8
+			pixels[at*4+1] = color.g8
+			pixels[at*4+2] = color.b8
+			pixels[at*4+3] = 255
+	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
 
 func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
 	var t: Texture2D = field._tex(rel_path)
@@ -14,9 +91,8 @@ func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
 	return true
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO,field.size),Color("15231d"))
+	ground.queue_redraw()
 	draw_set_transform(field.offset,0,Vector2(field.zoom,field.zoom))
-	draw_rect(Rect2(0, 0, field.map_width, field.map_height), Color("93a575"))
 	var forest_view := Rect2(-field.offset / field.zoom, field.size / field.zoom)
 	if field._classic_terrain():
 		_draw_coast_art(forest_view)

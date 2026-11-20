@@ -26,6 +26,9 @@ static func describe(info: Dictionary, state: Dictionary) -> String:
 		text += "%s: %s/%s / %.1f days left\n" % [goal.kind,int(goal.progress),int(goal.target),float(goal.days_left)]
 	text += "\nEquipment: %s\n" % str(person.get("tools",[]))
 	text += "Health %.0f · energy %.0f · hunger %.0f\nCoins %s · cargo %s %s\n\n" % [info.health,info.energy,info.hunger,info.coins,info.cargo,info.product]
+	var leadership_award: Variant = person.get("leadership_award")
+	if leadership_award is Dictionary:
+		text += "Happiness %.0f · base %.0f · leadership +%s for %.0f more days\n" % [float(person.happiness), float(person.base_happiness), int(leadership_award.amount), maxf(0.0, (float(leadership_award.expires) - float(state.get("tick", 0))) / 3000.0)]
 	text += "Carrying %s / %s weight · wallet weighs 1 when nonempty\n" % [info.get("carried_weight",0),info.get("capacity",0)]
 	text += "Rested %.0f/100 / %s / %s\n%s\n" % [float(info.get("rested_meter",0)),"RESTED BUFF" if info.get("rested",false) else "Unrested","SLEEPING" if info.get("sleeping",false) else "Awake",str(info.get("rest_location",""))]
 	if info.get("job") is Dictionary:

@@ -643,7 +643,7 @@ impl World {
             m.revenue_total = 0;
             m.expenses_total = 0;
             let mut needed = 12;
-            for i in founders {
+            for &i in &founders {
                 let a = &mut self.agents;
                 a.coins[i] -= 2;
                 m.coins += 2;
@@ -673,6 +673,7 @@ impl World {
                 traffic: 0,
             });
             self.markets.push(m);
+            self.select_camp_leader(id, &founders);
             self.sales_profile_labels.push(String::new());
             self.stats.camps_founded += 1;
         }

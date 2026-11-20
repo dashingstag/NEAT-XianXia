@@ -2489,6 +2489,30 @@ mod tests {
         assert!(!w.is_town(0));
         w.check().unwrap();
     }
+
+    #[test]
+    fn city_title_requires_both_confirmed_thresholds() {
+        let mut w = funded();
+        for kind in 0..3 {
+            for _ in 0..3 {
+                construct(&mut w, kind);
+            }
+        }
+        w.select_camp_leader(0, &[0]);
+        w.governance_step();
+        let next = w.governance_summary()[0]["next_election"].clone();
+        let building = w.urban.buildings[0].clone();
+        w.urban.buildings.resize(49, building.clone());
+        w.markets[0].stable_residents = 500;
+        assert_eq!(w.governance_summary()[0]["title"], "Town Mayor");
+        w.urban.buildings.push(building);
+        w.markets[0].stable_residents = 499;
+        assert_eq!(w.governance_summary()[0]["title"], "Town Mayor");
+        w.markets[0].stable_residents = 500;
+        assert_eq!(w.governance_summary()[0]["title"], "City Mayor");
+        assert_eq!(w.governance_summary()[0]["leader"], 0);
+        assert_eq!(w.governance_summary()[0]["next_election"], next);
+    }
     #[test]
     fn home_purchase_and_rent_restrict_private_beds_without_minting_cash() {
         let mut w = funded();

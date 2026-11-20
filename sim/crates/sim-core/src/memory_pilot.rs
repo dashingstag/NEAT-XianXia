@@ -1,7 +1,7 @@
 use super::{Action, World};
 use std::collections::BTreeMap;
 
-const ACTIONS: usize = Action::RepayLoan as usize + 1;
+pub(super) const ACTIONS: usize = Action::NominateSelf as usize + 1;
 type Key = (usize, u8, u32, usize);
 
 #[derive(Clone, Debug, Default)]

@@ -430,6 +430,21 @@ func _site_text() -> String:
 		"markets":
 			title = str(d.name)
 			body = "%s / %s residents\n\n[b]HOUSING[/b]\n%s completed blocks / %s beds\n\n[b]MARKET[/b]\nTreasury: %s copper units\nObserved sales: %s\n" % [d.stage,int(d.population),int(d.housing_blocks),int(d.housing_blocks)*32,int(d.coins),d.profile]
+			for office in state.get("governance", []):
+				if int(office.market) != int(d.id):
+					continue
+				body += "\n[b]LEADERSHIP[/b]\n%s · %s\n" % [office.title, office.leader_name if office.leader_name != null else "Vacant"]
+				if office.aspiration != null:
+					body += "Aspiration · %s\n" % office.aspiration
+				if office.next_election != null:
+					body += "Next election in %.0f days\n" % maxf(0.0, (float(office.next_election) - float(state.get("tick", 0))) / 3000.0)
+				if office.nomination is Dictionary:
+					body += "Nominations open · %sc entry · %s candidates\n" % [int(office.nomination.fee), office.nomination.candidates.size()]
+					for nominee in office.get("nominee_preview", []):
+						body += "%s\n" % nominee.name
+				if office.last_election is Dictionary:
+					body += "Last election · %s votes cast\n" % int(office.last_election.turnout)
+				break
 			body += "\nGOODS held · offered@ask · wanted@bid · lifetime sold\n"
 			var products: Array = state.get("products",[])
 			var quotes: Array = d.get("quotes",[])

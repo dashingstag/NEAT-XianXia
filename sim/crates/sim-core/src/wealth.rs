@@ -65,7 +65,7 @@ fn inventory(raw: &[u64; GOODS], wares: &[u64; 5]) -> u64 {
             .sum::<u64>()
 }
 impl World {
-    pub(super) fn wealth_leaderboard(&self) -> serde_json::Value {
+    fn wealth_holdings(&self) -> BTreeMap<u32, Holdings> {
         let mut holdings: BTreeMap<u32, Holdings> = BTreeMap::new();
         for b in &self.urban.buildings {
             if !b.ready {
@@ -107,18 +107,44 @@ impl World {
         for (&(i, k), q) in &self.urban.owned {
             holdings.entry(i).or_default().stored_goods += q * WARE_VALUE[k as usize];
         }
-        let possessions = |i: usize| -> u64 {
-            let a = &self.agents;
-            a.berries[i] as u64 * RAW_VALUE[0]
-                + a.fish[i] as u64 * RAW_VALUE[3]
-                + a.rice[i] as u64 * RAW_VALUE[8]
-                + a.cargo[i] as u64 * RAW_VALUE[a.cargo_kind[i] as usize]
-                + a.tools[i]
-                    .iter()
-                    .enumerate()
-                    .map(|(k, q)| *q as u64 * RAW_VALUE[k + 9])
-                    .sum::<u64>()
-        };
+        holdings
+    }
+
+    fn possessions_value(&self, i: usize) -> u64 {
+        let a = &self.agents;
+        a.berries[i] as u64 * RAW_VALUE[0]
+            + a.fish[i] as u64 * RAW_VALUE[3]
+            + a.rice[i] as u64 * RAW_VALUE[8]
+            + a.cargo[i] as u64 * RAW_VALUE[a.cargo_kind[i] as usize]
+            + a.tools[i]
+                .iter()
+                .enumerate()
+                .map(|(k, q)| *q as u64 * RAW_VALUE[k + 9])
+                .sum::<u64>()
+    }
+
+    fn net_worth(&self, i: usize, h: Holdings) -> (i128, u64) {
+        let cash = self.agents.coins[i] + h.business_cash + h.stored_cash;
+        let net = (cash + h.homes + h.stock + h.stored_goods + self.possessions_value(i)) as i128
+            - h.debt as i128
+            - self.loan_debt(i) as i128;
+        (net, cash)
+    }
+
+    pub(super) fn richest_resident_net_worth(&self, market: usize) -> i128 {
+        let holdings = self.wealth_holdings();
+        (0..self.agents.len())
+            .filter(|&i| self.agents.alive[i] && self.agents.home[i] as usize == market)
+            .map(|i| {
+                self.net_worth(i, holdings.get(&(i as u32)).copied().unwrap_or_default())
+                    .0
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub(super) fn wealth_leaderboard(&self) -> serde_json::Value {
+        let holdings = self.wealth_holdings();
         // Only retain the best 30: O(population log 30), without sorting or copying all people.
         let mut best = BinaryHeap::new();
         for i in 0..self.agents.len() {
@@ -126,10 +152,7 @@ impl World {
                 continue;
             }
             let h = holdings.get(&(i as u32)).copied().unwrap_or_default();
-            let cash = self.agents.coins[i] + h.business_cash + h.stored_cash;
-            let net = (cash + h.homes + h.stock + h.stored_goods + possessions(i)) as i128
-                - h.debt as i128
-                - self.loan_debt(i) as i128;
+            let (net, cash) = self.net_worth(i, h);
             let candidate = (net, cash, Reverse(i));
             if best.len() < 30 {
                 best.push(Reverse(candidate));
@@ -142,7 +165,7 @@ impl World {
         ranked.sort_unstable_by(|a, b| b.cmp(a));
         let rows=ranked.into_iter().enumerate().map(|(rank,(net,cash,Reverse(i)))| {
             let h=holdings.get(&(i as u32)).copied().unwrap_or_default();
-            let belongings=possessions(i)+h.stored_goods;
+            let belongings=self.possessions_value(i)+h.stored_goods;
             serde_json::json!({"rank":rank+1,"id":i,"name":self.people[i].name(),"village":self.markets[self.agents.home[i] as usize].name,"net_worth":net,"coins":cash,"wallet":self.agents.coins[i],"business_cash":h.business_cash,"stored_cash":h.stored_cash,"homes_value":h.homes,"business_stock":h.stock,"belongings":belongings,"assets_value":h.homes+h.stock+belongings,"arrears":h.debt,"loan_debt":self.loan_debt(i),"debt":h.debt+self.loan_debt(i),"homes":h.home_count,"businesses":h.business_count})
         }).collect::<Vec<_>>();
         serde_json::json!({"scope":"Living individuals / top 30","currency":"copper","valuation":"Estimated net worth = all owned coins + homes + inventory and belongings - rent arrears and bank debt. Leased premises remain village property. Fixed reference prices; not guaranteed sale proceeds. Pending job rewards are excluded.","raw_reference_prices":RAW_VALUE,"ware_reference_prices":WARE_VALUE,"rows":rows})

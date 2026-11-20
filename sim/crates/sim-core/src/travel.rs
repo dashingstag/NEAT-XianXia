@@ -267,6 +267,9 @@ mod tests {
 impl World {
     fn destination(&self, i: usize) -> Option<(f32, f32)> {
         let a = &self.agents;
+        if matches!(a.action[i], Action::DiscussCamp | Action::MigrateToCamp) {
+            return self.camp_rumour_destination(i);
+        }
         if matches!(a.action[i], Action::Gravedigger | Action::BuildGraveyard) {
             return self.job_destination(i);
         }
@@ -674,6 +677,7 @@ impl World {
             });
             self.markets.push(m);
             self.select_camp_leader(id, &founders);
+            self.announce_new_camp(id, &founders);
             self.sales_profile_labels.push(String::new());
             self.stats.camps_founded += 1;
         }

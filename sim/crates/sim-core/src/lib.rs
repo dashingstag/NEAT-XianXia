@@ -9,6 +9,7 @@ mod legacy_v12;
 mod legacy_v13;
 pub use landscape::Hill;
 pub use worldmap::{Exploration, MapSize, MapSpec, Terrain, TerrainRaster, WorldMap, CHUNK_SIZE};
+mod governance;
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;
@@ -112,6 +113,7 @@ pub enum Action {
     BuildBank = 36,
     BorrowBusiness = 37,
     RepayLoan = 38,
+    NominateSelf = 66,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Agents {
@@ -388,6 +390,8 @@ pub struct World {
     pub map: WorldMap,
     #[serde(skip)]
     pub explored: Exploration,
+    #[serde(skip)]
+    governance: governance::Governance,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -584,6 +588,7 @@ impl World {
             hill,
             map: WorldMap::new(spec),
             explored: Exploration::default(),
+            governance: governance::Governance::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -875,6 +880,7 @@ impl World {
             }
         }
         self.validate_wildlife()?;
+        self.validate_governance()?;
         self.validate_education()?;
         self.validate_urban()?;
         self.validate_banking()?;
@@ -961,7 +967,14 @@ impl World {
     ) -> ([Candidate; CANDIDATES], usize) {
         let mut out = [Candidate::default(); CANDIDATES];
         if !self.is_adult(i) || self.must_stay_home(i) {
-            return self.family_offers(i);
+            let (mut family, mut count) = self.family_offers(i);
+            if count < limit {
+                if let Some(offer) = self.nomination_offer(i) {
+                    family[count] = offer;
+                    count += 1;
+                }
+            }
+            return (family, count);
         }
         if self.agents.hunger[i] >= 55.0 {
             if let Some(p) = self.closest_food_patch(i) {
@@ -990,6 +1003,12 @@ impl World {
             return (out, 1);
         }
         let mut count = 0;
+        if limit > 0 {
+            if let Some(offer) = self.nomination_offer(i) {
+                out[0] = offer;
+                count = 1;
+            }
+        }
         let a = &self.agents;
         let home = a.home[i] as usize;
         let m = &self.markets[home];
@@ -1732,6 +1751,7 @@ impl World {
             }
             self.register_corpse(i);
         }
+        self.governance_step();
         self.civic_step();
         let start = self.tick as usize % 10;
         let due = self.agents.len().saturating_sub(start).div_ceil(10);
@@ -1848,6 +1868,9 @@ impl World {
     }
     fn execute(&mut self, i: usize) {
         let action = self.agents.action[i];
+        if action == Action::NominateSelf {
+            return self.execute_nomination(i);
+        }
         if matches!(
             action,
             Action::Court
@@ -2105,7 +2128,8 @@ impl World {
             | Action::BuildBank
             | Action::BorrowBusiness
             | Action::RepayLoan
-            | Action::StoreCargo => {}
+            | Action::StoreCargo
+            | Action::NominateSelf => {}
         }
     }
     fn start_projects(&mut self) {
@@ -2191,12 +2215,13 @@ impl World {
             &self.commitments,
             &self.map,
             &self.explored,
+            &self.governance,
         ))
         .map_err(|e| e.to_string())?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE19".to_vec();
+        let mut data = b"XXSAVE30".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2211,7 +2236,7 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (&data[..8] != b"XXSAVE19"
+            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30")
                 && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
@@ -2243,16 +2268,29 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if &data[..8] == b"XXSAVE19" {
-            let (mut world, purchases, foraging, work, commitments, map, explored): (
-                Self,
-                food_memory::FoodMemory,
-                food_memory::FoodMemory,
-                work_memory::WorkMemory,
-                commitment_memory::Commitments,
-                WorldMap,
-                Exploration,
-            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30") {
+            let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
+                (
+                    Self,
+                    food_memory::FoodMemory,
+                    food_memory::FoodMemory,
+                    work_memory::WorkMemory,
+                    commitment_memory::Commitments,
+                    WorldMap,
+                    Exploration,
+                ),
+                &[u8],
+            ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
+            if &data[..8] == b"XXSAVE30" {
+                let (governance, trailing) =
+                    postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
+                if !trailing.is_empty() {
+                    return Err("Unexpected governance checkpoint data".into());
+                }
+                world.governance = governance;
+            } else if !tail.is_empty() {
+                return Err("Unexpected checkpoint data".into());
+            }
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
@@ -2374,7 +2412,7 @@ impl World {
                 }
             }
         }
-        if &data[..8] != b"XXSAVE19" && &data[..8] != b"XXSAVE15" {
+        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30") && &data[..8] != b"XXSAVE15" {
             world.map = WorldMap::classic(world.seed);
         }
         world.social.resize(world.agents.len(), 0.0);
@@ -2390,7 +2428,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && &data[..8] != b"XXSAVE19"
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30")
         {
             world.init_wildlife();
         }
@@ -2404,7 +2442,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && &data[..8] != b"XXSAVE19"
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30")
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2419,7 +2457,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && &data[..8] != b"XXSAVE19"
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30")
         {
             world.relocate_fertile_land();
         }
@@ -2569,6 +2607,7 @@ impl World {
         self.validate_people()?;
         self.validate_social()?;
         self.validate_wildlife()?;
+        self.validate_governance()?;
         self.validate_education()?;
         self.validate_urban()?;
         self.validate_banking()?;
@@ -2582,7 +2621,8 @@ impl World {
     }
 
     fn snapshot_metadata(&self) -> serde_json::Value {
-        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":if self.is_town(m.id as usize){"Town"}else if m.village{"Village"}else{"Camp"},"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
+        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":self.settlement_stage(m.id as usize),"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads});
+        result["governance"] = self.governance_summary();
         result["hill"] = serde_json::json!(self.hill);
         result["map"] = serde_json::json!(self.map.spec);
         result["explored_chunks"] = serde_json::json!(self
@@ -2674,7 +2714,11 @@ impl World {
             out.extend(self.agents.x[i].to_le_bytes());
             out.extend(self.agents.y[i].to_le_bytes());
             out.push(
-                self.agents.action[i] as u8
+                (if self.agents.action[i] == Action::NominateSelf {
+                    Action::Wait
+                } else {
+                    self.agents.action[i]
+                }) as u8
                     | if self.agents.rested[i] { 64 } else { 0 }
                     | if self.agents.alive[i]
                         && visible_convoys.contains(&(self.agents.convoy[i] as usize))

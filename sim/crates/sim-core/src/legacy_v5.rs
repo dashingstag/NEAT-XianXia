@@ -311,6 +311,7 @@ impl From<LegacyWorld> for World {
             hill: Hill::default(),
             map: crate::WorldMap::classic(old.seed),
             explored: crate::Exploration::default(),
+            governance: Default::default(),
         }
     }
 }

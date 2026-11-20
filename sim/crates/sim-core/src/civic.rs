@@ -49,7 +49,7 @@ pub const COUNCIL_SENSORS: [&str; INPUTS] = [
     "guild_ready",
     "frontier_value",
     "mystic_reports",
-    "sect_pressure",
+    "leader_job_alignment",
 ];
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Corpse {
@@ -332,6 +332,34 @@ pub struct PolicyChoice {
 }
 
 impl Council {
+    fn connect_leadership(&mut self) {
+        Self::connect_leadership_gene(&mut self.genome, &mut self.innovations);
+    }
+
+    fn connect_leadership_gene(genome: &mut Genome, innovations: &mut Innovations) {
+        let Some(to) = genome
+            .nodes
+            .iter()
+            .find(|n| n.kind == neat_core::Kind::Output)
+            .map(|n| n.id)
+        else {
+            return;
+        };
+        let from = 47;
+        if !genome
+            .genes
+            .iter()
+            .any(|gene| (gene.from, gene.to) == (from, to))
+        {
+            genome.genes.push(neat_core::Gene {
+                innovation: innovations.edge(from, to),
+                from,
+                to,
+                weight: 0.35,
+                enabled: true,
+            });
+        }
+    }
     fn new(seed: u64, id: usize) -> Self {
         let mut rng = Rng(seed ^ (id as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15));
         let mut innovations = Innovations::default();
@@ -359,6 +387,7 @@ impl Council {
                 gene.weight = base + rng.signed() * 0.12;
             }
         }
+        Self::connect_leadership_gene(&mut genome, &mut innovations);
         let brain = Some(genome.compile().expect("valid council seed"));
         Self {
             genome,
@@ -392,6 +421,7 @@ impl World {
         }
         for c in &mut self.councils {
             if c.brain.is_none() {
+                c.connect_leadership();
                 c.brain = c.genome.compile().ok();
             }
         }
@@ -708,6 +738,7 @@ impl World {
             x[36] = self.stats.births as f32 / self.agents.len().max(1) as f32;
             x[40] = x[29];
             x[41] = 1.0 - x[36];
+            x[47] = self.leader_job_alignment(m, action);
             trace.push(PolicyChoice {
                 action: action.into(),
                 score: c.brain.as_ref().unwrap().evaluate(&x),

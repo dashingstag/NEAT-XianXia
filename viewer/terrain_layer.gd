@@ -5,6 +5,9 @@ var field: Control
 var ground := Ground.new()
 var map_key := ""
 var requested_key := ""
+var explored_ms := 0
+var fog_texture: Texture2D
+var fog_rect := Rect2()
 
 # Smoothly filtered generated-map ground, drawn before the layer's own strokes.
 class Ground extends Node2D:
@@ -22,10 +25,26 @@ class Ground extends Node2D:
 		else:
 			draw_rect(map, Color("93a575"))
 
+# Mist over unexplored chunks, above woodland and roads but below sites.
+class Fog extends Node2D:
+	var layer: Node2D
+	func _ready() -> void:
+		texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	func _draw() -> void:
+		var field: Control = layer.field
+		if layer.fog_texture == null or field._classic_terrain():
+			return
+		draw_set_transform(field.offset,0,Vector2(field.zoom,field.zoom))
+		draw_texture_rect(layer.fog_texture, layer.fog_rect, false)
+
+var fog := Fog.new()
+
 func _ready() -> void:
 	show_behind_parent = true
 	ground.field = field
 	add_child(ground)
+	fog.layer = self
+	add_child(fog)
 
 # True once per generated map so the viewer asks the backend for its rasters.
 func wants_map_layers() -> bool:
@@ -37,14 +56,41 @@ func wants_map_layers() -> bool:
 	requested_key = key
 	return true
 
+# Every two seconds after the terrain arrives, refresh which chunks are explored.
+func wants_explored() -> bool:
+	var now := Time.get_ticks_msec()
+	if map_key == "" or map_key != JSON.stringify(field.world.get("map", {})) or now-explored_ms < 2000:
+		return false
+	explored_ms = now
+	return true
+
 func set_map_layers(layers: Dictionary) -> void:
+	var key := JSON.stringify(layers.get("map", {}))
 	var terrain: Dictionary = layers.get("terrain", {})
-	if terrain.is_empty():
-		return
-	ground.texture = ImageTexture.create_from_image(terrain_image(terrain))
-	map_key = JSON.stringify(layers.get("map", {}))
-	requested_key = ""
+	if not terrain.is_empty():
+		ground.texture = ImageTexture.create_from_image(terrain_image(terrain))
+		map_key = key
+		requested_key = ""
+	var explored: Dictionary = layers.get("explored", {})
+	if key == map_key and not explored.is_empty():
+		fog_texture = ImageTexture.create_from_image(fog_image(explored))
+		fog_rect = Rect2(0, 0, int(explored.cols)*float(explored.chunk), int(explored.rows)*float(explored.chunk))
 	queue_redraw()
+
+# Unexplored chunks under a pale mist; linear filtering feathers the borders.
+static func fog_image(explored: Dictionary) -> Image:
+	var cols := int(explored.cols)
+	var rows := int(explored.rows)
+	var known := Marshalls.base64_to_raw(explored.known)
+	assert(known.size() == cols*rows)
+	var pixels := PackedByteArray()
+	pixels.resize(cols*rows*4)
+	for at in range(cols*rows):
+		pixels[at*4] = 214
+		pixels[at*4+1] = 222
+		pixels[at*4+2] = 216
+		pixels[at*4+3] = 0 if known[at] else 222
+	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
 
 const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575")]
 
@@ -92,6 +138,7 @@ func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
 
 func _draw() -> void:
 	ground.queue_redraw()
+	fog.queue_redraw()
 	draw_set_transform(field.offset,0,Vector2(field.zoom,field.zoom))
 	var forest_view := Rect2(-field.offset / field.zoom, field.size / field.zoom)
 	if field._classic_terrain():

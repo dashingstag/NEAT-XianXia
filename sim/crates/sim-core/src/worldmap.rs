@@ -370,8 +370,10 @@ impl WorldMap {
         last
     }
 
+    /// Samples roughly 768 cells across so the wire payload stays bounded
+    /// while zoomed-in viewers get finer cells on smaller maps.
     pub fn raster(&mut self) -> TerrainRaster {
-        let cell = CHUNK_SIZE as f32 / CELLS_PER_SIDE as f32;
+        let cell = self.spec.width() / 768.0;
         let cols = (self.spec.width() / cell).ceil() as usize;
         let rows = (self.spec.height() / cell).ceil() as usize;
         let unit = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -596,11 +598,11 @@ mod tests {
             home_y: 1920.0,
         });
         let r = m.raster();
-        assert_eq!((r.cols, r.rows, r.cell), (128, 80, 48.0));
+        assert_eq!((r.cols, r.rows, r.cell), (768, 480, 8.0));
         assert_eq!(r.terrain.len(), r.cols * r.rows);
         assert_eq!(r.qi.len(), r.elevation.len());
-        for (i, j) in [(0, 0), (37, 11), (127, 79), (64, 40)] {
-            let (x, y) = ((i as f32 + 0.5) * 48.0, (j as f32 + 0.5) * 48.0);
+        for (i, j) in [(0, 0), (37, 11), (767, 479), (384, 240)] {
+            let (x, y) = ((i as f32 + 0.5) * r.cell, (j as f32 + 0.5) * r.cell);
             assert_eq!(r.terrain[j * r.cols + i], m.terrain_at(x, y) as u8);
         }
         let kinds: BTreeSet<u8> = r.terrain.iter().copied().collect();

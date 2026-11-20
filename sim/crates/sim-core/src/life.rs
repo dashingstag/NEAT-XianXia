@@ -54,6 +54,36 @@ pub enum Aspiration {
 mod tests {
     use super::*;
     #[test]
+    fn hungry_villager_can_forage_fish_from_dry_shore() {
+        let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
+        let raster = w.map.raster();
+        let (x, y) = (0..raster.rows)
+            .flat_map(|y| (1..raster.cols).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                raster.terrain[y * raster.cols + x] == Terrain::Water as u8
+                    && raster.terrain[y * raster.cols + x - 1] != Terrain::Water as u8
+            })
+            .expect("generated Frontier has a shoreline");
+        let target = w.patches.iter().position(|patch| patch.kind == 3).unwrap();
+        let (x, y) = ((x as f32 + 0.5) * raster.cell, (y as f32 + 0.5) * raster.cell);
+        w.patches[target].x = x;
+        w.patches[target].y = y;
+        w.agents.x[0] = x - raster.cell;
+        w.agents.y[0] = y;
+        w.agents.hunger[0] = 70.0;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = target as u32;
+        let stock = w.patches[target].stock;
+        assert!(stock > 0);
+        for _ in 0..10 {
+            w.execute_personal(0, Action::ForageMeal);
+        }
+        assert_eq!(w.agents.hunger[0], 30.0);
+        assert_eq!(w.patches[target].stock, stock - 1);
+        assert_ne!(w.map.terrain_at(w.agents.x[0], w.agents.y[0]), Terrain::Water);
+        w.check().unwrap();
+    }
+    #[test]
     fn full_hands_cannot_block_emergency_meals() {
         let mut w = World::new(2, 42).unwrap();
         let patch = w.patches.iter().position(|p| p.kind == 0).unwrap();
@@ -1208,8 +1238,14 @@ impl World {
             return;
         };
         let d = dist(self.agents.x[i], self.agents.y[i], x, y);
-        if d > 5.0 {
-            let step = (self.actor_speed(i, self.agents.x[i], self.agents.y[i]) * DT).min(d - 4.0);
+        let reach = if action == Action::ForageMeal {
+            self.patch_reach(self.agents.target[i] as usize, 5.0)
+        } else {
+            5.0
+        };
+        if d > reach {
+            let step = (self.actor_speed(i, self.agents.x[i], self.agents.y[i]) * DT)
+                .min(d - (reach - 1.0));
             self.walk_toward(i, x, y, step);
             self.agents.drain_energy(i, DT * 0.07);
             return;

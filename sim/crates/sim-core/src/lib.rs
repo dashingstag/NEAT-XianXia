@@ -2168,17 +2168,8 @@ impl World {
             self.execute_exchange(i, t, action);
             return;
         }
-        // Fishers cast from the shore: a patch whose centre sits in water
-        // can be worked from a wider radius than a land patch.
-        let reach = if action == Action::Gather
-            && self.map.spec.size != MapSize::Classic
-            && self
-                .patches
-                .get(t)
-                .map(|p| (p.x, p.y))
-                .is_some_and(|p| self.map.terrain_at(p.0, p.1) == Terrain::Water)
-        {
-            24.0
+        let reach = if action == Action::Gather {
+            self.patch_reach(t, 7.0)
         } else {
             7.0
         };

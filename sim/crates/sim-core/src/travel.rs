@@ -634,6 +634,20 @@ impl World {
             "Local activity".into()
         }
     }
+    pub(super) fn patch_reach(&mut self, patch: usize, land_reach: f32) -> f32 {
+        let Some(site) = self.patches.get(patch) else {
+            return land_reach;
+        };
+        if site.kind == 3
+            && self.map.spec.size != MapSize::Classic
+            && self.map.terrain_at(site.x, site.y) == Terrain::Water
+        {
+            24.0
+        } else {
+            land_reach
+        }
+    }
+
     /// Whether a walker may stand at (x, y). Classic maps keep the
     /// historical everything-walkable rule; generated maps treat water
     /// as impassable so shores shape real routes.

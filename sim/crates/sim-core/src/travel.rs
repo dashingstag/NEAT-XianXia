@@ -42,6 +42,23 @@ pub struct WaterBlock {
     pub reports: u16,
 }
 
+/// A paired ferry landing planned by a village in response to delivered
+/// WaterBlocks. The near side sits on home shore; `lx, ly` is the first
+/// buildable ground marching from the block toward what the walker was
+/// trying to reach. `ferry` marks landings no dry route can reach — the
+/// far side then waits for a ship to carry builders over (M8-P3).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Port {
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub lx: f32,
+    pub ly: f32,
+    pub near_done: bool,
+    pub far_done: bool,
+    pub ferry: bool,
+}
+
 /// Water-route reporting state. Persisted so pending reports survive
 /// checkpoints; `progress` is a per-agent movement probe rebuilt the
 /// same way on load.
@@ -54,6 +71,8 @@ pub struct WaterState {
     pub pending: Vec<PendingBlock>,
     /// Reports delivered to markets, deduped by 96-unit cell.
     pub blocks: Vec<WaterBlock>,
+    /// Paired landings planned from delivered blocks.
+    pub ports: Vec<Port>,
 }
 
 fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -211,6 +230,74 @@ mod tests {
         w.update_water_reports();
         assert_eq!(w.water.blocks.len(), 1);
         assert_eq!(w.water.blocks[0].reports, 2);
+    }
+    #[test]
+    fn zoned_village_plans_and_builds_port() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        // Find a land→water→land stripe along a raster row: the block sits
+        // on the near shore and the survey must land on the far shore.
+        let mut span = None;
+        'outer: for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 2 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                let mut k = i + 1;
+                while k < r.cols - 1 && r.terrain[j * r.cols + k] == Terrain::Water as u8 {
+                    k += 1;
+                }
+                if k > i + 1
+                    && k < r.cols - 1
+                    && r.terrain[j * r.cols + k] != Terrain::Water as u8
+                {
+                    span = Some((
+                        (i as f32 + 0.5) * r.cell,
+                        (j as f32 + 0.5) * r.cell,
+                        (k as f32 + 0.5) * r.cell,
+                    ));
+                    break 'outer;
+                }
+            }
+        }
+        let Some((bx, by, tx)) = span else { return };
+        w.water.blocks.push(WaterBlock {
+            market: 0,
+            x: bx,
+            y: by,
+            tx,
+            ty: by,
+            tick: 0,
+            reports: 1,
+        });
+        w.urban.states[0].zoned = true;
+        w.markets[0].coins = 500;
+        w.markets[0].add(1, 20, 0);
+        w.markets[0].add(2, 4, 0);
+        w.plan_ports();
+        assert_eq!(w.water.ports.len(), 1, "block should plan one port");
+        let p = w.water.ports[0];
+        assert!(w.map.buildable(p.x, p.y), "home port must be dry");
+        assert!(w.map.buildable(p.lx, p.ly), "landing port must be dry");
+        let near = w
+            .urban
+            .jobs
+            .iter()
+            .enumerate()
+            .find_map(|(id, j)| j.as_ref().filter(|j| j.kind == 4 && j.source == 0).map(|_| id))
+            .expect("near-side shipwright job posted");
+        // A worker standing on the site completes the near side.
+        w.agents.action[0] = Action::UrbanWork;
+        w.agents.target[0] = near as u32;
+        w.agents.x[0] = p.x;
+        w.agents.y[0] = p.y;
+        for _ in 0..200 {
+            w.execute_urban_job(0);
+            if w.water.ports[0].near_done {
+                break;
+            }
+        }
+        assert!(w.water.ports[0].near_done, "shipwright finishes the port");
     }
     #[test]
     fn roads_detour_around_water_bodies() {
@@ -618,8 +705,21 @@ impl World {
     fn route_around_water(&mut self, a: usize, b: usize) -> Vec<(f32, f32)> {
         let (ax, ay) = (self.markets[a].x, self.markets[a].y);
         let (bx, by) = (self.markets[b].x, self.markets[b].y);
+        self.route_between(ax, ay, bx, by)
+            .unwrap_or_else(|| vec![(ax, ay), (bx, by)])
+    }
+    /// Dry-land route between two points: `None` when water truly blocks
+    /// every path, `Some(empty)` when the direct shot is already dry,
+    /// otherwise the routed waypoint list.
+    pub(super) fn route_between(
+        &mut self,
+        ax: f32,
+        ay: f32,
+        bx: f32,
+        by: f32,
+    ) -> Option<Vec<(f32, f32)>> {
         if self.map.spec.size == MapSize::Classic || self.clear_shot(ax, ay, bx, by) {
-            return Vec::new();
+            return Some(Vec::new());
         }
         const CELL: f32 = 64.0;
         let cols = (self.map.spec.width() / CELL).ceil() as usize;
@@ -697,7 +797,7 @@ impl World {
             }
         }
         if !found {
-            return vec![(ax, ay), (bx, by)];
+            return None;
         }
         let mut cells = vec![goal];
         let mut at = goal;
@@ -727,7 +827,7 @@ impl World {
             path.push(raw[far]);
             cursor = far;
         }
-        path
+        Some(path)
     }
     fn clear_shot(&mut self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
         let d = dist(ax, ay, bx, by);
@@ -910,6 +1010,124 @@ impl World {
                     reports: 1,
                 });
             }
+        }
+    }
+    /// Turn delivered water blocks into paired port construction. A zoned
+    /// village with the coffers and materials surveys a landing across the
+    /// water, then posts Shipwright jobs on the urban board: the home shore
+    /// always, the far shore only when a dry land route exists — otherwise
+    /// the port is flagged `ferry` and waits for a ship to carry builders.
+    pub(super) fn plan_ports(&mut self) {
+        if self.map.spec.size == MapSize::Classic
+            || (self.water.blocks.is_empty() && self.water.ports.is_empty())
+        {
+            return;
+        }
+        const WAGE: u64 = 48;
+        const WOOD: u64 = 20;
+        const STONE: u64 = 4;
+        // Repost sides whose job was refunded or abandoned — the escrowed
+        // materials stay committed to the port, only the wage is re-paid.
+        for pi in 0..self.water.ports.len() {
+            let p = self.water.ports[pi];
+            let m = p.market as usize;
+            if m >= self.markets.len() {
+                continue;
+            }
+            for side in 0..2u32 {
+                let unfinished = if side == 0 { !p.near_done } else { !p.far_done };
+                if !unfinished || (side == 1 && p.ferry) {
+                    continue;
+                }
+                let posted = self.urban.jobs.iter().flatten().any(|j| {
+                    j.kind == 4 && j.target == pi as u32 && j.source == side
+                });
+                if !posted && self.markets[m].coins >= WAGE {
+                    self.markets[m].coins -= WAGE;
+                    let (x, y) = if side == 0 { (p.x, p.y) } else { (p.lx, p.ly) };
+                    let j = self.new_job(m, 4, NONE, NONE, side, pi as u32, x, y, WAGE);
+                    self.post_urban_job(j);
+                }
+            }
+        }
+        let mut done: Vec<usize> = Vec::new();
+        for bi in 0..self.water.blocks.len() {
+            if self.water.ports.len() >= 32 {
+                break;
+            }
+            let b = self.water.blocks[bi];
+            let m = b.market as usize;
+            if m >= self.markets.len()
+                || !self.urban.states.get(m).map(|s| s.zoned).unwrap_or(false)
+                || self.coffers(m) < 2 * WAGE
+                || self.markets[m].stock(1) < WOOD
+                || self.markets[m].stock(2) < STONE
+            {
+                continue;
+            }
+            if self.water.ports.iter().any(|p| {
+                dist(p.x, p.y, b.x, b.y) < 96.0 || dist(p.lx, p.ly, b.x, b.y) < 96.0
+            }) {
+                done.push(bi);
+                continue;
+            }
+            // March from the stranded position toward the blocked target;
+            // the first buildable ground past water is the landing site.
+            let dd = dist(b.x, b.y, b.tx, b.ty).max(1.0);
+            let (ux, uy) = ((b.tx - b.x) / dd, (b.ty - b.y) / dd);
+            let (mut lx, mut ly, mut landed, mut crossed) = (b.x, b.y, false, false);
+            for k in 1..=128 {
+                let t = k as f32 * 32.0;
+                let (px, py) = (b.x + ux * t, b.y + uy * t);
+                let here = self.map.terrain_at(px, py);
+                if here == Terrain::Water || here == Terrain::River {
+                    crossed = true;
+                } else if crossed && self.map.buildable(px, py) {
+                    (lx, ly, landed) = (px, py, true);
+                    break;
+                }
+            }
+            if !landed {
+                // Open water all the way: an island nothing can serve.
+                done.push(bi);
+                continue;
+            }
+            let (px, py) = self.map.dry_ground(b.x, b.y);
+            (lx, ly) = self.map.dry_ground(lx, ly);
+            let id = self.water.ports.len() as u32;
+            let land_link = self.route_between(px, py, lx, ly).is_some();
+            self.water.ports.push(Port {
+                market: b.market,
+                x: px,
+                y: py,
+                lx,
+                ly,
+                near_done: false,
+                far_done: false,
+                ferry: !land_link,
+            });
+            for (k, q) in [(1usize, WOOD), (2, STONE)] {
+                let mut left = q;
+                while left > 0 {
+                    left -= self.markets[m]
+                        .take(k, left)
+                        .expect("reserved port materials")
+                        .quantity;
+                }
+                self.ledger.built[k] += q;
+            }
+            self.markets[m].coins -= WAGE;
+            let j = self.new_job(m, 4, NONE, NONE, 0, id, px, py, WAGE);
+            self.post_urban_job(j);
+            if land_link {
+                self.markets[m].coins -= WAGE;
+                let j = self.new_job(m, 4, NONE, NONE, 1, id, lx, ly, WAGE);
+                self.post_urban_job(j);
+            }
+            done.push(bi);
+        }
+        for bi in done.into_iter().rev() {
+            self.water.blocks.remove(bi);
         }
     }
     pub(super) fn travel_step(&mut self) {

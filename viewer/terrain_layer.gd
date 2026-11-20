@@ -95,6 +95,11 @@ func set_map_layers(layers: Dictionary) -> void:
 	if key == map_key and not explored.is_empty():
 		fog_texture = ImageTexture.create_from_image(fog_image(explored))
 		fog_rect = Rect2(0, 0, int(explored.cols)*float(explored.chunk), int(explored.rows)*float(explored.chunk))
+	# Swapped textures free the old RIDs; every item with recorded draw
+	# commands against them must re-record this pass or it draws blank.
+	ground.queue_redraw()
+	fog.queue_redraw()
+	field.minimap.queue_redraw()
 	queue_redraw()
 
 # Unexplored chunks under a pale mist; linear filtering feathers the borders.
@@ -254,12 +259,35 @@ func _draw_shore(view: Rect2) -> void:
 			for s in range(0, lines.size(), 2):
 				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, 0.38), 1.6, true)
 
-func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
+func _glyph(rel_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
 	var t: Texture2D = field._tex(rel_path)
 	if t == null:
 		return false
-	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false)
+	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false,
+		Color(1,1,1,alpha))
 	return true
+
+# Same ladders as field.gd, but drawing on this canvas item: draw calls must
+# be recorded by the node whose _draw is running.
+func _anim(id: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	var t: Texture2D = field._tex("lod/anim/%s.png" % id)
+	if t == null:
+		return false
+	var frames := maxi(1, t.get_width() / 64)
+	var frame := int(field.shader_clock * 10.0) % frames
+	draw_texture_rect_region(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)),
+		Rect2(frame * 64, 0, 64, 64), Color(1,1,1,alpha))
+	return true
+
+func _dot(id: String, at: Vector2, size: float, alpha := 1.0) -> bool:
+	return _glyph("lod/dots/%s.png" % id, at, size, size, alpha)
+
+func _asset(id: String, static_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	if field.fidelity == 3 and _anim(id, at, w, h, alpha):
+		return true
+	if static_path != "":
+		return _glyph(static_path, at, w, h, alpha)
+	return _glyph("lod/l2/%s.png" % id, at, w, h, alpha)
 
 func _draw() -> void:
 	ground.queue_redraw()
@@ -295,8 +323,11 @@ func _draw() -> void:
 		var trees: PackedVector2Array = field._tree_points(id,float(forest.radius))
 		for tree in range(0,trees.size(),3 if field.fidelity==1 else 1):
 			var at := centre+trees[tree]
-			var tree_glyph: String = "terrain-flora-xianxia/"+field.TREE_GLYPHS[(id*3+tree)%field.TREE_GLYPHS.size()]+".png"
-			if field.fidelity > 1 and _glyph(tree_glyph,at,22.0+float(tree%4)*2.0,22.0+float(tree%4)*2.0):
+			var side := 22.0+float(tree%4)*2.0
+			var tree_id: String = field.TREE_GLYPHS[(id*3+tree)%field.TREE_GLYPHS.size()]
+			if field.fidelity == 3 and _anim(tree_id,at,side,side):
+				continue
+			if field.fidelity > 1 and _glyph("terrain-flora-xianxia/"+tree_id+".png",at,side,side):
 				continue
 			var crown := 9.0 + float(tree % 5)
 			draw_circle(at + Vector2(4, 5), crown, Color(0.10, 0.22, 0.16, 0.22), true, -1.0, true)
@@ -307,9 +338,17 @@ func _draw() -> void:
 		draw_circle(Vector2(clearing[0],clearing[1]),float(clearing[2]),Color("93a575"))
 	for grass in field.world.get("wildlife",{}).get("grass",[]):
 		var fraction := float(grass.stock)/maxf(1.0,float(grass.capacity))
-		draw_circle(Vector2(grass.x,grass.y),7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
+		var gpos := Vector2(grass.x,grass.y)
+		var done := false
+		if field.fidelity == 1:
+			done = _dot("grass",gpos,9.0/field.zoom)
+		else:
+			done = _asset("grass","lod/l2/grass.png",gpos,18,18,1.0 if fraction>0.25 else 0.45)
+		if not done:
+			draw_circle(gpos,7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
+	_draw_ports()
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()
@@ -462,3 +501,26 @@ func _draw_roads(markets: Array) -> void:
 		if field.show_trade and traffic > 0:
 			var width: float = clampf(2.0 + log(float(traffic) + 1.0), 3.0, 10.0) / field.zoom
 			draw_polyline(points, Color(0.35, 0.90, 0.83, 0.70), width, true)
+
+func _draw_ports() -> void:
+	for port in field.world.get("ports", []):
+		var home := Vector2(port.x, port.y)
+		var landing := Vector2(port.lx, port.ly)
+		var near_done: bool = port.get("near_done", false)
+		var far_done: bool = port.get("far_done", false)
+		draw_dashed_line(home, landing, Color("7d94a8", 0.5), 2.0, 8.0, true)
+		_pier(home, landing, near_done)
+		_pier(landing, home, far_done)
+
+func _pier(at: Vector2, toward: Vector2, done: bool) -> void:
+	# A short dock plank pointing into the water toward its partner.
+	var dir := (toward - at).normalized()
+	var side := dir.orthogonal()
+	var timber := Color("8a6f4d") if done else Color("6b5a45")
+	var end := at + dir * 22.0
+	draw_line(at, end, timber, 7.0, true)
+	for t in [0.45, 0.8, 1.0]:
+		var post: Vector2 = at + dir * (22.0 * t)
+		draw_line(post - side * 4.5, post + side * 4.5, Color("4d3f2e"), 2.4, true)
+	if not done:
+		draw_circle(at - dir * 6.0, 4.0, Color("e0b64f", 0.85))

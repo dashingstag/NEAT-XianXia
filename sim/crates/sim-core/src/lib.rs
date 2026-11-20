@@ -1897,6 +1897,7 @@ impl World {
         self.wildlife_step();
         self.update_explored();
         self.update_water_reports();
+        self.plan_ports();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2710,6 +2711,7 @@ impl World {
             .collect::<Vec<_>>());
         result["wildlife"] = self.wildlife_summary();
         result["water_blocks"] = serde_json::json!(self.water.blocks);
+        result["ports"] = serde_json::json!(self.water.ports);
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
         result["banking"] = self.banking_summary();

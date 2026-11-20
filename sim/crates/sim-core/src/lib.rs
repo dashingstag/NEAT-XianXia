@@ -8,7 +8,7 @@ mod banking;
 mod legacy_v12;
 mod legacy_v13;
 pub use landscape::Hill;
-pub use worldmap::{Exploration, MapSize, MapSpec, Terrain, WorldMap};
+pub use worldmap::{Exploration, MapSize, MapSpec, Terrain, TerrainRaster, WorldMap, CHUNK_SIZE};
 mod relationships;
 use relationships::Relationships;
 mod legacy_v10;

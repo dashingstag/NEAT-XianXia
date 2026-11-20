@@ -47,6 +47,35 @@ On Windows, double-click [launch-frontier.bat](launch-frontier.bat) for a fresh 
 
 Every command prints its own evidence directory under `.work/`. Override with `XIANXIA_RUNS`. Build artifacts follow Cargo's normal target-directory settings. See [agent instructions](AGENTS.md), [compatibility contract](contracts/README.md), and [handoff status](docs/HANDOFF.md). Earlier plans and prototype notes in docs are historical context.
 
+Add `--background` to a test, benchmark, or simulation soak to get your
+terminal back while it runs.
+
+```text
+python tools/dev.py test all --background
+python tools/dev.py soak --map x4 --seeds 5 --steps 5475000 --background
+```
+
+The launcher copies the current source, including local edits in the tested
+directories, before returning. The detached job uses its own build output,
+ports, and checkpoints. Keep working in the original checkout. The launcher
+prints the run directory with `run.log` and the final `result.json`. A soak
+also writes progress to `soak.log` and the simulation report to `soak.json`.
+
+For runs that should start in order, use the verification queue.
+
+```text
+python tools/dev.py queue add test all
+python tools/dev.py queue add soak --map x4 --seeds 5 --steps 5475000
+python tools/dev.py queue list
+python tools/dev.py queue edit 2 soak --map x4 --seed 77 --seeds 3 --steps 300000
+```
+
+Use the job ID printed by `queue add` or `queue list` when editing a pending
+job. The queue takes a fresh source snapshot as each job starts. This lets
+you revise a pending job and edit the checkout while the active job uses
+its own snapshot. The queue continues after failures and prints the
+evidence path for each started or completed job.
+
 ## License
 
 The project uses the [MIT license](LICENSE). Bundled Awesome Copilot resources retain their [upstream license and attribution](third_party/awesome-copilot/PROVENANCE.md).

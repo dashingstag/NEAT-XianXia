@@ -82,6 +82,19 @@ pub struct Ship {
     pub leg: u16,
 }
 
+/// A routed land detour a stalled mover follows around water. `path`
+/// empty marks a recent failed lookup: the mover retries the router
+/// only after a long backoff instead of every stall tick.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Detour {
+    pub path: Vec<(f32, f32)>,
+    /// Arclength progress along `path`: monotonic so a mover pushed off
+    /// the route keeps aiming forward instead of flipping between the
+    /// projections of adjacent segments.
+    pub progress: f32,
+    pub attempt: u64,
+}
+
 /// Water-route reporting state. Persisted so pending reports survive
 /// checkpoints; `progress` is a per-agent movement probe rebuilt the
 /// same way on load.
@@ -98,6 +111,11 @@ pub struct WaterState {
     pub ports: Vec<Port>,
     /// Ferries built at finished ports.
     pub ships: Vec<Ship>,
+    /// Routed detours for stalled movers: agent idx, or a convoy slot
+    /// with the high bit set.
+    pub detours: BTreeMap<u32, Detour>,
+    /// Convoy slot -> stall probe, same 24-unit rule as `progress`.
+    pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
 }
 
 fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -255,6 +273,78 @@ mod tests {
         w.update_water_reports();
         assert_eq!(w.water.blocks.len(), 1);
         assert_eq!(w.water.blocks[0].reports, 2);
+    }
+    #[test]
+    fn stalled_walkers_route_around_lakes() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        // Find a land→water→land stripe along a row, probing terrain_at
+        // directly — raster cells classify whole cells and can hide land
+        // bumps inside a "water" cell that the walker's point samples hit.
+        // The band must be a continuous ≥32u of water along the line and
+        // the A* must return real waypoints around it.
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if matches!(
+                        w.route_between(ax, y, bx, y),
+                        Some(p) if p.len() >= 3
+                    ) {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        // Pin against the shore, then jump the stall probe past the
+        // 240-tick detour threshold.
+        for _ in 0..24 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        w.tick += 241;
+        for _ in 0..8 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        assert!(
+            matches!(w.water.detours.get(&0), Some(d) if !d.path.is_empty()),
+            "stalled walker should have been routed around the lake"
+        );
+        // Following the detour must actually reach the far shore.
+        let mut reached = false;
+        for _ in 0..6000 {
+            w.tick += 1;
+            w.walk_toward(0, tx, ty, 4.0);
+            assert_ne!(
+                w.map.terrain_at(w.agents.x[0], w.agents.y[0]),
+                Terrain::Water
+            );
+            if dist(w.agents.x[0], w.agents.y[0], tx, ty) < 10.0 {
+                reached = true;
+                break;
+            }
+        }
+        assert!(
+            reached,
+            "routed walker never reached ({tx},{ty}) from ({x},{y}); ended at ({},{})",
+            w.agents.x[0],
+            w.agents.y[0]
+        );
     }
     #[test]
     fn zoned_village_plans_and_builds_port() {
@@ -428,8 +518,27 @@ mod tests {
         }
         let mut span = None;
         for (bx, by, lx) in candidates {
-            if w.route_between(bx, by, lx, by).is_none()
-                && w.route_over_water(bx, by, lx, by).is_some()
+            // Mimic the plan_ports survey: march toward the far shore and
+            // qualify only when the dry-ground pair is land-blocked for
+            // walkers yet still sailable for a hull.
+            let dd = dist(bx, by, lx, by).max(1.0);
+            let ux = (lx - bx) / dd;
+            let (mut landing, mut crossed) = (None, false);
+            for k in 1..=128 {
+                let (qx, qy) = (bx + ux * k as f32 * 32.0, by);
+                let t = w.map.terrain_at(qx, qy);
+                if t == Terrain::Water || t == Terrain::River {
+                    crossed = true;
+                } else if crossed && w.map.buildable(qx, qy) {
+                    landing = Some((qx, qy));
+                    break;
+                }
+            }
+            let Some((sx, sy)) = landing else { continue };
+            let (px, py) = w.map.dry_ground(bx, by);
+            let (sx, sy) = w.map.dry_ground(sx, sy);
+            if w.route_between(px, py, sx, sy).is_none()
+                && w.route_over_water(px, py, sx, sy).is_some()
             {
                 span = Some((bx, by, lx));
                 break;
@@ -1027,9 +1136,47 @@ impl World {
             (di.max(dj) * 10 + di.min(dj) * 4) as u64
         };
         let start = sj * cols + si;
+        let mut goal = gj * cols + gi;
+        // The mover is already standing in the start cell, so it counts as
+        // standable even when the erosion mask would fail a quarter-sample.
+        if self.map.terrain_at(ax, ay) != Terrain::Water {
+            pass[start] = true;
+        }
+        // The goal cell is different: forcing it passable would emit its
+        // possibly-flooded centre as a waypoint. Instead snap the goal to
+        // the nearest genuinely passing cell whose centre keeps a clear
+        // final leg to the target point.
+        if !pass[goal] {
+            let mut snapped = false;
+            'snap: for r in 1..=2i32 {
+                for dj in -r..=r {
+                    for di in -r..=r {
+                        let (ni, nj) = (gi as i32 + di, gj as i32 + dj);
+                        if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
+                            continue;
+                        }
+                        let n = nj as usize * cols + ni as usize;
+                        if !pass[n] {
+                            continue;
+                        }
+                        let (cx, cy) = (
+                            ni as f32 * CELL + CELL * 0.5,
+                            nj as f32 * CELL + CELL * 0.5,
+                        );
+                        if self.clear_shot(cx, cy, bx, by) {
+                            goal = n;
+                            snapped = true;
+                            break 'snap;
+                        }
+                    }
+                }
+            }
+            if !snapped {
+                return None;
+            }
+        }
         g[start] = 0;
         heap.push((std::cmp::Reverse(h(si, sj)), start));
-        let goal = gj * cols + gi;
         let mut found = false;
         while let Some((std::cmp::Reverse(_), at)) = heap.pop() {
             if at == goal {
@@ -1078,12 +1225,20 @@ impl World {
         }
         cells.reverse();
         let mut raw: Vec<(f32, f32)> = vec![(ax, ay)];
-        raw.extend(cells.iter().map(|&c| {
-            (
+        // The start cell centre just duplicates the mover's position, and
+        // an unsnapped goal centre duplicates the target — but a snapped
+        // goal centre is the waypoint the final leg was verified from.
+        let keep = if goal == gj * cols + gi {
+            cells.len().saturating_sub(1)
+        } else {
+            cells.len()
+        };
+        for &c in cells.get(1..keep).unwrap_or(&[]) {
+            raw.push((
                 (c % cols) as f32 * CELL + CELL * 0.5,
                 (c / cols) as f32 * CELL + CELL * 0.5,
-            )
-        }));
+            ));
+        }
         raw.push((bx, by));
         // Greedy line-of-sight smoothing over the water boundary.
         let mut path = vec![raw[0]];
@@ -1102,7 +1257,13 @@ impl World {
     }
     fn clear_shot(&mut self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
         let d = dist(ax, ay, bx, by);
-        let n = (d / 16.0).ceil().max(1.0) as usize;
+        // Sample at raster resolution: coarser strides can jump a water
+        // band narrow enough to strand a point-sampling walker.
+        // Sample at mover-step resolution: a water band narrower than a
+        // step can be hopped by a rotated steer, anything wider must be
+        // routed around — so this stride decides detour-vs-direct exactly
+        // like the mover will experience it.
+        let n = (d / 4.0).ceil().max(1.0) as usize;
         for k in 1..n {
             let t = k as f32 / n as f32;
             if self.map.terrain_at(ax + (bx - ax) * t, ay + (by - ay) * t)
@@ -1512,7 +1673,9 @@ impl World {
     /// side by id parity, which stops the left/right flip-flopping that
     /// strands movers in shoreline pockets; angles past 90° let a mover
     /// back out of a cove instead of waiting forever.
-    const DETOUR: &[f32] = &[15.0, 30.0, 45.0, 60.0, 75.0, 90.0, 115.0, 140.0, 165.0];
+    const DETOUR: &[f32] = &[
+        15.0, 30.0, 45.0, 60.0, 75.0, 90.0, 115.0, 140.0, 165.0, 180.0,
+    ];
     fn steer(
         &mut self,
         x: f32,
@@ -1552,11 +1715,120 @@ impl World {
         }
         None
     }
+    /// Next steering point for a mover with a routed detour, or (tx, ty)
+    /// when there is none. Drops the detour once the destination is in
+    /// dry line-of-sight, the waypoints are consumed, or the detour was
+    /// routed for a different destination.
+    fn detour_target(&mut self, key: u32, x: f32, y: f32, tx: f32, ty: f32) -> (f32, f32) {
+        let path_len = match self.water.detours.get(&key) {
+            Some(d) if !d.path.is_empty() => d.path.len(),
+            _ => return (tx, ty),
+        };
+        // Stale only when the mover's destination changed; a "clear shot"
+        // check here was dropped because coarse sampling can call a thin
+        // band open and send the mover back into the stall loop.
+        let last = self.water.detours[&key].path[path_len - 1];
+        if dist(last.0, last.1, tx, ty) > 48.0 {
+            self.water.detours.remove(&key);
+            return (tx, ty);
+        }
+        // Pure pursuit with monotonic arclength: project the mover onto
+        // the polyline, clamp progress forward, then steer toward a
+        // lookahead measured along the path.
+        let path = &self.water.detours[&key].path;
+        let (mut total, mut best) = (0f32, f32::MAX);
+        let mut base = 0f32;
+        let mut progress = 0f32;
+        for s in 0..path.len() - 1 {
+            let (ax, ay) = path[s];
+            let (bx, by) = path[s + 1];
+            let (dx, dy) = (bx - ax, by - ay);
+            let l2 = dx * dx + dy * dy;
+            let tt = if l2 > 0.0 {
+                (((x - ax) * dx + (y - ay) * dy) / l2).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let (px, py) = (ax + dx * tt, ay + dy * tt);
+            let d2 = (x - px) * (x - px) + (y - py) * (y - py);
+            if d2 < best {
+                best = d2;
+                progress = base + l2.sqrt() * tt;
+            }
+            base += l2.sqrt();
+            total = base;
+        }
+        let stored = self.water.detours[&key].progress;
+        progress = progress.max(stored);
+        self.water.detours.get_mut(&key).unwrap().progress = progress;
+        if total - progress <= 12.0 || dist(x, y, last.0, last.1) < 12.0 {
+            self.water.detours.remove(&key);
+            return (tx, ty);
+        }
+        let path = &self.water.detours[&key].path;
+        let mut ahead = progress + 16.0;
+        for s in 0..path.len() - 1 {
+            let (ax, ay) = path[s];
+            let (bx, by) = path[s + 1];
+            let len = dist(ax, ay, bx, by);
+            if ahead <= len && len > 0.0 {
+                let tt = ahead / len;
+                return (ax + (bx - ax) * tt, ay + (by - ay) * tt);
+            }
+            ahead -= len;
+        }
+        path[path_len - 1]
+    }
+    /// Route a stalled mover around the water blocking it. `route_between`
+    /// answers one of: dry waypoints (stored as the active detour), an
+    /// empty path (already a clear shot — steering resolves it), or None
+    /// (truly water-blocked — the report/ferry chain handles it). The
+    /// empty-path entry doubles as a ~2400-tick backoff so unreachable
+    /// movers do not rerun A* every stall tick.
+    fn compute_detour(&mut self, key: u32, x: f32, y: f32, tx: f32, ty: f32) {
+        if let Some(d) = self.water.detours.get(&key) {
+            // Unreachable marks back off for ~2400 ticks; a live detour that
+            // still has the mover stalled reroutes sooner from its new spot.
+            let retry = if d.path.is_empty() { 2400 } else { 480 };
+            if self.tick.saturating_sub(d.attempt) < retry {
+                return;
+            }
+        } else if self.water.detours.len() >= 512 {
+            return;
+        }
+        match self.route_between(x, y, tx, ty) {
+            Some(path) if !path.is_empty() => {
+                self.water.detours.insert(
+                    key,
+                    Detour {
+                        path,
+                        progress: 0.0,
+                        attempt: self.tick,
+                    },
+                );
+            }
+            _ => {
+                self.water.detours.insert(
+                    key,
+                    Detour {
+                        path: Vec::new(),
+                        progress: 0.0,
+                        attempt: self.tick,
+                    },
+                );
+            }
+        }
+    }
     /// Move agent `i` toward (tx, ty) by `step` units, steering around water
     /// on generated maps; on Classic this is the historical straight step.
     pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
-        if let Some((nx, ny)) = self.steer(x, y, tx, ty, step, i % 2 == 0) {
+        let (gx, gy) = if self.map.spec.size != MapSize::Classic {
+            self.detour_target(i as u32, x, y, tx, ty)
+        } else {
+            (tx, ty)
+        };
+        if let Some((nx, ny)) = self.steer(x, y, gx, gy, step, i % 2 == 0) {
             // Rivers are forded at half speed: the mover still makes
             // absolute progress each tick, it just crosses more slowly.
             let f = if self.map.terrain_at(nx, ny) == Terrain::River {
@@ -1584,7 +1856,15 @@ impl World {
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
         match self.water.progress[i] {
             Some((px, py, since)) if dist(x, y, px, py) < 24.0 => {
-                if self.tick.saturating_sub(since) > 600
+                let stalled = self.tick.saturating_sub(since);
+                // A shore-hugging oscillation resolves nothing on its own:
+                // after ~240 stalled ticks route the mover along dry
+                // waypoints. If a detour exists the agent walks around the
+                // lake, the probe resets, and no report is ever filed.
+                if stalled > 240 {
+                    self.compute_detour(i as u32, x, y, tx, ty);
+                }
+                if stalled > 600
                     && !self.water.pending.iter().any(|p| p.agent == i as u32)
                 {
                     self.water.pending.push(PendingBlock {
@@ -1866,10 +2146,32 @@ impl World {
                     * 1.45
                     * DT)
                     .min(d);
-                if let Some((nx, ny)) = self.steer(c.x, c.y, c.goal_x, c.goal_y, step, slot % 2 == 0)
+                let key = 0x8000_0000 | slot as u32;
+                let (gx, gy) = if self.map.spec.size != MapSize::Classic {
+                    self.detour_target(key, c.x, c.y, c.goal_x, c.goal_y)
+                } else {
+                    (c.goal_x, c.goal_y)
+                };
+                if let Some((nx, ny)) = self.steer(c.x, c.y, gx, gy, step, slot % 2 == 0)
                 {
                     c.x = nx;
                     c.y = ny;
+                }
+                if self.map.spec.size != MapSize::Classic {
+                    match self.water.convoy_probe.get(&(slot as u32)).copied() {
+                        Some((px, py, since))
+                            if dist(c.x, c.y, px, py) < 24.0
+                                && self.tick.saturating_sub(since) > 240 =>
+                        {
+                            self.compute_detour(key, c.x, c.y, c.goal_x, c.goal_y);
+                        }
+                        Some((px, py, _)) if dist(c.x, c.y, px, py) < 24.0 => {}
+                        _ => {
+                            self.water
+                                .convoy_probe
+                                .insert(slot as u32, (c.x, c.y, self.tick));
+                        }
+                    }
                 }
             }
             for (rank, &id) in c.members.iter().enumerate() {

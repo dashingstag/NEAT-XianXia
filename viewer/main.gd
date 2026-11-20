@@ -477,6 +477,10 @@ func _site_text() -> String:
 			body = "%s\n\n[b]SOCIAL SPACE[/b]\n%s / 32 guests\nSocial score grows through time spent with other guests.\n\nConstruction: 12 timber + 6 stone, with a funded reward." % ["Open" if d.ready else "Under construction",int(d.visitors)]
 			if not d.ready:
 				body += "\nProgress: %.0f%%\n" % (float(d.progress)*5.0)
+			else:
+				for rumour in state.get("camp_rumours", []):
+					if int(rumour.tavern) == int(site_selection.id):
+						body += "\nRumour: a new campsite named %s." % str(rumour.name)
 		"farms":
 			title = "Rice farm"
 			body = "%s\n\nAge: %.1f days\nTending visits: %s\nRice ready: %s\n\nFertility: %.0f%% / moisture: %.0f%%\n\nCrops require 15 full days and daily tending. Farmer reward: 2 copper per funded shift." % ["Ready to harvest" if d.mature else "Growing",float(d.age_days),int(d.tended_days),int(d.harvest_remaining),float(d.fertility)*100.0,float(d.moisture)*100.0]

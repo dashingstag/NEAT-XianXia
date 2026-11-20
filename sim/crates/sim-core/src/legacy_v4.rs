@@ -234,6 +234,7 @@ impl From<LegacyWorld> for World {
             map: crate::WorldMap::classic(old.seed),
             explored: crate::Exploration::default(),
             governance: Default::default(),
+            camp_rumours: Default::default(),
         }
     }
 }

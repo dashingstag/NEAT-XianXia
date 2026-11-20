@@ -12,15 +12,15 @@ set "result=1"
 goto finish
 
 :custom
-"%XIANXIA_PYTHON%" tools\dev.py play --fresh
+"%XIANXIA_PYTHON%" tools\dev.py play --fresh %*
 goto capture
 
 :py_launcher
-py -3 tools\dev.py play --fresh
+py -3 tools\dev.py play --fresh %*
 goto capture
 
 :python_path
-python tools\dev.py play --fresh
+python tools\dev.py play --fresh %*
 
 :capture
 set "result=%errorlevel%"

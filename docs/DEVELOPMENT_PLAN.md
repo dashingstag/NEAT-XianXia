@@ -71,3 +71,84 @@ M0 sequential, single owner. After M1, wilderness (M2-M3) and society (M4) split
 - "Discovery within a year of the first guild" and predator-prey coexistence are tuning targets, not scripts; budget soak-and-tune time in M2, M4 and M6.
 - Qi is conserved: veins have flow rates, spirit stones are consumed, cores drop from killed beasts.
 - Suspected camp cell-hash collision: confirm with a failing test in M0, then replace with the spatial grid.
+
+## M8 Water routes: stranded reports, ports and shipping
+
+Blocked movers become a demand signal that villages answer with
+infrastructure. Ordered phases; each ends with a replay-exact Classic
+suite and a generated-map scenario test.
+
+### P1 Stranded reporting
+
+- Transient stuck detection: `walk_toward` already returns nothing when
+  `steer` fails; track per-agent progress in a `#[serde(skip)]` map
+  (`index -> (x, y, tick)`). An agent with an active Travel/Gather/Rest
+  destination whose position has not moved >= 24 units in ~600 ticks is
+  stranded at water.
+- A stranded agent records a `WaterBlock { x, y, target_x, target_y,
+  tick, reports }` on their home market (deduped by 96u cells, capped
+  at 64 entries, persisted -> XXSAVE16). On their next arrival inside
+  the settlement radius the report is delivered (physical reporting);
+  agents then retry or fall back per existing action logic.
+- Exit test: seed a walker facing deep water; assert a block is
+  recorded and delivered on home arrival.
+
+### P2 Ports
+
+- `Port { id, market, x, y, pair, progress, ships: Vec<u32> }` persisted
+  on World (part of the same v16 bump).
+- Far-shore resolution: from the block position toward the blocked
+  target, sample `terrain_at` every 32u up to 4096u; first `buildable`
+  land is the landing site, nudged dry. No land => report expires
+  unreached (open ocean or unreachable island).
+- Village planning: a zoned market with a delivered block and no port
+  within 300u of the site posts two build jobs on the existing
+  `urban.jobs` board with a new kind (5 "Shipwright" -> reuses the
+  builder pipeline: wage escrow, timber+stone material delivery,
+  phases). Port build ~= 24 wood, 8 stone.
+- Far-side catch: the landing port cannot be built until the shore is
+  reachable. If the routing grid finds a land path, a work expedition
+  (convoy) is commissioned to walk there. Otherwise the far port job is
+  queued until the first ship exists (see P3) and then ferries 2
+  builders + materials across.
+- Ports render as dock sites in `map_layers` metadata + viewer glyph
+  (new `port.png` in the xianxia glyph set).
+
+### P3 Ships and assemblies
+
+- `Ship { id, port, members: Vec<u32> (cap 100), x, y, state }`
+  persisted; built by a "Build ship" carpenter job costing 40 timber
+  from market stock at the port.
+- Demand: an agent whose target market/site is unreachable over land
+  but reachable via a port pair joins the port assembly list; when >= 8
+  wait (or an expedition convoy commits), the ship departs with up to
+  100 aboard.
+- Movement: ship = convoy-on-water. Same member-pinning math, but its
+  `steer` variant refuses land cells instead of water. Speed 1.5x walk,
+  night slowdown applies.
+- Disembark: members scatter at the landing dock; the ship becomes a
+  persistent shuttle: it returns when >= 8 queue at the far port or
+  after an idle timeout (one ferry per pair initially).
+- Viewer: ship glyph (`ship.png`, junk-rigged sail) drawn from
+  snapshot `ships[]`; assembly shown as a crowd at the dock.
+- Exit tests: stuck NPC -> block -> jobs -> port pair -> ship built ->
+  passengers disembark on the far shore within a scenario run; Classic
+  untouched (no blocks, no ports).
+
+### P4 Animals respect water
+
+- `wildlife.rs` movement (single `a.x += dir*step` site) goes through a
+  `walk_animal` that refuses `Terrain::Water` with axis-slide steering;
+  rivers stay crossable (they already swim-read fine at reduced speed).
+- Flee targets and mate/wander goals are clamped dry via `dry_ground`
+  when they land in water.
+- Exit test: an animal driven toward open water never stands on Water
+  over a long chase; classic forests unchanged.
+
+### Ordering and dependencies
+
+- P1+P4 are independent (separate commits ok). P2 needs P1. P3 needs
+  P2. Save bump to XXSAVE16 lands once with P2 (ports + water_blocks).
+- Deliberately out: fares/tolls, ship combat, fishing from boats,
+  multi-ship fleets, ocean currents. Guild/quests later reuse ports as
+  quest waypoints (M4), and spirit islands arrive with the qi layer (M5).

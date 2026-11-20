@@ -814,6 +814,56 @@ ANIMALS = [
 POSES = ["idle"] + [("walk", f) for f in range(8)] + [("work", f) for f in range(8)] + ["dead", "carry", "lie"]
 STANCES = ["idle", "walk", "walk2", "graze", "flee", "dead"]
 
+SITES = [
+    ("home",      "Home",            dict(shape="home")),
+    ("shop",      "Shop",            dict(shape="shop")),
+    ("workshop",  "Workshop",        dict(shape="workshop")),
+    ("shop-clothes",    "Shop — clothier",    dict(shape="shop", motif="clothes",    sign_c=PAL["mortal_indigo"])),
+    ("shop-tools",      "Shop — tools",       dict(shape="shop", motif="tools",      sign_c=PAL["gilt"])),
+    ("shop-furniture",  "Shop — furniture",   dict(shape="shop", motif="furniture",  sign_c="#9a7c58")),
+    ("shop-butcher",    "Shop — butcher",     dict(shape="shop", motif="butcher",    sign_c="#b04a3e")),
+    ("workshop-hunter",     "Workshop — hunter",     dict(shape="workshop", motif="hunter")),
+    ("workshop-cobbler",    "Workshop — cobbler",    dict(shape="workshop", motif="cobbler")),
+    ("workshop-blacksmith", "Workshop — blacksmith", dict(shape="workshop", motif="blacksmith")),
+    ("workshop-carpenter",  "Workshop — carpenter",  dict(shape="workshop", motif="carpenter")),
+    ("bank",      "Bank — pagoda",   dict(shape="bank")),
+    ("tavern",    "Tavern — lanterns", dict(shape="tavern")),
+    ("school",    "School — paifang", dict(shape="school")),
+    ("farm",      "Rice farm",       dict(shape="farm")),
+    ("graveyard", "Graveyard — steles", dict(shape="graveyard")),
+    ("shelter",   "Roadside camp",   dict(shape="shelter")),
+    ("jobboard",  "Job board",       dict(shape="jobboard")),
+    ("market",    "Market well",     dict(shape="market")),
+    ("mine-iron", "Iron mine",       dict(shape="mine", ore=PAL["ore"][3])),
+    ("mine-gold", "Gold mine",       dict(shape="mine", ore=PAL["ore"][0])),
+    ("gate",      "Mountain gate (immortal)", dict(shape="gate")),
+    ("pavilion",  "Pavilion (immortal)",      dict(shape="pavilion")),
+]
+
+TERRAIN = [
+    ("pine",          "Pine tree",            dict(shape="pine")),
+    ("bamboo",        "Bamboo grove",         dict(shape="bamboo")),
+    ("willow",        "Willow",               dict(shape="willow")),
+    ("plum",          "Plum blossom",         dict(shape="plum")),
+    ("tree-generic",  "Generic tree",         dict(shape="tree_generic")),
+    ("berries",       "Berry bush",           dict(shape="berries")),
+    ("timber",        "Timber stand",         dict(shape="timber")),
+    ("stone",         "Stone outcrop",        dict(shape="stone")),
+    ("fish",          "Fish shoal",           dict(shape="fish")),
+    ("herbs",         "Herb patch",           dict(shape="herbs")),
+    ("spirit-herbs",  "Spirit herb patch",    dict(shape="herbs", spirit=True)),
+    ("mushrooms",     "Mushroom ring",        dict(shape="mushrooms")),
+    ("lotus",         "Lotus cluster",        dict(shape="lotus")),
+    ("mist",          "Qi mist wisps",        dict(shape="mist")),
+    ("unknown-site",  "Undiscovered site",    dict(shape="unknown_site")),
+]
+
+ICONS = ["berries", "timber", "stone", "fish", "gold", "silver", "copper",
+         "iron", "rice", "axe", "pickaxe", "hoe", "shovel", "home", "shop",
+         "workshop", "bank", "school", "tavern", "farm", "graveyard",
+         "shelter", "jobboard", "market", "road", "sword", "scroll",
+         "lantern", "ingot", "lotus", "seal"]
+
 
 def sheet(images, cols, pad=4, bg=(20, 24, 20, 255), cw=None, ch=None):
     cw = cw or max(i.width for i in images)
@@ -877,31 +927,6 @@ def main():
     save(aanimal_atlas, "animal-table-xianxia", "atlas.png")
 
     # ---- sites
-    SITES = [
-        ("home",      "Home",            dict(shape="home")),
-        ("shop",      "Shop",            dict(shape="shop")),
-        ("workshop",  "Workshop",        dict(shape="workshop")),
-        ("shop-clothes",    "Shop — clothier",    dict(shape="shop", motif="clothes",    sign_c=PAL["mortal_indigo"])),
-        ("shop-tools",      "Shop — tools",       dict(shape="shop", motif="tools",      sign_c=PAL["gilt"])),
-        ("shop-furniture",  "Shop — furniture",   dict(shape="shop", motif="furniture",  sign_c="#9a7c58")),
-        ("shop-butcher",    "Shop — butcher",     dict(shape="shop", motif="butcher",    sign_c="#b04a3e")),
-        ("workshop-hunter",     "Workshop — hunter",     dict(shape="workshop", motif="hunter")),
-        ("workshop-cobbler",    "Workshop — cobbler",    dict(shape="workshop", motif="cobbler")),
-        ("workshop-blacksmith", "Workshop — blacksmith", dict(shape="workshop", motif="blacksmith")),
-        ("workshop-carpenter",  "Workshop — carpenter",  dict(shape="workshop", motif="carpenter")),
-        ("bank",      "Bank — pagoda",   dict(shape="bank")),
-        ("tavern",    "Tavern — lanterns", dict(shape="tavern")),
-        ("school",    "School — paifang", dict(shape="school")),
-        ("farm",      "Rice farm",       dict(shape="farm")),
-        ("graveyard", "Graveyard — steles", dict(shape="graveyard")),
-        ("shelter",   "Roadside camp",   dict(shape="shelter")),
-        ("jobboard",  "Job board",       dict(shape="jobboard")),
-        ("market",    "Market well",     dict(shape="market")),
-        ("mine-iron", "Iron mine",       dict(shape="mine", ore=PAL["ore"][3])),
-        ("mine-gold", "Gold mine",       dict(shape="mine", ore=PAL["ore"][0])),
-        ("gate",      "Mountain gate (immortal)", dict(shape="gate")),
-        ("pavilion",  "Pavilion (immortal)",      dict(shape="pavilion")),
-    ]
     site_imgs = []
     for sid, name, spec in SITES:
         im = site_cell(spec)
@@ -910,23 +935,6 @@ def main():
     save(sheet(site_imgs, 5), "site-glyphs-xianxia", "sheet.png")
 
     # ---- terrain / flora
-    TERRAIN = [
-        ("pine",          "Pine tree",            dict(shape="pine")),
-        ("bamboo",        "Bamboo grove",         dict(shape="bamboo")),
-        ("willow",        "Willow",               dict(shape="willow")),
-        ("plum",          "Plum blossom",         dict(shape="plum")),
-        ("tree-generic",  "Generic tree",         dict(shape="tree_generic")),
-        ("berries",       "Berry bush",           dict(shape="berries")),
-        ("timber",        "Timber stand",         dict(shape="timber")),
-        ("stone",         "Stone outcrop",        dict(shape="stone")),
-        ("fish",          "Fish shoal",           dict(shape="fish")),
-        ("herbs",         "Herb patch",           dict(shape="herbs")),
-        ("spirit-herbs",  "Spirit herb patch",    dict(shape="herbs", spirit=True)),
-        ("mushrooms",     "Mushroom ring",        dict(shape="mushrooms")),
-        ("lotus",         "Lotus cluster",        dict(shape="lotus")),
-        ("mist",          "Qi mist wisps",        dict(shape="mist")),
-        ("unknown-site",  "Undiscovered site",    dict(shape="unknown_site")),
-    ]
     t_imgs = []
     for tid, name, spec in TERRAIN:
         im = terrain_cell(spec)
@@ -935,11 +943,6 @@ def main():
     save(sheet(t_imgs, 5), "terrain-flora-xianxia", "sheet.png")
 
     # ---- icons
-    ICONS = ["berries", "timber", "stone", "fish", "gold", "silver", "copper",
-             "iron", "rice", "axe", "pickaxe", "hoe", "shovel", "home", "shop",
-             "workshop", "bank", "school", "tavern", "farm", "graveyard",
-             "shelter", "jobboard", "market", "road", "sword", "scroll",
-             "lantern", "ingot", "lotus", "seal"]
     i_imgs = []
     for ic in ICONS:
         im = icon_cell(dict(shape=ic))

@@ -197,11 +197,20 @@ struct RiverGrid {
 
 /// Generated world terrain. The chunk cache is regenerated on demand
 /// and intentionally not serialized.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct WorldMap {
     pub spec: MapSpec,
-    cache: HashMap<(u32, u32), Chunk>,
-    rivers: Option<Box<RiverGrid>>,
+    cache: std::sync::RwLock<HashMap<(u32, u32), Chunk>>,
+    rivers: std::sync::RwLock<Option<Box<RiverGrid>>>,
+}
+impl Clone for WorldMap {
+    fn clone(&self) -> Self {
+        Self {
+            spec: self.spec.clone(),
+            cache: std::sync::RwLock::new(self.cache.read().unwrap().clone()),
+            rivers: std::sync::RwLock::new(self.rivers.read().unwrap().clone()),
+        }
+    }
 }
 impl serde::Serialize for WorldMap {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -218,8 +227,8 @@ impl WorldMap {
     pub fn new(spec: MapSpec) -> Self {
         Self {
             spec,
-            cache: HashMap::new(),
-            rivers: None,
+            cache: std::sync::RwLock::new(HashMap::new()),
+            rivers: std::sync::RwLock::new(None),
         }
     }
     pub fn classic(seed: u64) -> Self {
@@ -313,7 +322,7 @@ impl WorldMap {
     }
 
     fn sample<F: Fn(&Chunk) -> &[[f32; CELLS_PER_SIDE + 1]; CELLS_PER_SIDE + 1]>(
-        &mut self,
+        &self,
         x: f32,
         y: f32,
         layer: F,
@@ -322,11 +331,12 @@ impl WorldMap {
         let y = y.clamp(0.0, self.spec.height() - 1.0);
         let (cx, cy) = self.chunk_coords(x, y);
         let key = (cx, cy);
-        if !self.cache.contains_key(&key) {
+        if !self.cache.read().unwrap().contains_key(&key) {
             let generated = self.generate(cx, cy);
-            self.cache.insert(key, generated);
+            self.cache.write().unwrap().insert(key, generated);
         }
-        let chunk = self.cache.get(&key).unwrap();
+        let cache = self.cache.read().unwrap();
+        let chunk = cache.get(&key).unwrap();
         let lx = ((x - cx as f32 * CHUNK_SIZE as f32) / CHUNK_SIZE as f32) * CELLS_PER_SIDE as f32;
         let ly = ((y - cy as f32 * CHUNK_SIZE as f32) / CHUNK_SIZE as f32) * CELLS_PER_SIDE as f32;
         let i = (lx.floor() as usize).min(CELLS_PER_SIDE - 1);
@@ -340,32 +350,43 @@ impl WorldMap {
             + g[j + 1][i + 1] * fx * fy
     }
 
-    pub fn elevation_at(&mut self, x: f32, y: f32) -> f32 {
+    pub fn elevation_at(&self, x: f32, y: f32) -> f32 {
         self.sample(x, y, |c| &c.elevation)
     }
-    pub fn moisture_at(&mut self, x: f32, y: f32) -> f32 {
+    pub fn moisture_at(&self, x: f32, y: f32) -> f32 {
         self.sample(x, y, |c| &c.moisture)
     }
-    pub fn qi_at(&mut self, x: f32, y: f32) -> f32 {
+    pub fn qi_at(&self, x: f32, y: f32) -> f32 {
         self.sample(x, y, |c| &c.qi)
     }
 
     /// Rivers, computed once from downhill flow accumulation on a coarse
     /// grid. Deterministic: the result depends only on the map spec.
-    fn river_grid(&mut self) -> &RiverGrid {
-        if self.rivers.is_none() {
-            self.rivers = Some(Box::new(self.build_rivers()));
+    fn river_grid(&self) -> std::sync::RwLockReadGuard<'_, Option<Box<RiverGrid>>> {
+        if self.rivers.read().unwrap().is_none() {
+            *self.rivers.write().unwrap() = Some(Box::new(self.build_rivers()));
         }
-        self.rivers.as_ref().unwrap()
+        self.rivers.read().unwrap()
     }
     /// Traced watercourses for the viewer; empty on Classic or v1 maps.
-    pub fn rivers(&mut self) -> &[River] {
+    /// Returns a snapshot so callers never hold the lock.
+    pub fn rivers(&self) -> Vec<River> {
         if self.spec.version < 2 || self.spec.size == MapSize::Classic {
-            return &[];
+            return Vec::new();
         }
-        &self.river_grid().rivers
+        self.river_grid().as_ref().map(|g| g.rivers.clone()).unwrap_or_default()
     }
-    fn build_rivers(&mut self) -> RiverGrid {
+    /// Whether a cell is river water, without cloning the traced rivers.
+    fn river_cell(&self, x: f32, y: f32) -> bool {
+        if self.spec.version < 2 || self.spec.size == MapSize::Classic {
+            return false;
+        }
+        let key = ((x / RIVER_CELL) as u32, (y / RIVER_CELL) as u32);
+        self.river_grid()
+            .as_ref()
+            .is_some_and(|g| g.cells.contains(&key))
+    }
+    fn build_rivers(&self) -> RiverGrid {
         let cols = (self.spec.width() / RIVER_CELL).ceil() as usize;
         let rows = (self.spec.height() / RIVER_CELL).ceil() as usize;
         let mut elev = vec![0.0f32; cols * rows];
@@ -477,16 +498,12 @@ impl WorldMap {
         grid
     }
     /// Whether a world position falls in a traced river cell.
-    fn is_river(&mut self, x: f32, y: f32) -> bool {
-        if self.spec.version < 2 || self.spec.size == MapSize::Classic {
-            return false;
-        }
-        let key = ((x / RIVER_CELL) as u32, (y / RIVER_CELL) as u32);
-        self.river_grid().cells.contains(&key)
+    fn is_river(&self, x: f32, y: f32) -> bool {
+        self.river_cell(x, y)
     }
     /// Terrain classification read by settlement, resource and wildlife
     /// placement. Thresholds are part of GENERATOR_VERSION.
-    pub fn terrain_at(&mut self, x: f32, y: f32) -> Terrain {
+    pub fn terrain_at(&self, x: f32, y: f32) -> Terrain {
         let e = self.elevation_at(x, y);
         let m = self.moisture_at(x, y);
         if e < 0.34 {
@@ -512,7 +529,7 @@ impl WorldMap {
     /// `want`, searching a ring around (cx, cy). Returns the first hit;
     /// falls back to the last candidate when nothing matches.
     pub fn find_terrain(
-        &mut self,
+        &self,
         want: &[Terrain],
         cx: f32,
         cy: f32,
@@ -532,6 +549,39 @@ impl WorldMap {
             last = (x, y);
             if want.contains(&self.terrain_at(x, y)) {
                 return (x, y);
+            }
+        }
+        last
+    }
+
+    /// Land that can hold buildings, beds and work sites. Water and river
+    /// cells are never buildable; bare rock (elevation) is excluded so
+    /// settlement growth is elevation-aware. Classic is always buildable.
+    pub fn buildable(&self, x: f32, y: f32) -> bool {
+        self.spec.size == MapSize::Classic
+            || !matches!(
+                self.terrain_at(x, y),
+                Terrain::Water | Terrain::River | Terrain::Rock
+            )
+    }
+
+    /// Nearest buildable point, spiralling deterministically outward from
+    /// (x, y). Classic returns the input unchanged. Used so houses, camps
+    /// and farms never stand in water or on bare rock.
+    pub fn dry_ground(&self, x: f32, y: f32) -> (f32, f32) {
+        if self.spec.size == MapSize::Classic || self.buildable(x, y) {
+            return (x, y);
+        }
+        const GOLDEN: f32 = 2.399_963_1;
+        let (min_x, max_x, min_y, max_y) = self.spec.land_bounds();
+        let mut last = (x.clamp(min_x, max_x), y.clamp(min_y, max_y));
+        for s in 0..384 {
+            let r = 14.0 * (s as f32).sqrt();
+            let a = s as f32 * GOLDEN;
+            let c = ((x + a.cos() * r).clamp(min_x, max_x), (y + a.sin() * r).clamp(min_y, max_y));
+            last = c;
+            if self.buildable(c.0, c.1) {
+                return c;
             }
         }
         last
@@ -733,14 +783,14 @@ mod tests {
 
     #[test]
     fn generation_is_order_independent() {
-        let mut a = WorldMap::new(MapSpec {
+        let a = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 7,
             version: GENERATOR_VERSION,
             home_x: 3000.0,
             home_y: 2000.0,
         });
-        let mut b = WorldMap::new(MapSpec {
+        let b = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 7,
             version: GENERATOR_VERSION,
@@ -765,7 +815,7 @@ mod tests {
             home_x: 3072.0,
             home_y: 1920.0,
         };
-        let mut m = WorldMap::new(spec.clone());
+        let m = WorldMap::new(spec.clone());
         let r = spec.homeland_radius();
         for k in 0..8 {
             let ang = k as f32 * std::f32::consts::TAU / 8.0;
@@ -787,8 +837,8 @@ mod tests {
             home_x: 3000.0,
             home_y: 2000.0,
         };
-        let mut a = WorldMap::new(spec(1));
-        let mut b = WorldMap::new(spec(2));
+        let a = WorldMap::new(spec(1));
+        let b = WorldMap::new(spec(2));
         let mut differ = 0;
         for k in 0..20 {
             let x = 200.0 + k as f32 * 250.0;
@@ -884,6 +934,38 @@ mod tests {
     }
 
     #[test]
+    fn dry_ground_nudges_water_onto_land() {
+        let m = WorldMap::new(MapSpec {
+            size: MapSize::X4,
+            seed: 7,
+            version: GENERATOR_VERSION,
+            home_x: 3072.0,
+            home_y: 1920.0,
+        });
+        // Find genuinely wet/rocky cells, then prove the nudge lands dry.
+        let mut nudged = 0;
+        for i in (0..768).step_by(6) {
+            for j in (0..480).step_by(6) {
+                let (x, y) = (i as f32 * 8.0 + 4.0, j as f32 * 8.0 + 4.0);
+                if m.buildable(x, y) {
+                    continue;
+                }
+                nudged += 1;
+                let (dx, dy) = m.dry_ground(x, y);
+                assert!(
+                    m.buildable(dx, dy),
+                    "dry_ground left ({dx},{dy}) on {:?}",
+                    m.terrain_at(dx, dy)
+                );
+            }
+        }
+        assert!(nudged > 10, "test map should contain water/rock cells");
+        // Classic is a pass-through: placement rules are unchanged.
+        let c = WorldMap::classic(3);
+        assert_eq!(c.dry_ground(999.0, 999.0), (999.0, 999.0));
+        assert!(c.buildable(999.0, 999.0));
+    }
+    #[test]
     fn spec_dimensions_scale_by_side() {
         assert_eq!(MapSpec::classic(0).width(), WORLD_WIDTH);
         let x4 = MapSpec {
@@ -897,7 +979,7 @@ mod tests {
     }
     #[test]
     fn landscape_raster_matches_terrain_at() {
-        let mut m = WorldMap::new(MapSpec {
+        let m = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 5,
             version: GENERATOR_VERSION,
@@ -925,9 +1007,9 @@ mod tests {
             home_x: 3072.0,
             home_y: 1920.0,
         };
-        let mut a = WorldMap::new(spec.clone());
-        let mut b = WorldMap::new(spec.clone());
-        assert_eq!(a.rivers(), b.rivers());
+        let a = WorldMap::new(spec.clone());
+        let b = WorldMap::new(spec.clone());
+        assert_eq!(a.rivers().as_slice(), b.rivers().as_slice());
         assert!(!a.rivers().is_empty(), "a frontier map spawns rivers");
         let rivers = a.rivers().to_vec();
         for river in rivers {
@@ -939,13 +1021,13 @@ mod tests {
             }
         }
         // Version 1 maps keep the old water-free classification.
-        let mut legacy = WorldMap::new(MapSpec { version: 1, ..spec });
+        let legacy = WorldMap::new(MapSpec { version: 1, ..spec });
         assert!(legacy.rivers().is_empty());
     }
 
     #[test]
     fn regions_cover_the_continent_with_named_territories() {
-        let mut m = WorldMap::new(MapSpec {
+        let m = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 5,
             version: GENERATOR_VERSION,

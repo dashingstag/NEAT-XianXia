@@ -200,6 +200,7 @@ impl From<LegacyWorld> for World {
             carcasses: Default::default(),
             meat_trade: Default::default(),
             market_information: Default::default(),
+            road_paths: Vec::new(),
         }
     }
 }

@@ -399,6 +399,54 @@ def animal_cell(spec, stance, frame=0, size=64):
     return finish(img, size)
 
 
+def motif(d, s, name, cx, cy):
+    """Tiny trade pictogram centred on (cx, cy) — used on shop signs and
+    workshop walls so each store kind reads differently at map scale."""
+    k = name
+    if k == "clothes":        # hanging robe
+        line(d, cx, cy - 4, cx, cy - 2, PAL["label"], s, 1)
+        poly(d, [(cx - 3, cy + 4), (cx - 2, cy - 2), (cx + 2, cy - 2),
+                 (cx + 3, cy + 4)], PAL["mortal_indigo"], s)
+        line(d, cx - 2, cy - 2, cx - 4, cy - 4, PAL["mortal_indigo"], s, 1.4)
+        line(d, cx + 2, cy - 2, cx + 4, cy - 4, PAL["mortal_indigo"], s, 1.4)
+    elif k == "tools":        # crossed axe & pick
+        line(d, cx - 3, cy - 3, cx + 3, cy + 3, PAL["wood"], s, 1.4)
+        line(d, cx - 3, cy + 3, cx + 3, cy - 3, PAL["wood"], s, 1.4)
+        rect(d, cx - 4, cy - 4, cx - 2, cy - 2, PAL["metal"], s)
+        rect(d, cx + 2, cy + 2, cx + 4, cy + 4, PAL["metal"], s)
+    elif k == "furniture":    # low table & stool
+        rect(d, cx - 4, cy - 2, cx + 4, cy - 1, PAL["mortal_brown"], s)
+        line(d, cx - 3, cy - 1, cx - 3, cy + 3, PAL["mortal_brown"], s, 1.4)
+        line(d, cx + 3, cy - 1, cx + 3, cy + 3, PAL["mortal_brown"], s, 1.4)
+        rect(d, cx - 1, cy + 1, cx + 1, cy + 3, "#9a7c58", s)
+    elif k == "butcher":      # haunch with bone
+        px(d, (cx - 1, cy), 3, "#b04a3e", s)
+        px(d, (cx + 3, cy - 3), 1.2, PAL["label"], s)
+        line(d, cx + 1, cy - 1, cx + 3, cy - 3, PAL["label"], s, 1.4)
+        px(d, (cx + 3, cy - 3), 1.0, PAL["label"], s)
+    elif k == "hunter":       # strung bow & arrow
+        arc(d, (cx - 2, cy), 4, 90, 270, PAL["wood"], s, 1.4)
+        line(d, cx - 2, cy - 4, cx - 2, cy + 4, PAL["label"], s, 0.9)
+        line(d, cx - 4, cy, cx + 4, cy, PAL["wood"], s, 1.0)
+        poly(d, [(cx + 4, cy), (cx + 1, cy - 1), (cx + 1, cy + 1)],
+             PAL["metal"], s)
+    elif k == "cobbler":      # boot last
+        poly(d, [(cx - 3, cy - 4), (cx - 1, cy - 4), (cx - 1, cy + 1),
+                 (cx + 4, cy + 3), (cx - 3, cy + 3)], PAL["mortal_brown"], s)
+        line(d, cx - 3, cy + 3, cx + 4, cy + 3, PAL["dark"], s, 1.2)
+    elif k == "blacksmith":   # anvil with ember
+        poly(d, [(cx - 4, cy - 1), (cx + 1, cy - 1), (cx + 4, cy - 3),
+                 (cx + 4, cy - 1), (cx + 1, cy + 1), (cx - 4, cy + 1)],
+             PAL["metal"], s)
+        rect(d, cx - 1, cy + 1, cx + 1, cy + 3, PAL["metal"], s)
+        px(d, (cx - 3, cy - 3), 1.2, PAL["fire"], s)
+    elif k == "carpenter":    # saw & plank
+        rect(d, cx - 4, cy - 3, cx + 4, cy - 1, PAL["wood"], s)
+        poly(d, [(cx - 4, cy + 1), (cx + 2, cy + 1), (cx + 4, cy + 4),
+                 (cx - 4, cy + 4)], PAL["metal"], s)
+        rect(d, cx + 2, cy, cx + 4, cy + 2, PAL["mortal_brown"], s)
+
+
 # -------------------------------------------------------------------- sites
 def draw_site(d, s, spec):
     """spec = {'shape': 'home'|'shop'|..., 'palette': [...]} each centred ~32,32."""
@@ -422,12 +470,16 @@ def draw_site(d, s, spec):
         line(d, 48, 34, 54, 34, PAL["mortal_brown"], s, 1.5)
         rect(d, 52, 34, 58, 42, spec.get("sign_c", PAL["gilt"]), s)
         rect(d, 22, 36, 42, 44, "#b9a678", s)  # counter
+        if spec.get("motif"):
+            motif(d, s, spec["motif"], 55, 38)
     elif shape == "workshop":
         rect(d, 16, 30, 48, 50, PAL["timber_wall"], s)
         roof(32, 30, 32, "#4a5054")
         rect(d, 44, 18, 48, 26, PAL["mortal_brown"], s)  # chimney
         arc(d, (46, 14), 3, 0, 180, "#b9b2a4", s, 1.2)
         arc(d, (44, 10), 4, 0, 180, "#b9b2a4", s, 1.0)
+        if spec.get("motif"):
+            motif(d, s, spec["motif"], 32, 43)
     elif shape == "bank":
         # two-tier pagoda
         rect(d, 20, 40, 44, 52, PAL["timber_wall"], s)
@@ -829,6 +881,14 @@ def main():
         ("home",      "Home",            dict(shape="home")),
         ("shop",      "Shop",            dict(shape="shop")),
         ("workshop",  "Workshop",        dict(shape="workshop")),
+        ("shop-clothes",    "Shop — clothier",    dict(shape="shop", motif="clothes",    sign_c=PAL["mortal_indigo"])),
+        ("shop-tools",      "Shop — tools",       dict(shape="shop", motif="tools",      sign_c=PAL["gilt"])),
+        ("shop-furniture",  "Shop — furniture",   dict(shape="shop", motif="furniture",  sign_c="#9a7c58")),
+        ("shop-butcher",    "Shop — butcher",     dict(shape="shop", motif="butcher",    sign_c="#b04a3e")),
+        ("workshop-hunter",     "Workshop — hunter",     dict(shape="workshop", motif="hunter")),
+        ("workshop-cobbler",    "Workshop — cobbler",    dict(shape="workshop", motif="cobbler")),
+        ("workshop-blacksmith", "Workshop — blacksmith", dict(shape="workshop", motif="blacksmith")),
+        ("workshop-carpenter",  "Workshop — carpenter",  dict(shape="workshop", motif="carpenter")),
         ("bank",      "Bank — pagoda",   dict(shape="bank")),
         ("tavern",    "Tavern — lanterns", dict(shape="tavern")),
         ("school",    "School — paifang", dict(shape="school")),

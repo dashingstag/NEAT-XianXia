@@ -325,8 +325,7 @@ impl World {
         let distance = dist(from_x, from_y, x, y);
         if distance > 5.0 {
             let step = (self.actor_speed(i, from_x, from_y) * DT).min(distance - 4.0);
-            self.agents.x[i] += (x - from_x) / distance * step;
-            self.agents.y[i] += (y - from_y) / distance * step;
+            self.walk_toward(i, x, y, step);
             self.agents.drain_energy(i, DT * 0.07);
             return;
         }

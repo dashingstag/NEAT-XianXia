@@ -20,6 +20,42 @@ pub struct Convoy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn walkers_slide_along_shores_without_entering_water() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut spot = None;
+        'outer: for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 1 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let n = ((j as i32 + dj) * r.cols as i32 + i as i32 + di) as usize;
+                    if r.terrain[n] == Terrain::Water as u8 {
+                        spot = Some((
+                            (i as f32 + 0.5) * r.cell,
+                            (j as f32 + 0.5) * r.cell,
+                            di as f32,
+                            dj as f32,
+                        ));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, dx, dy)) = spot else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        let (tx, ty) = (x + dx * 200.0, y + dy * 200.0);
+        for _ in 0..600 {
+            w.walk_toward(0, tx, ty, 4.0);
+            assert_ne!(
+                w.map.terrain_at(w.agents.x[0], w.agents.y[0]),
+                Terrain::Water
+            );
+        }
+    }
     fn travelers(n: usize) -> World {
         let mut w = World::new(n, 42).unwrap();
         for i in 0..n {
@@ -378,6 +414,33 @@ impl World {
             "Local activity".into()
         }
     }
+    /// Whether a walker may stand at (x, y). Classic maps keep the
+    /// historical everything-walkable rule; generated maps treat water
+    /// as impassable so shores shape real routes.
+    pub(super) fn passable(&mut self, x: f32, y: f32) -> bool {
+        self.map.spec.size == MapSize::Classic
+            || self.map.terrain_at(x, y) != Terrain::Water
+    }
+    /// Move agent `i` toward (tx, ty) by `step` units. On generated maps a
+    /// step that would end in water slides along the shoreline axis first;
+    /// when both axes are blocked the walker waits on dry land.
+    pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        let d = dist(x, y, tx, ty);
+        if d <= 0.0 || step <= 0.0 {
+            return;
+        }
+        let nx = x + (tx - x) / d * step;
+        let ny = y + (ty - y) / d * step;
+        if self.passable(nx, ny) {
+            self.agents.x[i] = nx;
+            self.agents.y[i] = ny;
+        } else if self.passable(nx, y) {
+            self.agents.x[i] = nx;
+        } else if self.passable(x, ny) {
+            self.agents.y[i] = ny;
+        }
+    }
     pub(super) fn travel_step(&mut self) {
         // Pool slots are reused; inactive convoys do not accumulate in saves.
         for slot in 0..self.convoys.len() {
@@ -446,8 +509,16 @@ impl World {
                     * 1.45
                     * DT)
                     .min(d);
-                c.x += (c.goal_x - c.x) / d * step;
-                c.y += (c.goal_y - c.y) / d * step;
+                let nx = c.x + (c.goal_x - c.x) / d * step;
+                let ny = c.y + (c.goal_y - c.y) / d * step;
+                if self.passable(nx, ny) {
+                    c.x = nx;
+                    c.y = ny;
+                } else if self.passable(nx, c.y) {
+                    c.x = nx;
+                } else if self.passable(c.x, ny) {
+                    c.y = ny;
+                }
             }
             for (rank, &id) in c.members.iter().enumerate() {
                 let i = id as usize;
@@ -457,8 +528,7 @@ impl World {
                 if d > 0.01 {
                     let speed = self.actor_speed(i, self.agents.x[i], self.agents.y[i]);
                     let step = (speed * DT * if c.departed { 1.6 } else { 1.0 }).min(d);
-                    self.agents.x[i] += (x - self.agents.x[i]) / d * step;
-                    self.agents.y[i] += (y - self.agents.y[i]) / d * step;
+                    self.walk_toward(i, x, y, step);
                     self.agents.drain_energy(i, DT * 0.07);
                 }
             }

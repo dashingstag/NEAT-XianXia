@@ -66,8 +66,8 @@ def check(stream):
     layers = send(stream, {"command": "map_layers"})["map_layers"]
     assert layers["map"]["size"] == "Classic"
     terrain, explored = layers["terrain"], layers["explored"]
-    assert (terrain["cols"], terrain["rows"], terrain["cell"]) == (64, 40, 48.0)
-    assert all(len(base64.b64decode(terrain[k])) == 64 * 40 for k in ("classes", "elevation", "qi"))
+    assert (terrain["cols"], terrain["rows"], terrain["cell"]) == (768, 480, 4.0)
+    assert all(len(base64.b64decode(terrain[k])) == 768 * 480 for k in ("classes", "elevation", "qi"))
     assert max(base64.b64decode(terrain["classes"])) <= 5
     known = base64.b64decode(explored["known"])
     assert (explored["cols"], explored["rows"], explored["chunk"]) == (8, 5, 384) and len(known) == 40

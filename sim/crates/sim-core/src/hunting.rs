@@ -217,8 +217,7 @@ impl World {
         let reach = if bow { BOW_REACH } else { REACH };
         if d > reach {
             let step = (self.actor_speed(i, x, y) * DT).min(d - reach + 0.1);
-            self.agents.x[i] += (animal.x - x) / d * step;
-            self.agents.y[i] += (animal.y - y) / d * step;
+            self.walk_toward(i, animal.x, animal.y, step);
             self.agents.drain_energy(i, DT * 0.07);
             return;
         }

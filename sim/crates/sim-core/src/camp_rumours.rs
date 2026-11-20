@@ -242,8 +242,7 @@ impl World {
             let d = dist(from_x, from_y, x, y);
             if d > TAVERN_SERVICE_RANGE {
                 let step = (self.actor_speed(i, from_x, from_y) * DT).min(d - 5.0);
-                self.agents.x[i] += (x - from_x) / d * step;
-                self.agents.y[i] += (y - from_y) / d * step;
+                self.walk_toward(i, x, y, step);
                 self.agents.drain_energy(i, DT * 0.07);
                 return;
             }

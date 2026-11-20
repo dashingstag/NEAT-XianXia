@@ -161,8 +161,7 @@ impl World {
         let d = dist(x, y, m.x, m.y);
         if d > 7.0 {
             let step = (self.actor_speed(i, x, y) * DT).min(d - 6.0);
-            self.agents.x[i] += (m.x - x) / d * step;
-            self.agents.y[i] += (m.y - y) / d * step;
+            self.walk_toward(i, m.x, m.y, step);
             self.agents.drain_energy(i, DT * 0.07);
             return;
         }

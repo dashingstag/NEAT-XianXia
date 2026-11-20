@@ -1493,8 +1493,7 @@ impl World {
         let d = dist(self.agents.x[i], self.agents.y[i], x, y);
         if d > 5.0 {
             let step = (self.actor_speed(i, self.agents.x[i], self.agents.y[i]) * DT).min(d - 4.0);
-            self.agents.x[i] += (x - self.agents.x[i]) / d * step;
-            self.agents.y[i] += (y - self.agents.y[i]) / d * step;
+            self.walk_toward(i, x, y, step);
             self.agents.drain_energy(i, DT * 0.08);
             return;
         }
@@ -1920,8 +1919,7 @@ impl World {
         let d = dist(self.agents.x[i], self.agents.y[i], x, y);
         if d > 5.0 {
             let step = (self.actor_speed(i, self.agents.x[i], self.agents.y[i]) * DT).min(d - 4.0);
-            self.agents.x[i] += (x - self.agents.x[i]) / d * step;
-            self.agents.y[i] += (y - self.agents.y[i]) / d * step;
+            self.walk_toward(i, x, y, step);
             self.agents.drain_energy(i, DT * 0.08);
             return;
         }

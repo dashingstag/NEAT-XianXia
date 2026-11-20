@@ -331,6 +331,49 @@ enum Command {
     },
     Save,
     Load,
+    MapLayers {
+        #[serde(default = "yes")]
+        terrain: bool,
+    },
+}
+fn yes() -> bool {
+    true
+}
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for group in bytes.chunks(3) {
+        let n = group
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            out.push(if i <= group.len() {
+                ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+    }
+    out
+}
+/// Terrain raster and fog-of-war mask for viewers. Sent on request, not in
+/// every snapshot, because the raster only changes with the map.
+fn map_layers(world: &mut World, terrain: bool) -> Value {
+    let (cols, rows, known) = world.explored.known_mask(&world.map.spec);
+    let mut layers = json!({
+        "map": world.map.spec,
+        "explored": {"cols": cols, "rows": rows, "chunk": sim_core::CHUNK_SIZE, "known": base64(&known)},
+    });
+    if terrain {
+        let r = world.map.raster();
+        layers["terrain"] = json!({
+            "cols": r.cols, "rows": r.rows, "cell": r.cell,
+            "classes": base64(&r.terrain), "elevation": base64(&r.elevation), "qi": base64(&r.qi),
+        });
+    }
+    layers
 }
 fn messages(buffer: &mut Vec<u8>) -> Result<Vec<Value>, String> {
     let mut messages = vec![];
@@ -396,8 +439,11 @@ impl Client {
         messages(&mut self.input)
     }
     fn reply(&mut self, text: &str, ok: bool) {
+        self.reply_value(json!({"ok":ok,"message":text}));
+    }
+    fn reply_value(&mut self, value: Value) {
         let mut bytes = b"XNC1".to_vec();
-        bytes.extend(serde_json::to_vec(&json!({"ok":ok,"message":text})).unwrap());
+        bytes.extend(serde_json::to_vec(&value).unwrap());
         if self.replies.len() >= 8 {
             self.replies.pop_front();
         }
@@ -470,6 +516,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
             vec![]
         };
         for value in incoming {
+            let mut layers = None;
             let result: Result<String, String> =
                 (|| match serde_json::from_value::<Command>(value).map_err(|e| e.to_string())? {
                     Command::WatchWealth { enabled } => {
@@ -576,11 +623,18 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                         selected_animal = None;
                         Ok("Restored checkpoint and rebuilt compiled brains".into())
                     }
+                    Command::MapLayers { terrain } => {
+                        layers = Some(map_layers(&mut world, terrain));
+                        Ok("Map layers sent".into())
+                    }
                 })();
             if let Some(c) = client.as_mut() {
-                match result {
-                    Ok(text) => c.reply(&text, true),
-                    Err(text) => c.reply(&text, false),
+                match (result, layers) {
+                    (Ok(text), Some(map_layers)) => {
+                        c.reply_value(json!({"ok":true,"message":text,"map_layers":map_layers}))
+                    }
+                    (Ok(text), None) => c.reply(&text, true),
+                    (Err(text), _) => c.reply(&text, false),
                 }
             }
         }

@@ -50,6 +50,7 @@ var pan_start := Vector2.ZERO
 const DRAG_THRESHOLD := 5.0
 var detail_mesh: MultiMeshInstance2D
 var terrain: Node2D
+var minimap: Control
 var detail_material: ShaderMaterial
 var atlas_view: SubViewport
 var spatial: Dictionary = {}
@@ -95,6 +96,9 @@ func _ready() -> void:
 	terrain = preload("res://terrain_layer.gd").new()
 	terrain.field = self
 	add_child(terrain)
+	minimap = preload("res://minimap.gd").new()
+	minimap.field = self
+	add_child(minimap)
 	for region in range(3):
 		var instance := MultiMeshInstance2D.new()
 		instance.multimesh = MultiMesh.new()
@@ -122,6 +126,7 @@ func _resize() -> void:
 		instance.position = offset
 		instance.scale = Vector2(zoom,zoom)
 	camera_dirty = true
+	minimap.layout()
 	queue_redraw()
 
 func receive(meta: Dictionary, records: PackedByteArray, count: int) -> void:
@@ -474,6 +479,7 @@ func _label_clearance(market: Dictionary) -> float:
 func _draw() -> void:
 	settlement_label_boxes.clear()
 	terrain.queue_redraw()
+	minimap.queue_redraw()
 	draw_set_transform(offset,0,Vector2(zoom,zoom))
 	var markets: Array = world.get("markets", [])
 	if show_zones:

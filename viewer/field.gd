@@ -382,7 +382,10 @@ func _classic_terrain() -> bool:
 
 func _house_position(center: Vector2, index: int) -> Vector2:
 	var limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)
-	return (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
+	var p := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
+	if not _classic_terrain() and terrain != null:
+		p = terrain.dry_point(center, p)
+	return p
 
 
 func _update_label_hover(point: Vector2) -> void:

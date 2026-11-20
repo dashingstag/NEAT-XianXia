@@ -934,6 +934,7 @@ impl World {
             if founders.len() < 8 || timber < 12 {
                 continue;
             }
+            let (x, y) = self.map.dry_ground(x, y);
             let id = self.markets.len() as u32;
             let mut m = self.markets[0].clone();
             m.id = id;

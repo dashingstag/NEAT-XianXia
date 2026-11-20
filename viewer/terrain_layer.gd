@@ -377,6 +377,45 @@ func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
 			draw_colored_polygon(_terrain_shape(center, bench, phase), Color("b7ac88"))
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.83), phase), Color(0.73, 0.68, 0.49, 0.54))
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 0.75, radius * 0.60), phase), Color(0.79, 0.73, 0.55, 0.48))
+		# Village ground must not paint over real water: repaint raster cells
+		# that the disc overlaps so shorelines stay honest at every size.
+		if raster_cols > 0 and not raster_classes.is_empty():
+			var reach := int(ceil((radius + 10.0) / raster_cell))
+			var ccx := int(center.x / raster_cell)
+			var ccy := int(center.y / raster_cell)
+			for dj in range(-reach, reach + 1):
+				for di in range(-reach, reach + 1):
+					var rx := ccx + di
+					var ry := ccy + dj
+					if rx < 0 or ry < 0 or rx >= raster_cols or ry >= raster_rows:
+						continue
+					var cls := int(raster_classes[ry * raster_cols + rx])
+					if cls != 0 and cls != 6:
+						continue
+					var cell_origin := Vector2(rx, ry) * raster_cell
+					if (cell_origin + Vector2.ONE * raster_cell * 0.5).distance_to(center) < radius + raster_cell:
+						var water_col := Color("7891c6") if cls == 0 else Color("8fa8d8")
+						draw_rect(Rect2(cell_origin - Vector2.ONE, Vector2.ONE * (raster_cell + 2.0)), water_col)
+
+# Raster class at a world position; -1 when no terrain grid is loaded.
+func class_at(p: Vector2) -> int:
+	if raster_cols <= 0 or raster_classes.is_empty():
+		return -1
+	var cx := clampi(int(p.x / raster_cell), 0, raster_cols - 1)
+	var cy := clampi(int(p.y / raster_cell), 0, raster_rows - 1)
+	return int(raster_classes[cy * raster_cols + cx])
+
+# Nudges a point toward `anchor` until it leaves water/rock. Used to keep
+# drawn houses on the same dry ground the sim guarantees for beds.
+func dry_point(anchor: Vector2, p: Vector2) -> Vector2:
+	var bad := [0, 1, 6]
+	if raster_classes.is_empty() or not (class_at(p) in bad):
+		return p
+	for _i in range(24):
+		p = p.move_toward(anchor, 16.0)
+		if not (class_at(p) in bad):
+			return p
+	return p
 
 # Keep the painted ruts inside the Rust simulation's 22-unit road corridor.
 func _road_shape(start: Vector2, end: Vector2, side: float) -> PackedVector2Array:

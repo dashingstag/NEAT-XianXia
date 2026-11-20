@@ -624,8 +624,15 @@ impl World {
             .map(|(id, _)| id)
     }
     pub(super) fn site_available(&self, x: f32, y: f32) -> bool {
-        if !(30.0..=2650.0).contains(&x)
-            || !(30.0..=1870.0).contains(&y)
+        let (min_x, max_x, min_y, max_y) = if self.map.spec.size == MapSize::Classic {
+            (30.0, 2650.0, 30.0, 1870.0)
+        } else {
+            let b = self.map.spec.field_bounds();
+            (b.0 + 25.0, b.1 - 25.0, b.2 + 25.0, b.3 - 25.0)
+        };
+        if !(min_x..=max_x).contains(&x)
+            || !(min_y..=max_y).contains(&y)
+            || !self.map.buildable(x, y)
             || self
                 .urban
                 .buildings
@@ -650,14 +657,8 @@ impl World {
         }
         for m in &self.markets {
             for house in 0..m.housing_blocks.max(m.population.div_ceil(32)) + 4 {
-                let (hx, hy) = rest::house_origin(house);
-                if dist(
-                    x,
-                    y,
-                    (m.x + hx).clamp(5.0, 2670.0) + 10.0,
-                    (m.y + hy).clamp(5.0, 1900.0) + 7.5,
-                ) < 27.0
-                {
+                let (hx, hy) = rest::house_site(&self.map, m.x, m.y, house);
+                if dist(x, y, hx + 10.0, hy + 7.5) < 27.0 {
                     return false;
                 }
             }

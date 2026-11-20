@@ -128,6 +128,18 @@ impl Exploration {
             }
         }
     }
+    /// Chunks known to any settlement as a row-major 0/1 grid.
+    pub fn known_mask(&self, spec: &MapSpec) -> (usize, usize, Vec<u8>) {
+        let cols = (spec.width() / CHUNK_SIZE as f32).ceil() as usize;
+        let rows = (spec.height() / CHUNK_SIZE as f32).ceil() as usize;
+        let mut mask = vec![0u8; cols * rows];
+        for &(x, y) in self.chunks.iter().flatten() {
+            if (x as usize) < cols && (y as usize) < rows {
+                mask[y as usize * cols + x as usize] = 1;
+            }
+        }
+        (cols, rows, mask)
+    }
     /// Total chunks known to a market (0 when it knows nothing).
     pub fn known(&self, market: usize) -> usize {
         self.chunks.get(market).map_or(0, |s| s.len())
@@ -142,6 +154,18 @@ pub struct Chunk {
     pub elevation: [[f32; CELLS_PER_SIDE + 1]; CELLS_PER_SIDE + 1],
     pub moisture: [[f32; CELLS_PER_SIDE + 1]; CELLS_PER_SIDE + 1],
     pub qi: [[f32; CELLS_PER_SIDE + 1]; CELLS_PER_SIDE + 1],
+}
+
+/// Row-major samples at generator-cell centres for viewers that draw
+/// the map without running the generator. Bytes scale 0..=1 to 0..=255.
+#[derive(Clone, Debug)]
+pub struct TerrainRaster {
+    pub cols: usize,
+    pub rows: usize,
+    pub cell: f32,
+    pub terrain: Vec<u8>,
+    pub elevation: Vec<u8>,
+    pub qi: Vec<u8>,
 }
 
 /// Generated world terrain. The chunk cache is regenerated on demand
@@ -345,6 +369,31 @@ impl WorldMap {
         }
         last
     }
+
+    pub fn raster(&mut self) -> TerrainRaster {
+        let cell = CHUNK_SIZE as f32 / CELLS_PER_SIDE as f32;
+        let cols = (self.spec.width() / cell).ceil() as usize;
+        let rows = (self.spec.height() / cell).ceil() as usize;
+        let unit = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let mut out = TerrainRaster {
+            cols,
+            rows,
+            cell,
+            terrain: Vec::with_capacity(cols * rows),
+            elevation: Vec::with_capacity(cols * rows),
+            qi: Vec::with_capacity(cols * rows),
+        };
+        for j in 0..rows {
+            for i in 0..cols {
+                let x = (i as f32 + 0.5) * cell;
+                let y = (j as f32 + 0.5) * cell;
+                out.terrain.push(self.terrain_at(x, y) as u8);
+                out.elevation.push(unit(self.elevation_at(x, y)));
+                out.qi.push(unit(self.qi_at(x, y)));
+            }
+        }
+        out
+    }
 }
 
 impl crate::World {
@@ -536,5 +585,37 @@ mod tests {
             home_y: 0.0,
         };
         assert_eq!(x4.width(), WORLD_WIDTH * 10.0);
+    }
+    #[test]
+    fn landscape_raster_matches_terrain_at() {
+        let mut m = WorldMap::new(MapSpec {
+            size: MapSize::X4,
+            seed: 5,
+            version: GENERATOR_VERSION,
+            home_x: 3072.0,
+            home_y: 1920.0,
+        });
+        let r = m.raster();
+        assert_eq!((r.cols, r.rows, r.cell), (128, 80, 48.0));
+        assert_eq!(r.terrain.len(), r.cols * r.rows);
+        assert_eq!(r.qi.len(), r.elevation.len());
+        for (i, j) in [(0, 0), (37, 11), (127, 79), (64, 40)] {
+            let (x, y) = ((i as f32 + 0.5) * 48.0, (j as f32 + 0.5) * 48.0);
+            assert_eq!(r.terrain[j * r.cols + i], m.terrain_at(x, y) as u8);
+        }
+        let kinds: BTreeSet<u8> = r.terrain.iter().copied().collect();
+        assert!(kinds.len() >= 3, "a frontier map shows varied terrain");
+    }
+
+    #[test]
+    fn landscape_known_mask_unions_settlements() {
+        let spec = MapSpec::classic(0);
+        let mut e = Exploration::default();
+        e.reveal(0, 100.0, 100.0, 10.0);
+        e.reveal(2, 3000.0, 1900.0, 10.0);
+        let (cols, rows, mask) = e.known_mask(&spec);
+        assert_eq!((cols, rows), (8, 5));
+        assert_eq!(mask.iter().filter(|&&k| k == 1).count(), 2);
+        assert_eq!((mask[0], mask[4 * 8 + 7]), (1, 1));
     }
 }

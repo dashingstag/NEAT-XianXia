@@ -1,4 +1,5 @@
 """Exercise the actual native TCP API; leave the world paused after verification."""
+import base64
 import json
 import struct
 
@@ -62,6 +63,16 @@ def check(stream):
     assert "schools" in first and "education" in first
     assert "taverns" in first and 0 <= first["selected"]["person"]["social_score"] <= 100
     assert first["map_width"] == 3072 and first["map_height"] == 1920
+    layers = send(stream, {"command": "map_layers"})["map_layers"]
+    assert layers["map"]["size"] == "Classic"
+    terrain, explored = layers["terrain"], layers["explored"]
+    assert (terrain["cols"], terrain["rows"], terrain["cell"]) == (64, 40, 48.0)
+    assert all(len(base64.b64decode(terrain[k])) == 64 * 40 for k in ("classes", "elevation", "qi"))
+    assert max(base64.b64decode(terrain["classes"])) <= 5
+    known = base64.b64decode(explored["known"])
+    assert (explored["cols"], explored["rows"], explored["chunk"]) == (8, 5, 384) and len(known) == 40
+    assert 0 < sum(known) <= 40 and set(known) <= {0, 1}
+    assert "terrain" not in send(stream, {"command": "map_layers", "terrain": False})["map_layers"]
     assert len(first["products"]) == 13 and len(first["sensors"]) == 48
     assert len(first["selected"]["choices"][0]["inputs"]) == 48
     assert len(first["selected"]["person"]["goals"]) <= 5

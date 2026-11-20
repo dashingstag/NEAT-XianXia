@@ -310,8 +310,14 @@ func _draw_roads(markets: Array) -> void:
 			continue
 		var start := Vector2(markets[a].x, markets[a].y)
 		var end := Vector2(markets[b].x, markets[b].y)
-		var side := 1.0 if (mini(a, b) + maxi(a, b)) % 2 == 0 else -1.0
-		var points := _road_shape(start, end, side)
+		var points := PackedVector2Array()
+		var raw: Array = road.get("path", [])
+		if raw.size() >= 2:
+			for pt in raw:
+				points.append(Vector2(pt[0], pt[1]))
+		else:
+			var side := 1.0 if (mini(a, b) + maxi(a, b)) % 2 == 0 else -1.0
+			points = _road_shape(start, end, side)
 		if road.built:
 			draw_polyline(points, Color(0.33, 0.30, 0.20, 0.26), 18.0, true)
 			draw_polyline(points, Color("a7966d"), 12.0, true)

@@ -17,6 +17,16 @@ pub struct Convoy {
     pub departed: bool,
 }
 
+fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let l2 = dx * dx + dy * dy;
+    if l2 == 0.0 {
+        return dist(x, y, a.0, a.1);
+    }
+    let t = (((x - a.0) * dx + (y - a.1) * dy) / l2).clamp(0.0, 1.0);
+    dist(x, y, a.0 + dx * t, a.1 + dy * t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,6 +65,58 @@ mod tests {
                 Terrain::Water
             );
         }
+    }
+    #[test]
+    fn roads_detour_around_water_bodies() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        // Find a horizontal land-water-land stretch wide enough for the
+        // 64-unit routing grid to register the water.
+        let r = w.map.raster();
+        let w0 = Terrain::Water as u8;
+        let mut span = None;
+        'outer: for j in 0..r.rows {
+            let mut start = None;
+            for i in 0..r.cols {
+                if r.terrain[j * r.cols + i] == w0 {
+                    start = start.or(Some(i));
+                } else if let Some(s) = start {
+                    if i - s >= 10 && s > 0 && i < r.cols - 1 {
+                        span = Some((s - 1, i, j));
+                        break 'outer;
+                    }
+                    start = None;
+                }
+            }
+        }
+        let Some((land_a, land_b, row)) = span else { return };
+        let (ax, ay) = ((land_a as f32 + 0.5) * r.cell, (row as f32 + 0.5) * r.cell);
+        let (bx, by) = ((land_b as f32 + 0.5) * r.cell, (row as f32 + 0.5) * r.cell);
+        assert!(!w.clear_shot(ax, ay, bx, by));
+        w.markets[0].x = ax;
+        w.markets[0].y = ay;
+        w.markets[1].x = bx;
+        w.markets[1].y = by;
+        let path = w.route_around_water(0, 1);
+        assert!(path.len() >= 3, "a lake between markets must detour");
+        for seg in path.windows(2) {
+            let (sx, sy) = seg[0];
+            let (ex, ey) = seg[1];
+            let d = dist(sx, sy, ex, ey);
+            let n = (d / 12.0).ceil() as usize;
+            for k in 0..=n {
+                let t = k as f32 / n.max(1) as f32;
+                assert_ne!(
+                    w.map.terrain_at(sx + (ex - sx) * t, sy + (ey - sy) * t),
+                    Terrain::Water,
+                    "routed road must stay on dry land"
+                );
+            }
+        }
+        w.roads[0].built = true;
+        w.sync_road_paths();
+        let mid = ((ax + bx) * 0.5, (ay + by) * 0.5);
+        assert!(w.road_distance(0, mid.0, mid.1) > 22.0,
+            "the speed corridor follows the detour, not the straight line");
     }
     fn travelers(n: usize) -> World {
         let mut w = World::new(n, 42).unwrap();
@@ -361,20 +423,178 @@ impl World {
         }
     }
     pub(super) fn speed_at(&self, x: f32, y: f32) -> f32 {
-        let base = if self.roads.iter().any(|r| {
-            r.built
-                && segment_distance(
-                    x,
-                    y,
-                    &self.markets[r.a as usize],
-                    &self.markets[r.b as usize],
-                ) < 22.0
+        let base = if self.roads.iter().enumerate().any(|(idx, r)| {
+            r.built && self.road_distance(idx, x, y) < 22.0
         }) {
             54.0
         } else {
             30.0
         };
         base * self.night_speed()
+    }
+    /// Distance to a road's corridor: its routed path on generated maps,
+    /// or the historical straight segment where no path exists.
+    fn road_distance(&self, idx: usize, x: f32, y: f32) -> f32 {
+        let r = &self.roads[idx];
+        if let Some(path) = self.road_paths.get(idx).filter(|p| p.len() >= 2) {
+            path.windows(2)
+                .map(|s| segment_distance_points(x, y, s[0], s[1]))
+                .fold(f32::INFINITY, f32::min)
+        } else {
+            segment_distance(
+                x,
+                y,
+                &self.markets[r.a as usize],
+                &self.markets[r.b as usize],
+            )
+        }
+    }
+    /// Rebuild routed corridors when the road list has changed. The path
+    /// is a deterministic function of map terrain and endpoints, so when
+    /// it is computed does not matter for replay.
+    pub(super) fn sync_road_paths(&mut self) {
+        if self.road_paths.len() == self.roads.len() {
+            return;
+        }
+        let ends: Vec<(usize, usize)> = self
+            .roads
+            .iter()
+            .map(|r| (r.a as usize, r.b as usize))
+            .collect();
+        self.road_paths = ends
+            .into_iter()
+            .map(|(a, b)| self.route_around_water(a, b))
+            .collect();
+    }
+    /// A* over a coarse water-impassable grid between two markets, then a
+    /// greedy line-of-sight smoothing pass. Falls back to the straight
+    /// segment when no dry route exists.
+    fn route_around_water(&mut self, a: usize, b: usize) -> Vec<(f32, f32)> {
+        let (ax, ay) = (self.markets[a].x, self.markets[a].y);
+        let (bx, by) = (self.markets[b].x, self.markets[b].y);
+        if self.map.spec.size == MapSize::Classic || self.clear_shot(ax, ay, bx, by) {
+            return Vec::new();
+        }
+        const CELL: f32 = 64.0;
+        let cols = (self.map.spec.width() / CELL).ceil() as usize;
+        let rows = (self.map.spec.height() / CELL).ceil() as usize;
+        let mut pass = vec![false; cols * rows];
+        // A cell is walkable only when its centre and quarter-offset samples
+        // are all dry, so routed segments cannot shave through water cells.
+        for j in 0..rows {
+            for i in 0..cols {
+                let cx = (i as f32 + 0.5) * CELL;
+                let cy = (j as f32 + 0.5) * CELL;
+                let q = CELL * 0.25;
+                pass[j * cols + i] = [(cx, cy), (cx - q, cy - q), (cx + q, cy + q), (cx - q, cy + q), (cx + q, cy - q)]
+                    .into_iter()
+                    .all(|(x, y)| self.map.terrain_at(x, y) != Terrain::Water);
+            }
+        }
+        let cell_of = |x: f32, y: f32| {
+            (
+                (x / CELL).clamp(0.0, (cols - 1) as f32) as usize,
+                (y / CELL).clamp(0.0, (rows - 1) as f32) as usize,
+            )
+        };
+        let (si, sj) = cell_of(ax, ay);
+        let (gi, gj) = cell_of(bx, by);
+        // A* with deciunit costs: orthogonal 10, diagonal 14, octile heuristic.
+        use std::collections::BinaryHeap;
+        let mut g = vec![u64::MAX; cols * rows];
+        let mut from = vec![usize::MAX; cols * rows];
+        let mut heap = BinaryHeap::new();
+        let h = |i: usize, j: usize| {
+            let di = i.abs_diff(gi);
+            let dj = j.abs_diff(gj);
+            (di.max(dj) * 10 + di.min(dj) * 4) as u64
+        };
+        let start = sj * cols + si;
+        g[start] = 0;
+        heap.push((std::cmp::Reverse(h(si, sj)), start));
+        let goal = gj * cols + gi;
+        let mut found = false;
+        while let Some((std::cmp::Reverse(_), at)) = heap.pop() {
+            if at == goal {
+                found = true;
+                break;
+            }
+            let (i, j) = (at % cols, at / cols);
+            for dj in -1i32..=1 {
+                for di in -1i32..=1 {
+                    if di == 0 && dj == 0 {
+                        continue;
+                    }
+                    let (ni, nj) = (i as i32 + di, j as i32 + dj);
+                    if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
+                        continue;
+                    }
+                    let n = nj as usize * cols + ni as usize;
+                    // No corner cutting through water on diagonals.
+                    if !pass[n]
+                        || (di != 0 && dj != 0
+                            && (!pass[j * cols + ni as usize]
+                                || !pass[nj as usize * cols + i]))
+                    {
+                        continue;
+                    }
+                    let cost = g[at] + if di == 0 || dj == 0 { 10 } else { 14 };
+                    if cost < g[n] {
+                        g[n] = cost;
+                        from[n] = at;
+                        heap.push((
+                            std::cmp::Reverse(cost + h(ni as usize, nj as usize)),
+                            n,
+                        ));
+                    }
+                }
+            }
+        }
+        if !found {
+            return vec![(ax, ay), (bx, by)];
+        }
+        let mut cells = vec![goal];
+        let mut at = goal;
+        while at != start {
+            at = from[at];
+            cells.push(at);
+        }
+        cells.reverse();
+        let mut raw: Vec<(f32, f32)> = vec![(ax, ay)];
+        raw.extend(cells.iter().map(|&c| {
+            (
+                (c % cols) as f32 * CELL + CELL * 0.5,
+                (c / cols) as f32 * CELL + CELL * 0.5,
+            )
+        }));
+        raw.push((bx, by));
+        // Greedy line-of-sight smoothing over the water boundary.
+        let mut path = vec![raw[0]];
+        let mut cursor = 0;
+        while cursor < raw.len() - 1 {
+            let mut far = cursor + 1;
+            for k in (cursor + 2)..raw.len() {
+                if self.clear_shot(raw[cursor].0, raw[cursor].1, raw[k].0, raw[k].1) {
+                    far = k;
+                }
+            }
+            path.push(raw[far]);
+            cursor = far;
+        }
+        path
+    }
+    fn clear_shot(&mut self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+        let d = dist(ax, ay, bx, by);
+        let n = (d / 16.0).ceil().max(1.0) as usize;
+        for k in 1..n {
+            let t = k as f32 / n as f32;
+            if self.map.terrain_at(ax + (bx - ax) * t, ay + (by - ay) * t)
+                == Terrain::Water
+            {
+                return false;
+            }
+        }
+        true
     }
     fn release(&mut self, members: &[u32]) {
         for &id in members {
@@ -406,27 +626,45 @@ impl World {
         self.map.spec.size == MapSize::Classic
             || self.map.terrain_at(x, y) != Terrain::Water
     }
-    /// Move agent `i` toward (tx, ty) by `step` units. On generated maps a
-    /// step that would end in water slides along the shoreline axis first;
-    /// when both axes are blocked the walker waits on dry land.
-    pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
-        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+    /// Steer `step` units from (x, y) toward (tx, ty). When the direct step
+    /// lands in water, try progressively larger rotations either way so the
+    /// mover follows the shoreline around the obstacle; deterministic order
+    /// keeps replays exact.
+    const DETOUR: &[f32] = &[15.0, 30.0, 45.0, 60.0, 75.0, 90.0];
+    fn steer(&mut self, x: f32, y: f32, tx: f32, ty: f32, step: f32) -> Option<(f32, f32)> {
         let d = dist(x, y, tx, ty);
         if d <= 0.0 || step <= 0.0 {
-            return;
+            return None;
         }
-        let nx = x + (tx - x) / d * step;
-        let ny = y + (ty - y) / d * step;
-        if self.passable(nx, ny) {
+        let ux = (tx - x) / d;
+        let uy = (ty - y) / d;
+        if self.passable(x + ux * step, y + uy * step) {
+            return Some((x + ux * step, y + uy * step));
+        }
+        for &deg in Self::DETOUR {
+            let (sin, cos) = deg.to_radians().sin_cos();
+            for &s in [1.0f32, -1.0].iter() {
+                let rx = ux * cos - uy * sin * s;
+                let ry = ux * sin * s + uy * cos;
+                let (nx, ny) = (x + rx * step, y + ry * step);
+                if self.passable(nx, ny) {
+                    return Some((nx, ny));
+                }
+            }
+        }
+        None
+    }
+    /// Move agent `i` toward (tx, ty) by `step` units, steering around water
+    /// on generated maps; on Classic this is the historical straight step.
+    pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        if let Some((nx, ny)) = self.steer(x, y, tx, ty, step) {
             self.agents.x[i] = nx;
-            self.agents.y[i] = ny;
-        } else if self.passable(nx, y) {
-            self.agents.x[i] = nx;
-        } else if self.passable(x, ny) {
             self.agents.y[i] = ny;
         }
     }
     pub(super) fn travel_step(&mut self) {
+        self.sync_road_paths();
         // Pool slots are reused; inactive convoys do not accumulate in saves.
         for slot in 0..self.convoys.len() {
             let Some(mut c) = self.convoys[slot].take() else {
@@ -492,14 +730,8 @@ impl World {
                     * 1.45
                     * DT)
                     .min(d);
-                let nx = c.x + (c.goal_x - c.x) / d * step;
-                let ny = c.y + (c.goal_y - c.y) / d * step;
-                if self.passable(nx, ny) {
+                if let Some((nx, ny)) = self.steer(c.x, c.y, c.goal_x, c.goal_y, step) {
                     c.x = nx;
-                    c.y = ny;
-                } else if self.passable(nx, c.y) {
-                    c.x = nx;
-                } else if self.passable(c.x, ny) {
                     c.y = ny;
                 }
             }

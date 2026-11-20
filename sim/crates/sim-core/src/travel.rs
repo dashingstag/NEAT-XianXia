@@ -57,14 +57,58 @@ mod tests {
         let Some((x, y, dx, dy)) = spot else { return };
         w.agents.x[0] = x;
         w.agents.y[0] = y;
-        let (tx, ty) = (x + dx * 200.0, y + dy * 200.0);
-        for _ in 0..600 {
+        // March the probe along (dx, dy) through the water until land
+        // reappears: that far shore is a genuinely reachable target.
+        let mut target = None;
+        for k in (8..=80).step_by(4) {
+            let (px, py) = (x + dx * k as f32 * 8.0, y + dy * k as f32 * 8.0);
+            let t = w.map.terrain_at(px, py);
+            if t != Terrain::Water && t != Terrain::River {
+                target = Some((px, py));
+                break;
+            }
+        }
+        let Some((tx, ty)) = target else { return };
+        let mut reached = false;
+        for _ in 0..1200 {
             w.walk_toward(0, tx, ty, 4.0);
             assert_ne!(
                 w.map.terrain_at(w.agents.x[0], w.agents.y[0]),
                 Terrain::Water
             );
+            if dist(w.agents.x[0], w.agents.y[0], tx, ty) < 10.0 {
+                reached = true;
+                break;
+            }
         }
+        // Sticky-side steering must round the shore and arrive instead of
+        // oscillating in a shoreline pocket.
+        assert!(
+            reached,
+            "walker never reached ({tx},{ty}) from ({x},{y}); ended at ({},{})",
+            w.agents.x[0],
+            w.agents.y[0]
+        );
+        // A target that is itself water resolves to the nearest dry shore
+        // rather than stranding the mover circling the bank.
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        let wet = (x + dx * 120.0, y + dy * 120.0);
+        let expect = w.map.dry_ground(wet.0, wet.1);
+        for _ in 0..600 {
+            w.walk_toward(0, wet.0, wet.1, 4.0);
+            assert_ne!(
+                w.map.terrain_at(w.agents.x[0], w.agents.y[0]),
+                Terrain::Water
+            );
+        }
+        assert!(
+            dist(w.agents.x[0], w.agents.y[0], expect.0, expect.1) < 48.0,
+            "water target should settle the walker near the dry shore {:?}, not ({},{})",
+            expect,
+            w.agents.x[0],
+            w.agents.y[0]
+        );
     }
     #[test]
     fn roads_detour_around_water_bodies() {
@@ -627,11 +671,28 @@ impl World {
             || self.map.terrain_at(x, y) != Terrain::Water
     }
     /// Steer `step` units from (x, y) toward (tx, ty). When the direct step
-    /// lands in water, try progressively larger rotations either way so the
-    /// mover follows the shoreline around the obstacle; deterministic order
-    /// keeps replays exact.
-    const DETOUR: &[f32] = &[15.0, 30.0, 45.0, 60.0, 75.0, 90.0];
-    fn steer(&mut self, x: f32, y: f32, tx: f32, ty: f32, step: f32) -> Option<(f32, f32)> {
+    /// lands in water, try progressively larger rotations so the mover
+    /// follows the shoreline around the obstacle. Each mover prefers one
+    /// side by id parity, which stops the left/right flip-flopping that
+    /// strands movers in shoreline pockets; angles past 90° let a mover
+    /// back out of a cove instead of waiting forever.
+    const DETOUR: &[f32] = &[15.0, 30.0, 45.0, 60.0, 75.0, 90.0, 115.0, 140.0, 165.0];
+    fn steer(
+        &mut self,
+        x: f32,
+        y: f32,
+        tx: f32,
+        ty: f32,
+        step: f32,
+        prefer_ccw: bool,
+    ) -> Option<(f32, f32)> {
+        // A target that is itself underwater can never be arrived at; walk
+        // to the dry ground closest to it instead.
+        let (tx, ty) = if self.passable(tx, ty) {
+            (tx, ty)
+        } else {
+            self.map.dry_ground(tx, ty)
+        };
         let d = dist(x, y, tx, ty);
         if d <= 0.0 || step <= 0.0 {
             return None;
@@ -641,9 +702,10 @@ impl World {
         if self.passable(x + ux * step, y + uy * step) {
             return Some((x + ux * step, y + uy * step));
         }
+        let sides: [f32; 2] = if prefer_ccw { [1.0, -1.0] } else { [-1.0, 1.0] };
         for &deg in Self::DETOUR {
             let (sin, cos) = deg.to_radians().sin_cos();
-            for &s in [1.0f32, -1.0].iter() {
+            for &s in sides.iter() {
                 let rx = ux * cos - uy * sin * s;
                 let ry = ux * sin * s + uy * cos;
                 let (nx, ny) = (x + rx * step, y + ry * step);
@@ -658,7 +720,7 @@ impl World {
     /// on generated maps; on Classic this is the historical straight step.
     pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
-        if let Some((nx, ny)) = self.steer(x, y, tx, ty, step) {
+        if let Some((nx, ny)) = self.steer(x, y, tx, ty, step, i % 2 == 0) {
             // Rivers are forded at half speed: the mover still makes
             // absolute progress each tick, it just crosses more slowly.
             let f = if self.map.terrain_at(nx, ny) == Terrain::River {
@@ -737,7 +799,8 @@ impl World {
                     * 1.45
                     * DT)
                     .min(d);
-                if let Some((nx, ny)) = self.steer(c.x, c.y, c.goal_x, c.goal_y, step) {
+                if let Some((nx, ny)) = self.steer(c.x, c.y, c.goal_x, c.goal_y, step, slot % 2 == 0)
+                {
                     c.x = nx;
                     c.y = ny;
                 }

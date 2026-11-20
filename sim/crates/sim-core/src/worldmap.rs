@@ -979,7 +979,7 @@ mod tests {
     }
     #[test]
     fn landscape_raster_matches_terrain_at() {
-        let m = WorldMap::new(MapSpec {
+        let mut m = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 5,
             version: GENERATOR_VERSION,
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[test]
     fn regions_cover_the_continent_with_named_territories() {
-        let m = WorldMap::new(MapSpec {
+        let mut m = WorldMap::new(MapSpec {
             size: MapSize::X4,
             seed: 5,
             version: GENERATOR_VERSION,

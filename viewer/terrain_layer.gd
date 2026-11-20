@@ -1,0 +1,164 @@
+extends Node2D
+# Ground, coast, hill, woodland, clearings, settlement ground and roads.
+# Drawn behind the field so sites, wildlife and people stay on top.
+var field: Control
+
+func _ready() -> void:
+	show_behind_parent = true
+
+func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
+	var t: Texture2D = field._tex(rel_path)
+	if t == null:
+		return false
+	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false)
+	return true
+
+func _draw() -> void:
+	draw_rect(Rect2(Vector2.ZERO,field.size),Color("15231d"))
+	draw_set_transform(field.offset,0,Vector2(field.zoom,field.zoom))
+	draw_rect(Rect2(0, 0, field.map_width, field.map_height), Color("93a575"))
+	var forest_view := Rect2(-field.offset / field.zoom, field.size / field.zoom)
+	if field._classic_terrain():
+		_draw_coast_art(forest_view)
+		_draw_hill_art(forest_view)
+	var markets: Array = field.world.get("markets", [])
+	var forests: Array = field.world.get("wildlife", {}).get("forests", [])
+	# Paint the woodland floor before canopies so neighboring groves read together.
+	for id in range(forests.size()):
+		var forest: Dictionary = forests[id]
+		var center := Vector2(forest.x, forest.y)
+		var radius := float(forest.radius)
+		if not forest_view.grow(radius * 1.25).has_point(center):
+			continue
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 1.22, radius * 1.14), float(id)), Color(0.32, 0.48, 0.32, 0.30))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.93), float(id)), Color("617f53"))
+	for id in range(forests.size()):
+		var forest: Dictionary = forests[id]
+		var centre := Vector2(forest.x,forest.y)
+		if not forest_view.grow(float(forest.radius)).has_point(centre):
+			continue
+		var trees: PackedVector2Array = field._tree_points(id,float(forest.radius))
+		for tree in range(0,trees.size(),3 if field.fidelity==1 else 1):
+			var at := centre+trees[tree]
+			var tree_glyph: String = "terrain-flora-xianxia/"+field.TREE_GLYPHS[(id*3+tree)%field.TREE_GLYPHS.size()]+".png"
+			if field.fidelity > 1 and _glyph(tree_glyph,at,22.0+float(tree%4)*2.0,22.0+float(tree%4)*2.0):
+				continue
+			var crown := 9.0 + float(tree % 5)
+			draw_circle(at + Vector2(4, 5), crown, Color(0.10, 0.22, 0.16, 0.22), true, -1.0, true)
+			draw_circle(at, crown, Color("365c43"), true, -1.0, true)
+			draw_circle(at + Vector2(-2, -3), crown * 0.76, Color("507448"), true, -1.0, true)
+			draw_circle(at + Vector2(-4, -5), crown * 0.44, Color("739055"), true, -1.0, true)
+	for clearing in field.world.get("urban",{}).get("cleared",[]):
+		draw_circle(Vector2(clearing[0],clearing[1]),float(clearing[2]),Color("93a575"))
+	for grass in field.world.get("wildlife",{}).get("grass",[]):
+		var fraction := float(grass.stock)/maxf(1.0,float(grass.capacity))
+		draw_circle(Vector2(grass.x,grass.y),7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
+	_draw_settlement_ground(markets, forest_view)
+	_draw_roads(markets)
+
+func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	for i in range(24):
+		var angle := TAU * i / 24.0
+		var edge := 0.91 + 0.055 * sin(angle * 3.0 + phase) + 0.035 * cos(angle * 5.0 - phase)
+		points.append(center + Vector2.from_angle(angle) * radii * edge)
+	return points
+
+func _draw_hill_art(view: Rect2) -> void:
+	var hill: Rect2 = field.hill_footprint()
+	if not view.intersects(hill):
+		return
+	var center := hill.get_center()
+	var radius := hill.size.x * 0.5
+	var skirt := _terrain_shape(center, Vector2.ONE * radius, 1.3)
+	draw_colored_polygon(skirt, Color("838d70"))
+	for layer in range(4):
+		var scale := 0.88 - layer * 0.16
+		var at := center + Vector2(-0.075, -0.12) * radius * layer
+		var contour := _terrain_shape(at, Vector2(1.0, 0.91) * radius * scale, 1.3)
+		draw_colored_polygon(contour, [Color("98a084"), Color("a8ad94"), Color("b7bba4"), Color("c5c9b0")][layer])
+		contour.append(contour[0])
+		draw_polyline(contour, Color("798570"), 2.0, true)
+	for side in range(5):
+		var at := center + Vector2(0.03 + side * 0.105, 0.51 - side * 0.09) * radius
+		var face := PackedVector2Array([at, at + Vector2(0.07, -0.13) * radius,
+			at + Vector2(0.14, -0.16) * radius, at + Vector2(0.10, 0.01) * radius])
+		draw_colored_polygon(face, Color("777f70").lerp(Color("9fa58c"), 0.12 * side))
+
+func _draw_coast_art(view: Rect2) -> void:
+	if field.map_width <= 2700.0 or view.end.x < 2635.0:
+		return
+	draw_rect(Rect2(2700, 0, field.map_width - 2700, field.map_height), Color("477986"))
+	var shore := PackedVector2Array([Vector2(2700, 0), Vector2(2700, field.map_height)])
+	var waterline := PackedVector2Array()
+	for i in range(49):
+		var y: float = field.map_height * i / 48.0
+		var x := 2672.0 + 13.0 * sin(y / 130.0) + 5.0 * sin(y / 44.0)
+		waterline.append(Vector2(x, y))
+	for i in range(waterline.size() - 1, -1, -1):
+		shore.append(waterline[i])
+	draw_colored_polygon(shore, Color("c7bd91"))
+	draw_polyline(waterline, Color("dacb9f"), 3.0, true)
+	for y in range(30, int(field.map_height), 78):
+		var x := 2720.0 + 10.0 * sin(float(y) / 100.0)
+		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, 0.19), 2.0, true)
+
+func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
+	for market in markets:
+		var center := Vector2(market.x, market.y)
+		var radius: float = field._settlement_radius(market)
+		if not view.grow(radius).has_point(center):
+			continue
+		var hill: Rect2 = field.hill_footprint()
+		var phase := float(market.get("id", 0)) * 0.8
+		if field._classic_terrain() and center.distance_to(hill.get_center()) < hill.size.x * 0.5:
+			# Existing hillside villages occupy a cut bench with a visible retaining edge.
+			var bench := Vector2(maxf(radius, 106.0), maxf(radius * 0.72, 63.0))
+			draw_colored_polygon(_terrain_shape(center + Vector2(4, 12), bench * 1.08, phase), Color("68705e"))
+			var rim := _terrain_shape(center + Vector2(0, 5), bench * 1.04, phase)
+			draw_colored_polygon(rim, Color("98927a"))
+			rim.append(rim[0])
+			draw_polyline(rim, Color("626856"), 3.5, true)
+			draw_colored_polygon(_terrain_shape(center, bench, phase), Color("b7ac88"))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.83), phase), Color(0.73, 0.68, 0.49, 0.54))
+		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 0.75, radius * 0.60), phase), Color(0.79, 0.73, 0.55, 0.48))
+
+# Keep the painted ruts inside the Rust simulation's 22-unit road corridor.
+func _road_shape(start: Vector2, end: Vector2, side: float) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	var normal := (end - start).normalized().orthogonal() * side
+	var bend := minf(12.0, start.distance_to(end) * 0.06)
+	for i in range(25):
+		var t := i / 24.0
+		var drift := bend * sin(PI * t) * (0.47 + 0.53 * sin(TAU * t + 0.5))
+		points.append(start.lerp(end, t) + normal * drift)
+	return points
+
+func _draw_roads(markets: Array) -> void:
+	for road in field.world.get("roads", []):
+		var a := int(road.get("a", 0))
+		var b := int(road.get("b", 0))
+		if a < 0 or b < 0 or a >= markets.size() or b >= markets.size() or a == b:
+			continue
+		var start := Vector2(markets[a].x, markets[a].y)
+		var end := Vector2(markets[b].x, markets[b].y)
+		var side := 1.0 if (mini(a, b) + maxi(a, b)) % 2 == 0 else -1.0
+		var points := _road_shape(start, end, side)
+		if road.built:
+			draw_polyline(points, Color(0.33, 0.30, 0.20, 0.26), 18.0, true)
+			draw_polyline(points, Color("a7966d"), 12.0, true)
+			draw_polyline(points, Color("c7b489"), 7.0, true)
+			for i in range(2, points.size() - 1, 2):
+				var direction := (points[i + 1] - points[i - 1]).normalized()
+				var verge := direction.orthogonal() * (5.0 if i % 4 == 0 else -5.0)
+				var at := points[i] + verge
+				draw_line(at - direction * 7.0, at + direction * 9.0, Color(0.38, 0.33, 0.20, 0.31), 1.6, true)
+		elif field.fidelity > 1 or field.show_trade:
+			for i in range(points.size() - 1):
+				var first := points[i]
+				var last := points[i + 1]
+				draw_dashed_line(first, last, Color("687452"), 2.0, 10.0, true)
+		var traffic := int(road.get("traffic", 0))
+		if field.show_trade and traffic > 0:
+			var width: float = clampf(2.0 + log(float(traffic) + 1.0), 3.0, 10.0) / field.zoom
+			draw_polyline(points, Color(0.35, 0.90, 0.83, 0.70), width, true)

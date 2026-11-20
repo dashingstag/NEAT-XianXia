@@ -566,6 +566,9 @@ func _decode(data: PackedByteArray) -> void:
 	var magic := data.slice(0,4).get_string_from_ascii()
 	if magic == "XNC1":
 		var reply: Variant = JSON.parse_string(data.slice(4).get_string_from_utf8())
+		if reply is Dictionary and reply.has("map_layers"):
+			field.terrain.set_map_layers(reply.map_layers)
+			return
 		if reply is Dictionary:
 			notice.text = str(reply.get("message",""))
 			if reply.get("ok",false) and notice.text.begins_with("Added resource site #"):
@@ -605,6 +608,8 @@ func _decode(data: PackedByteArray) -> void:
 		ecology["animals"] = animals
 		state["wildlife"] = ecology
 	field.receive(state,data.slice(32+json_length),count)
+	if connected and field.terrain.wants_map_layers():
+		send({"command":"map_layers"})
 	_update_focus_target()
 	pause_button.text = "Run" if paused else "Pause"
 	var inspected: int = int(state.get("selected",{}).get("id",-1)) if state.get("selected") is Dictionary else -1

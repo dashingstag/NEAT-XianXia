@@ -33,7 +33,8 @@ def digest(path):
 
 def cargo(*args):
     subprocess.run(["cargo", *args, "--locked", "--manifest-path",
-                    ROOT / CONFIG["project"]["sim"]], cwd=ROOT, check=True)
+                    ROOT / CONFIG["project"]["sim"]], cwd=ROOT, check=True,
+                    stdout=sys.stdout, stderr=sys.stderr)
 
 
 def backend():
@@ -185,7 +186,8 @@ def labs():
     for folder in sorted((ROOT / "labs").iterdir()):
         tests = sorted(folder.glob("*.tests.mjs")) + [p for p in [folder / "tests.mjs"] if p.is_file()]
         if tests:
-            subprocess.run(["node", "--test", *tests], cwd=folder, check=True)
+            subprocess.run(["node", "--test", *tests], cwd=folder, check=True,
+                           stdout=sys.stdout, stderr=sys.stderr)
 
 
 def connection_check(run):
@@ -254,6 +256,40 @@ def doctor():
     print("Python:", sys.version.split()[0])
 
 
+def spawn_detached(command, cwd, log_path, env):
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    with log_path.open("ab") as log:
+        options = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+        if os.name == "nt":
+            try:
+                return subprocess.Popen(command, **options,
+                                        creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+            except PermissionError:
+                return subprocess.Popen(command, **options, creationflags=flags)
+        return subprocess.Popen(command, **options, start_new_session=True)
+
+
+def start_background(run, arguments):
+    source = run / "source"
+    source.mkdir()
+    ignore = shutil.ignore_patterns("target", ".godot", "node_modules", "__pycache__", ".work")
+    for directory in ("sim", "viewer", "world", "tools", "fixtures", "labs"):
+        shutil.copytree(ROOT / directory, source / directory, ignore=ignore)
+    shutil.copy2(ROOT / "project.toml", source)
+    env = {**os.environ, "XIANXIA_BACKGROUND_RUN": str(run), "CARGO_TARGET_DIR": str(run / "target")}
+    env.setdefault("CARGO_BUILD_JOBS", "2")
+    if env.get("CARGO_HOME"):
+        env["CARGO_HOME"] = str((ROOT / env["CARGO_HOME"]).resolve())
+    worker = spawn_detached(
+        [sys.executable, "-u", source / "tools/dev.py", *arguments],
+        source, run / "run.log", env,
+    )
+    record(run / "job.json", {"pid": worker.pid, "command": arguments, "source": str(source)})
+    print(f"Background job {worker.pid}. Log: {run / 'run.log'}")
+    print(f"Result when finished: {run / 'result.json'}", flush=True)
+    return worker
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -268,15 +304,51 @@ def main():
         "--scenario", default="founders",
         choices=[k for k, v in SCENARIOS.items() if "agents" in v])
     sub.add_parser("preview").add_argument("--fixture", choices=["town-shop"], default="town-shop")
-    sub.add_parser("bench").add_argument("--scenario", choices=["mature-town"], default="mature-town")
+    bench = sub.add_parser("bench")
+    bench.add_argument("--scenario", choices=["mature-town"], default="mature-town")
+    soak = sub.add_parser("soak")
+    soak.add_argument("--map", choices=["classic", "x4", "x25", "x100"], default="x4")
+    soak.add_argument("--agents", type=int, default=32)
+    soak.add_argument("--seed", type=int, default=42)
+    soak.add_argument("--seeds", type=int, default=5)
+    soak.add_argument("--steps", type=int, default=300_000)
+    soak.add_argument("--threads", type=int, default=1)
+    for command in (tests, bench, soak):
+        command.add_argument("--background", action="store_true",
+                             help="Run in a detached process from a private source snapshot")
+    queue = sub.add_parser("queue", help="Run verification jobs in order from the evolving checkout")
+    actions = queue.add_subparsers(dest="queue_action", required=True)
+    actions.add_parser("list")
+    actions.add_parser("worker", help=argparse.SUPPRESS)
+    for action in ("add", "edit"):
+        entry = actions.add_parser(action)
+        if action == "edit":
+            entry.add_argument("id", type=int)
+        entry.add_argument("job", nargs=argparse.REMAINDER, metavar="test|bench|soak ...")
     args = parser.parse_args()
     if not __debug__:
         parser.error("Run without Python optimization so assertions are active")
-    base = Path(os.getenv("XIANXIA_RUNS", ROOT / ".work")).resolve()
-    base.mkdir(parents=True, exist_ok=True)
-    run = Path(tempfile.mkdtemp(prefix=args.command + "-", dir=base))
+    if args.command == "queue":
+        from dev_queue import manage_queue
+        base = Path(os.getenv("XIANXIA_RUNS", ROOT / ".work")).resolve()
+        if args.queue_action in ("add", "edit"):
+            if not args.job or args.job[0] not in ("test", "bench", "soak") or "--background" in args.job:
+                parser.error("Queue a test, benchmark, or soak command without --background")
+            parser.parse_args(args.job)
+        manage_queue(args, base / "queue", ROOT, spawn_detached, start_background)
+        return
+    worker_run = os.environ.get("XIANXIA_BACKGROUND_RUN")
+    if worker_run:
+        run = Path(worker_run)
+    else:
+        base = Path(os.getenv("XIANXIA_RUNS", ROOT / ".work")).resolve()
+        base.mkdir(parents=True, exist_ok=True)
+        run = Path(tempfile.mkdtemp(prefix=args.command + "-", dir=base))
     print(f"Run evidence: {run}", flush=True)
     try:
+        if args.command in ("test", "bench", "soak") and args.background:
+            start_background(run, [arg for arg in sys.argv[1:] if arg != "--background"])
+            return
         if args.command == "test":
             suites = {"sim": lambda: cargo("test", "--workspace"), "labs": labs,
                       "world": lambda: cargo("test", "-p", "sim-core", "landscape"),
@@ -291,6 +363,14 @@ def main():
                 subprocess.run([backend(), "bench", "--load", "--checkpoint", ROOT / scenario["checkpoint"],
                                 "--steps", str(scenario["steps"]), "--out", run / "benchmark.json"],
                                stdout=log, check=True)
+        elif args.command == "soak":
+            command = [backend(), "soak", "--map", args.map, "--agents", str(args.agents),
+                       "--seed", str(args.seed), "--seeds", str(args.seeds), "--steps", str(args.steps),
+                       "--threads", str(args.threads), "--out", run / "soak.json"]
+            if args.threads == 1:
+                command.append("--serial")
+            with (run / "soak.log").open("w") as log:
+                subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
         elif args.command == "doctor":
             doctor()
         elif args.command == "preview":

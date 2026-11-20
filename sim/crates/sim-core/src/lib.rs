@@ -413,6 +413,7 @@ pub struct World {
     governance: governance::Governance,
     #[serde(skip)]
     camp_rumours: camp_rumours::CampRumours,
+    #[serde(skip)]
     carcasses: std::collections::BTreeMap<u32, u64>,
     #[serde(skip)]
     meat_trade: meat::MeatTrade,

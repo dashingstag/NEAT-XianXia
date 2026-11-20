@@ -492,8 +492,13 @@ mod tests {
 
     #[test]
     fn generated_world_places_on_terrain_and_steps() {
-        let mut w =
-            crate::World::new_with_size(150, 7, crate::Hill::default(), MapSize::X4).unwrap();
+        let mut w = crate::World::new_with_size(
+            150,
+            7,
+            crate::Hill::default(),
+            MapSize::X4,
+        )
+        .unwrap();
         let (min_x, max_x, min_y, max_y) = w.map.spec.land_bounds();
         for m in &w.markets {
             assert!(
@@ -527,8 +532,13 @@ mod tests {
         }
         w.check().unwrap();
         // A different seed lays out a different homeland.
-        let other =
-            crate::World::new_with_size(150, 8, crate::Hill::default(), MapSize::X4).unwrap();
+        let other = crate::World::new_with_size(
+            150,
+            8,
+            crate::Hill::default(),
+            MapSize::X4,
+        )
+        .unwrap();
         let same = w
             .markets
             .iter()
@@ -554,8 +564,10 @@ mod tests {
         w.step(false);
         assert!(w.explored.known(1) > before || w.explored.chunks[1].contains(&target));
         // Persisted through save/load.
-        let path =
-            std::env::temp_dir().join(format!("xianxia-explored-{}.snapshot", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-explored-{}.snapshot",
+            std::process::id()
+        ));
         w.save(&path).unwrap();
         let restored = crate::World::load(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -574,7 +586,6 @@ mod tests {
         };
         assert_eq!(x4.width(), WORLD_WIDTH * 10.0);
     }
-
     #[test]
     fn landscape_raster_matches_terrain_at() {
         let mut m = WorldMap::new(MapSpec {

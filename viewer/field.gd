@@ -772,9 +772,11 @@ func _draw() -> void:
 	for shelter in world.get("shelters",[]):
 		if shelter.get("camp",false) and int(shelter.get("capacity",0))>0:
 			var p := Vector2(shelter.x,shelter.y)
-			if not _glyph("site-glyphs-xianxia/shelter.png",p,24,24):
-				draw_colored_polygon(PackedVector2Array([p+Vector2(-7,4),p+Vector2(0,-7),p+Vector2(7,4)]),Color("c6a87c"))
-				draw_line(p+Vector2(0,-4),p+Vector2(0,4),Color("614e3a"),1.5)
+			if fidelity > 1:
+				draw_arc(p,13.0,0,TAU,24,Color("e8dcb4"),2.5)
+			if not _glyph("site-glyphs-xianxia/shelter.png",p,30,30):
+				draw_colored_polygon(PackedVector2Array([p+Vector2(-9,6),p+Vector2(0,-9),p+Vector2(9,6)]),Color("c6a87c"))
+				draw_line(p+Vector2(0,-5),p+Vector2(0,6),Color("614e3a"),2.0)
 			if fidelity == 1:
 				draw_string(ThemeDB.fallback_font,p+Vector2(-15,16),"%s/%s beds" % [int(shelter.reserved),int(shelter.capacity)],HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("f6e6b9"))
 	var convoy_draw: Array = []

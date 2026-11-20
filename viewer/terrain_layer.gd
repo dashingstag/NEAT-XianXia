@@ -8,6 +8,12 @@ var requested_key := ""
 var explored_ms := 0
 var fog_texture: Texture2D
 var fog_rect := Rect2()
+var raster_cell := 0.0
+var raster_cols := 0
+var raster_rows := 0
+var raster_classes := PackedByteArray()
+# Shore wave accents, bucketed by 256-unit regions so only visible strokes draw.
+var shore_buckets := {}
 
 # Smoothly filtered generated-map ground, drawn before the layer's own strokes.
 class Ground extends Node2D:
@@ -69,6 +75,11 @@ func set_map_layers(layers: Dictionary) -> void:
 	var terrain: Dictionary = layers.get("terrain", {})
 	if not terrain.is_empty():
 		ground.texture = ImageTexture.create_from_image(terrain_image(terrain))
+		raster_cols = int(terrain.cols)
+		raster_rows = int(terrain.rows)
+		raster_cell = float(terrain.cell)
+		raster_classes = Marshalls.base64_to_raw(terrain.classes)
+		_build_shore()
 		map_key = key
 		requested_key = ""
 	var explored: Dictionary = layers.get("explored", {})
@@ -129,6 +140,38 @@ static func terrain_image(terrain: Dictionary) -> Image:
 			pixels[at*4+3] = 255
 	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
 
+# Short waterline dashes on water cells that touch land; they read as wave
+# detail when the map is zoomed in and stay hidden far out.
+func _build_shore() -> void:
+	shore_buckets.clear()
+	if raster_cols < 3 or raster_classes.size() != raster_cols*raster_rows:
+		return
+	for j in range(1, raster_rows - 1):
+		for i in range(1, raster_cols - 1):
+			if int(raster_classes[j*raster_cols+i]) != 0:
+				continue
+			for dir in [Vector2(1,0), Vector2(-1,0), Vector2(0,1), Vector2(0,-1)]:
+				var ni := i + int(dir.x)
+				var nj := j + int(dir.y)
+				if int(raster_classes[nj*raster_cols+ni]) == 0:
+					continue
+				var edge: Vector2 = Vector2(i + 0.5, j + 0.5)*raster_cell + dir*raster_cell*0.38
+				var n: Vector2 = dir.orthogonal()*raster_cell*0.30
+				var key := Vector2i(edge / 256.0)
+				if not shore_buckets.has(key):
+					shore_buckets[key] = PackedVector2Array()
+				shore_buckets[key].append_array([edge - n, edge + n])
+				break
+
+func _draw_shore(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var lines: PackedVector2Array = shore_buckets.get(Vector2i(bx, by), PackedVector2Array())
+			for s in range(0, lines.size(), 2):
+				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, 0.38), 1.6, true)
+
 func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
 	var t: Texture2D = field._tex(rel_path)
 	if t == null:
@@ -144,6 +187,8 @@ func _draw() -> void:
 	if field._classic_terrain():
 		_draw_coast_art(forest_view)
 		_draw_hill_art(forest_view)
+	elif field.fidelity == 1:
+		_draw_shore(forest_view)
 	var markets: Array = field.world.get("markets", [])
 	var forests: Array = field.world.get("wildlife", {}).get("forests", [])
 	# Paint the woodland floor before canopies so neighboring groves read together.

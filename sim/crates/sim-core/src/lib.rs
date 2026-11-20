@@ -1966,16 +1966,28 @@ impl World {
             self.execute_exchange(i, t, action);
             return;
         }
-        let a = &mut self.agents;
-        let d = dist(a.x[i], a.y[i], x, y);
-        if d > 7.0 {
-            let speed = movement_speed;
-            let step = (speed * DT).min(d - 6.0);
-            a.x[i] += (x - a.x[i]) / d * step;
-            a.y[i] += (y - a.y[i]) / d * step;
-            a.drain_energy(i, DT * 0.07);
+        // Fishers cast from the shore: a patch whose centre sits in water
+        // can be worked from a wider radius than a land patch.
+        let reach = if action == Action::Gather
+            && self.map.spec.size != MapSize::Classic
+            && self
+                .patches
+                .get(t)
+                .map(|p| (p.x, p.y))
+                .is_some_and(|p| self.map.terrain_at(p.0, p.1) == Terrain::Water)
+        {
+            24.0
+        } else {
+            7.0
+        };
+        let d = dist(self.agents.x[i], self.agents.y[i], x, y);
+        if d > reach {
+            let step = (movement_speed * DT).min(d - (reach - 1.0));
+            self.walk_toward(i, x, y, step);
+            self.agents.drain_energy(i, DT * 0.07);
             return;
         }
+        let a = &mut self.agents;
         a.timer[i] += DT * labor_speed;
         match action {
             Action::Rest

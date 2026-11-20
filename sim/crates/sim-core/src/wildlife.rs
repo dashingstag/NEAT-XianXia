@@ -28,8 +28,6 @@ pub struct SpeciesDef {
     pub litter: u32,
     /// Age assigned to founding population animals.
     pub founding_age: u32,
-    /// True for animals that hunt other animals (predators, M2).
-    pub predator: bool,
 }
 pub const SPECIES: [SpeciesDef; 2] = [
     SpeciesDef {
@@ -43,7 +41,6 @@ pub const SPECIES: [SpeciesDef; 2] = [
         speed: 22.0,
         litter: 2,
         founding_age: 120,
-        predator: false,
     },
     SpeciesDef {
         name: "Deer",
@@ -56,7 +53,6 @@ pub const SPECIES: [SpeciesDef; 2] = [
         speed: 28.0,
         litter: 1,
         founding_age: 600,
-        predator: false,
     },
 ];
 impl SpeciesDef {

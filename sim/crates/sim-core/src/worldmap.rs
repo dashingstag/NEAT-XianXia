@@ -6,7 +6,7 @@ use crate::WORLD_WIDTH;
 
 /// Bump when generation rules change. Old saves keep their stored
 /// version so terrain never moves under an existing world.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 /// Edge length of a generated chunk in world units.
 pub const CHUNK_SIZE: u32 = 384;
 /// Fraction of the homeland radius, from the map centre, that is
@@ -42,6 +42,9 @@ pub enum Terrain {
     Forest,
     Fertile,
     Grass,
+    /// Wadeable running water: blocks nothing, slows walkers, reads as
+    /// a ford for roads. Lakes remain impassable.
+    River,
 }
 
 /// Generator identity persisted in the save. Chunk data itself is
@@ -158,6 +161,8 @@ pub struct Chunk {
 
 /// Row-major samples at generator-cell centres for viewers that draw
 /// the map without running the generator. Bytes scale 0..=1 to 0..=255.
+/// `regions` carries a territory id per cell (255 for water) and
+/// `region_labels` its name and centroid.
 #[derive(Clone, Debug)]
 pub struct TerrainRaster {
     pub cols: usize,
@@ -166,6 +171,28 @@ pub struct TerrainRaster {
     pub terrain: Vec<u8>,
     pub elevation: Vec<u8>,
     pub qi: Vec<u8>,
+    pub regions: Vec<u8>,
+    pub region_labels: Vec<(String, f32, f32)>,
+}
+
+/// One traced watercourse: polyline in world units and a display width.
+#[derive(Clone, Debug, PartialEq)]
+pub struct River {
+    pub points: Vec<(f32, f32)>,
+    pub width: f32,
+}
+const RIVER_CELL: f32 = 48.0;
+/// Ordered key for heap use; elevations are non-negative so bit order
+/// matches value order.
+fn ordered(v: f32) -> u32 {
+    v.to_bits()
+}
+
+/// Downhill-flow rivers and the cell set they occupy, computed once.
+#[derive(Clone, Debug, Default)]
+struct RiverGrid {
+    cells: std::collections::HashSet<(u32, u32)>,
+    rivers: Vec<River>,
 }
 
 /// Generated world terrain. The chunk cache is regenerated on demand
@@ -174,6 +201,7 @@ pub struct TerrainRaster {
 pub struct WorldMap {
     pub spec: MapSpec,
     cache: HashMap<(u32, u32), Chunk>,
+    rivers: Option<Box<RiverGrid>>,
 }
 impl serde::Serialize for WorldMap {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -191,6 +219,7 @@ impl WorldMap {
         Self {
             spec,
             cache: HashMap::new(),
+            rivers: None,
         }
     }
     pub fn classic(seed: u64) -> Self {
@@ -321,14 +350,152 @@ impl WorldMap {
         self.sample(x, y, |c| &c.qi)
     }
 
+    /// Rivers, computed once from downhill flow accumulation on a coarse
+    /// grid. Deterministic: the result depends only on the map spec.
+    fn river_grid(&mut self) -> &RiverGrid {
+        if self.rivers.is_none() {
+            self.rivers = Some(Box::new(self.build_rivers()));
+        }
+        self.rivers.as_ref().unwrap()
+    }
+    /// Traced watercourses for the viewer; empty on Classic or v1 maps.
+    pub fn rivers(&mut self) -> &[River] {
+        if self.spec.version < 2 || self.spec.size == MapSize::Classic {
+            return &[];
+        }
+        &self.river_grid().rivers
+    }
+    fn build_rivers(&mut self) -> RiverGrid {
+        let cols = (self.spec.width() / RIVER_CELL).ceil() as usize;
+        let rows = (self.spec.height() / RIVER_CELL).ceil() as usize;
+        let mut elev = vec![0.0f32; cols * rows];
+        for j in 0..rows {
+            for i in 0..cols {
+                elev[j * cols + i] = self
+                    .elevation_at((i as f32 + 0.5) * RIVER_CELL, (j as f32 + 0.5) * RIVER_CELL);
+            }
+        }
+        // Priority-flood from the borders inward so every land cell drains
+        // to the map edge: filled[c] is the spill elevation and down[c] the
+        // neighbour it drains through. Raw fbm has too many local pits for
+        // naive steepest-descent tracing to produce real watercourses.
+        let mut filled = vec![f32::INFINITY; cols * rows];
+        let mut down = vec![usize::MAX; cols * rows];
+        let mut heap = std::collections::BinaryHeap::new();
+        for j in 0..rows {
+            for i in 0..cols {
+                if i == 0 || j == 0 || i == cols - 1 || j == rows - 1 {
+                    let at = j * cols + i;
+                    filled[at] = elev[at];
+                    heap.push(std::cmp::Reverse((ordered(elev[at]), at)));
+                }
+            }
+        }
+        while let Some(std::cmp::Reverse((eb, at))) = heap.pop() {
+            let e = f32::from_bits(eb);
+            let (i, j) = (at % cols, at / cols);
+            for dj in -1i32..=1 {
+                for di in -1i32..=1 {
+                    if di == 0 && dj == 0 {
+                        continue;
+                    }
+                    let (ni, nj) = (i as i32 + di, j as i32 + dj);
+                    if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
+                        continue;
+                    }
+                    let n = nj as usize * cols + ni as usize;
+                    if filled[n] == f32::INFINITY {
+                        filled[n] = elev[n].max(e);
+                        down[n] = at;
+                        heap.push(std::cmp::Reverse((ordered(filled[n]), n)));
+                    }
+                }
+            }
+        }
+        // Accumulate flow over the filled surface in spill order.
+        let mut order: Vec<usize> = (0..cols * rows).collect();
+        order.sort_by(|&a, &b| filled[b].total_cmp(&filled[a]).then(a.cmp(&b)));
+        let mut flow = vec![1u32; cols * rows];
+        let water = |e: f32| e < 0.34;
+        for &c in &order {
+            if water(filled[c]) || down[c] == usize::MAX {
+                continue;
+            }
+            flow[down[c]] += flow[c];
+        }
+        // Sources: modestly elevated cells whose catchment has already
+        // collected several upstream cells, spaced away from rivers that
+        // were traced earlier so channels don't braid into duplicates.
+        let mut grid = RiverGrid::default();
+        for &c in &order {
+            if water(elev[c]) || flow[c] < 16 {
+                continue;
+            }
+            let (ci, cj) = ((c % cols) as i32, (c / cols) as i32);
+            let crowded = (-6..=6).any(|dj| {
+                (-6..=6).any(|di| {
+                    grid.cells
+                        .contains(&((ci + di) as u32, (cj + dj) as u32))
+                })
+            });
+            if crowded {
+                continue;
+            }
+            let mut trace = Vec::new();
+            let mut at = c;
+            for _ in 0..4 * (cols + rows) {
+                let key = ((at % cols) as u32, (at / cols) as u32);
+                trace.push(at);
+                if grid.cells.contains(&key) || water(elev[at]) {
+                    break;
+                }
+                let n = down[at];
+                if n == usize::MAX {
+                    break;
+                }
+                at = n;
+            }
+            if trace.len() < 4 {
+                continue;
+            }
+            for &at in &trace {
+                grid.cells.insert(((at % cols) as u32, (at / cols) as u32));
+            }
+            grid.rivers.push(River {
+                points: trace
+                    .iter()
+                    .map(|&at| {
+                        (
+                            (at % cols) as f32 * RIVER_CELL + RIVER_CELL * 0.5,
+                            (at / cols) as f32 * RIVER_CELL + RIVER_CELL * 0.5,
+                        )
+                    })
+                    .collect(),
+                width: (flow[c] as f32 / 48.0).sqrt().clamp(1.0, 4.0),
+            });
+        }
+        grid
+    }
+    /// Whether a world position falls in a traced river cell.
+    fn is_river(&mut self, x: f32, y: f32) -> bool {
+        if self.spec.version < 2 || self.spec.size == MapSize::Classic {
+            return false;
+        }
+        let key = ((x / RIVER_CELL) as u32, (y / RIVER_CELL) as u32);
+        self.river_grid().cells.contains(&key)
+    }
     /// Terrain classification read by settlement, resource and wildlife
     /// placement. Thresholds are part of GENERATOR_VERSION.
     pub fn terrain_at(&mut self, x: f32, y: f32) -> Terrain {
         let e = self.elevation_at(x, y);
         let m = self.moisture_at(x, y);
         if e < 0.34 {
-            Terrain::Water
-        } else if e > 0.78 {
+            return Terrain::Water;
+        }
+        if self.is_river(x, y) {
+            return Terrain::River;
+        }
+        if e > 0.78 {
             Terrain::Rock
         } else if m > 0.72 && e < 0.45 {
             Terrain::Marsh
@@ -384,6 +551,8 @@ impl WorldMap {
             terrain: Vec::with_capacity(cols * rows),
             elevation: Vec::with_capacity(cols * rows),
             qi: Vec::with_capacity(cols * rows),
+            regions: Vec::new(),
+            region_labels: Vec::new(),
         };
         for j in 0..rows {
             for i in 0..cols {
@@ -394,7 +563,145 @@ impl WorldMap {
                 out.qi.push(unit(self.qi_at(x, y)));
             }
         }
+        if self.spec.size != MapSize::Classic {
+            let (regions, region_labels) = self.grow_regions(cols, rows, cell);
+            out.regions = regions;
+            out.region_labels = region_labels;
+        }
         out
+    }
+
+    /// Region-grow named territories over the raster grid. The mundane
+    /// homeland is always region 0, "Heartlands"; frontier seeds are
+    /// greedy-spaced land cells ordered by lattice hash, then flood-filled.
+    fn grow_regions(
+        &mut self,
+        cols: usize,
+        rows: usize,
+        cell: f32,
+    ) -> (Vec<u8>, Vec<(String, f32, f32)>) {
+        const EPITHETS: [&str; 16] = [
+            "Azure", "Jade", "Verdant", "Silent", "Crimson", "Ashen", "Misty",
+            "Howling", "Golden", "Umbral", "Emerald", "Scarlet", "Ivory",
+            "Obsidian", "Whispering", "Sacred",
+        ];
+        const NOUNS: [&str; 16] = [
+            "Reaches", "Marches", "Wilds", "Vale", "Steppes", "Basin",
+            "Highlands", "Shore", "Expanse", "Delta", "Glade", "Frontier",
+            "Barrens", "Hollow", "Plateau", "Thickets",
+        ];
+        let mut region = vec![u8::MAX; cols * rows];
+        let home_r = self.spec.homeland_radius() * 0.85;
+        // Land cells outside the homeland are seed candidates, ordered by a
+        // lattice hash so the pick is order-independent and replay-safe.
+        let mut order: Vec<(u64, usize)> = Vec::new();
+        for j in (0..rows).step_by(4) {
+            for i in (0..cols).step_by(4) {
+                let x = (i as f32 + 0.5) * cell;
+                let y = (j as f32 + 0.5) * cell;
+                let at = j * cols + i;
+                if self.terrain_at(x, y) == Terrain::Water {
+                    continue;
+                }
+                if (x - self.spec.home_x).hypot(y - self.spec.home_y) < home_r {
+                    continue;
+                }
+                let h = (self.lattice(5, i as u32, j as u32) * 1e9) as u64;
+                order.push((h, at));
+            }
+        }
+        order.sort();
+        let order: Vec<usize> = order.into_iter().map(|(_, at)| at).collect();
+        let area = self.spec.width() * self.spec.height();
+        let classic_area = WORLD_WIDTH * WORLD_HEIGHT;
+        let target = ((area / classic_area) * 4.0) as usize;
+        let k = target.clamp(6, 48);
+        let spacing = (area / k as f32).sqrt() * 0.5 / cell;
+        let mut seeds: Vec<usize> = Vec::new();
+        for &c in &order {
+            if seeds.len() + 1 >= k {
+                break;
+            }
+            let (ci, cj) = (c % cols, c / cols);
+            if seeds.iter().all(|&s| {
+                let (si, sj) = (s % cols, s / cols);
+                ((ci as f32 - si as f32).hypot(cj as f32 - sj as f32)) > spacing
+            }) {
+                seeds.push(c);
+            }
+        }
+        // Multi-source BFS: homeland cells take region 0, seeds 1..=n.
+        let mut queue: std::collections::VecDeque<(usize, u8)> =
+            std::collections::VecDeque::new();
+        for j in 0..rows {
+            for i in 0..cols {
+                let x = (i as f32 + 0.5) * cell;
+                let y = (j as f32 + 0.5) * cell;
+                let at = j * cols + i;
+                if self.terrain_at(x, y) == Terrain::Water {
+                    region[at] = u8::MAX;
+                } else if (x - self.spec.home_x).hypot(y - self.spec.home_y) < home_r {
+                    region[at] = 0;
+                    queue.push_back((at, 0));
+                }
+            }
+        }
+        for (id, &s) in seeds.iter().enumerate() {
+            if region[s] == u8::MAX {
+                region[s] = (id + 1) as u8;
+                queue.push_back((s, (id + 1) as u8));
+            }
+        }
+        while let Some((at, id)) = queue.pop_front() {
+            let (i, j) = (at % cols, at / cols);
+            for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let (ni, nj) = (i as i32 + di, j as i32 + dj);
+                if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
+                    continue;
+                }
+                let n = nj as usize * cols + ni as usize;
+                if region[n] == u8::MAX
+                    && self.terrain_at(
+                        (ni as f32 + 0.5) * cell,
+                        (nj as f32 + 0.5) * cell,
+                    ) != Terrain::Water
+                {
+                    region[n] = id;
+                    queue.push_back((n, id));
+                }
+            }
+        }
+        // Centroids become label anchors; names come from the seed's hash.
+        let mut sum = vec![(0f32, 0f32, 0u32); seeds.len() + 1];
+        for j in 0..rows {
+            for i in 0..cols {
+                let id = region[j * cols + i] as usize;
+                if id < sum.len() {
+                    sum[id].0 += (i as f32 + 0.5) * cell;
+                    sum[id].1 += (j as f32 + 0.5) * cell;
+                    sum[id].2 += 1;
+                }
+            }
+        }
+        let mut labels = Vec::with_capacity(seeds.len() + 1);
+        for id in 0..=seeds.len() {
+            let (sx, sy, n) = sum[id];
+            if n == 0 {
+                continue;
+            }
+            let name = if id == 0 {
+                "Heartlands".to_string()
+            } else {
+                let (i, j) = (seeds[id - 1] % cols, seeds[id - 1] / cols);
+                let h = self.lattice(6, i as u32, j as u32);
+                let a = (h * EPITHETS.len() as f32) as usize % EPITHETS.len();
+                let b = ((h * NOUNS.len() as f32 * EPITHETS.len() as f32) as usize)
+                    % NOUNS.len();
+                format!("{} {}", EPITHETS[a], NOUNS[b])
+            };
+            labels.push((name, sx / n as f32, sy / n as f32));
+        }
+        (region, labels)
     }
 }
 
@@ -607,6 +914,54 @@ mod tests {
         }
         let kinds: BTreeSet<u8> = r.terrain.iter().copied().collect();
         assert!(kinds.len() >= 3, "a frontier map shows varied terrain");
+    }
+
+    #[test]
+    fn rivers_are_deterministic_and_classified() {
+        let spec = MapSpec {
+            size: MapSize::X4,
+            seed: 5,
+            version: GENERATOR_VERSION,
+            home_x: 3072.0,
+            home_y: 1920.0,
+        };
+        let mut a = WorldMap::new(spec.clone());
+        let mut b = WorldMap::new(spec.clone());
+        assert_eq!(a.rivers(), b.rivers());
+        assert!(!a.rivers().is_empty(), "a frontier map spawns rivers");
+        let rivers = a.rivers().to_vec();
+        for river in rivers {
+            for &(x, y) in river.points.iter().skip(1) {
+                assert!(
+                    matches!(a.terrain_at(x, y), Terrain::River | Terrain::Water),
+                    "traced river cells must classify as running or open water"
+                );
+            }
+        }
+        // Version 1 maps keep the old water-free classification.
+        let mut legacy = WorldMap::new(MapSpec { version: 1, ..spec });
+        assert!(legacy.rivers().is_empty());
+    }
+
+    #[test]
+    fn regions_cover_the_continent_with_named_territories() {
+        let mut m = WorldMap::new(MapSpec {
+            size: MapSize::X4,
+            seed: 5,
+            version: GENERATOR_VERSION,
+            home_x: 3072.0,
+            home_y: 1920.0,
+        });
+        let r = m.raster();
+        assert_eq!(r.regions.len(), r.cols * r.rows);
+        assert!(r.region_labels.iter().any(|(n, _, _)| n == "Heartlands"));
+        let land = r.terrain.iter().filter(|&&t| t != Terrain::Water as u8).count();
+        let named = r.regions.iter().filter(|&&id| id != u8::MAX).count();
+        assert!(
+            named as f32 > land as f32 * 0.5,
+            "most land belongs to a named territory (islands may stay wild)"
+        );
+        assert!(r.region_labels.len() > 3);
     }
 
     #[test]

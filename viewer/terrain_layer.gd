@@ -12,8 +12,13 @@ var raster_cell := 0.0
 var raster_cols := 0
 var raster_rows := 0
 var raster_classes := PackedByteArray()
-# Shore wave accents, bucketed by 256-unit regions so only visible strokes draw.
+var raster_regions := PackedByteArray()
+var region_labels: Array = []
+# Shore wave accents, river courses and region borders, each bucketed by
+# 256-unit regions so only visible strokes draw.
 var shore_buckets := {}
+var river_buckets := {}
+var border_buckets := {}
 
 # Smoothly filtered generated-map ground, drawn before the layer's own strokes.
 class Ground extends Node2D:
@@ -79,7 +84,11 @@ func set_map_layers(layers: Dictionary) -> void:
 		raster_rows = int(terrain.rows)
 		raster_cell = float(terrain.cell)
 		raster_classes = Marshalls.base64_to_raw(terrain.classes)
+		raster_regions = Marshalls.base64_to_raw(terrain.get("regions", ""))
+		region_labels = terrain.get("region_labels", [])
 		_build_shore()
+		_build_rivers(terrain.get("rivers", []))
+		_build_borders()
 		map_key = key
 		requested_key = ""
 	var explored: Dictionary = layers.get("explored", {})
@@ -103,7 +112,7 @@ static func fog_image(explored: Dictionary) -> Image:
 		pixels[at*4+3] = 0 if known[at] else 222
 	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
 
-const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575")]
+const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575"), Color("4f8f9b")]
 
 # One pixel per generator cell: class colour, light from the north-west, sandy
 # shores and a faint jade cast where qi gathers.
@@ -122,7 +131,7 @@ static func terrain_image(terrain: Dictionary) -> Image:
 			var kind := mini(int(classes[at]), TERRAIN_COLORS.size()-1)
 			var e := elevation[at]/255.0
 			var color: Color = TERRAIN_COLORS[kind]
-			if kind == 0:
+			if kind == 0 or kind == 6:
 				color = color.lerp(Color("5d8c8f"), clampf(e/0.34, 0.0, 1.0)*0.8)
 			else:
 				var nw := elevation[maxi(j-1,0)*cols+maxi(i-1,0)]/255.0
@@ -163,6 +172,79 @@ func _build_shore() -> void:
 				shore_buckets[key].append_array([edge - n, edge + n])
 				break
 
+# River course strokes from the sim's traced watercourses. Each bucket
+# holds a parallel (points, widths) pair keyed by start cell.
+func _build_rivers(rivers: Array) -> void:
+	river_buckets.clear()
+	for river in rivers:
+		var pts: Array = river.get("p", [])
+		var w := float(river.get("w", 1.0)) * 2.0
+		for k in range(pts.size() - 1):
+			var a := Vector2(pts[k][0], pts[k][1])
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			var key := Vector2i(a / 256.0)
+			if not river_buckets.has(key):
+				river_buckets[key] = [PackedVector2Array(), PackedFloat32Array()]
+			river_buckets[key][0].append_array([a, b])
+			river_buckets[key][1].append(w)
+
+# Region borders follow cell edges where neighbouring land cells belong to
+# different territories; only meaningful zoomed out.
+func _build_borders() -> void:
+	border_buckets.clear()
+	var n := raster_cols * raster_rows
+	if raster_regions.size() != n or n == 0:
+		return
+	for j in range(1, raster_rows - 1):
+		for i in range(1, raster_cols - 1):
+			var id := int(raster_regions[j*raster_cols+i])
+			if id == 255:
+				continue
+			var c := Vector2(i + 0.5, j + 0.5)*raster_cell
+			var right := int(raster_regions[j*raster_cols+i+1])
+			var down := int(raster_regions[(j+1)*raster_cols+i])
+			var edge := PackedVector2Array()
+			if right != 255 and right != id:
+				edge.append_array([c + Vector2(0.5, -0.45)*raster_cell, c + Vector2(0.5, 0.45)*raster_cell])
+			if down != 255 and down != id:
+				edge.append_array([c + Vector2(-0.45, 0.5)*raster_cell, c + Vector2(0.45, 0.5)*raster_cell])
+			if edge.is_empty():
+				continue
+			var key := Vector2i(c / 256.0)
+			if not border_buckets.has(key):
+				border_buckets[key] = PackedVector2Array()
+			border_buckets[key].append_array(edge)
+
+func _draw_strokes(buckets: Dictionary, view: Rect2, color: Color, width: float) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var lines: PackedVector2Array = buckets.get(Vector2i(bx, by), PackedVector2Array())
+			for s in range(0, lines.size(), 2):
+				draw_line(lines[s], lines[s + 1], color, width, true)
+
+func _draw_rivers(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var bucket: Array = river_buckets.get(Vector2i(bx, by), [])
+			if bucket.is_empty():
+				continue
+			var lines: PackedVector2Array = bucket[0]
+			var widths: PackedFloat32Array = bucket[1]
+			for s in range(0, lines.size(), 2):
+				draw_line(lines[s], lines[s + 1], Color("5d97a6"), widths[s/2], true)
+
+func _draw_region_labels(view: Rect2) -> void:
+	for label in region_labels:
+		var at := Vector2(label.x, label.y)
+		if not view.has_point(at):
+			continue
+		draw_string(ThemeDB.fallback_font, at + Vector2(-60, 0), str(label.n),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 40.0, Color(0.13, 0.19, 0.16, 0.55))
+
 func _draw_shore(view: Rect2) -> void:
 	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
 	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
@@ -187,8 +269,13 @@ func _draw() -> void:
 	if field._classic_terrain():
 		_draw_coast_art(forest_view)
 		_draw_hill_art(forest_view)
-	elif field.fidelity == 1:
-		_draw_shore(forest_view)
+	else:
+		_draw_rivers(forest_view)
+		if field.fidelity == 1:
+			_draw_shore(forest_view)
+		else:
+			_draw_strokes(border_buckets, forest_view, Color(0.20, 0.24, 0.18, 0.45), 2.5)
+			_draw_region_labels(forest_view)
 	var markets: Array = field.world.get("markets", [])
 	var forests: Array = field.world.get("wildlife", {}).get("forests", [])
 	# Paint the woodland floor before canopies so neighboring groves read together.

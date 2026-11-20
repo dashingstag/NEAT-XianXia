@@ -639,7 +639,13 @@ func _draw() -> void:
 		draw_string(ThemeDB.fallback_font,at+Vector2(-18,25),"Bank %s%%" % int(bank.rate_percent) if bank.ready else "Build bank",HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("f5e7bc"))
 	for building in world.get("urban",{}).get("buildings",[]):
 		var at := Vector2(building.x,building.y)
-		var glyph_name: String = ["home","shop","workshop"][int(building.kind)]
+		var kind := int(building.kind)
+		var line := int(building.line)
+		var glyph_name: String = "home"
+		if kind == 1:
+			glyph_name = "shop-" + ["clothes","tools","furniture","butcher"][clampi(line,0,3)]
+		elif kind == 2:
+			glyph_name = "workshop-" + ["hunter","cobbler","blacksmith","carpenter"][clampi(line,0,3)]
 		if not _glyph("site-glyphs-xianxia/"+glyph_name+".png",at,34,34,1.0 if building.ready else 0.55):
 			var color: Color = [Color("92c4de"),Color("e0bd6d"),Color("b89aca")][int(building.kind)]
 			draw_rect(Rect2(at-Vector2(11,8),Vector2(22,16)),color,bool(building.ready),-1.0 if building.ready else 2.0)

@@ -426,7 +426,7 @@ impl Default for Candidate {
     }
 }
 struct Request {
-    memory_offers: Option<[u16; Action::RepayLoan as usize + 1]>,
+    memory_offers: Option<[u16; memory_pilot::ACTIONS]>,
     counts: Option<Box<Counts>>,
     agent: usize,
     candidate: Candidate,
@@ -1560,7 +1560,7 @@ impl World {
         }
         let mut out = out;
         let memory_offers = self.watch.memory_trial.as_ref().map(|trial| {
-            let mut tally = [0; Action::RepayLoan as usize + 1];
+            let mut tally = [0; memory_pilot::ACTIONS];
             for candidate in &mut out[..count] {
                 tally[candidate.action as usize] += 1;
                 candidate.score += trial.adjust(
@@ -2468,6 +2468,9 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
+        if &data[..8] != b"XXSAVE30" {
+            world.governance_step();
+        }
         for genome in &mut world.genomes {
             genome.add_memory_inputs(&mut world.innovations);
         }

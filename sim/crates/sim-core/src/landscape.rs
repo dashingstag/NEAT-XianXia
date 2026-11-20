@@ -289,8 +289,10 @@ impl World {
         y: f32,
         quantity: u64,
     ) -> Result<u32, String> {
-        if ![0, 4, 5, 6, 7].contains(&kind) || !(1..=1_000_000).contains(&quantity) {
-            return Err("Choose berries or a metal mine, with 1..1,000,000 units".into());
+        if ![0, 1, 4, 5, 6, 7].contains(&kind) || !(1..=1_000_000).contains(&quantity) {
+            return Err(
+                "Choose berries, woodland, or a metal mine, with 1..1,000,000 units".into(),
+            );
         }
         let (min_x, max_x, min_y, max_y) = self.map.spec.field_bounds();
         if !x.is_finite()
@@ -300,7 +302,7 @@ impl World {
         {
             return Err("Place resources on land inside the map".into());
         }
-        if kind != 0
+        if kind >= 4
             && self
                 .wildlife
                 .forests
@@ -352,6 +354,25 @@ impl World {
         {
             return Err("Berries need soil away from rocky ground".into());
         }
+        if kind == 1 {
+            let in_grove = self
+                .wildlife
+                .forests
+                .iter()
+                .any(|f| dist(x, y, f.x, f.y) <= f.radius);
+            let footprint = if in_grove { 0.0 } else { 90.0 };
+            if !self.forest_ground_clear(x, y, footprint)
+                || self
+                    .urban
+                    .cleared
+                    .iter()
+                    .any(|&(px, py, r)| dist(x, y, px, py) <= r + footprint)
+                || (self.map.spec.size != MapSize::Classic
+                    && matches!(self.map.terrain_at(x, y), Terrain::Water | Terrain::Rock))
+            {
+                return Err("Plant woodland on suitable ground outside clearings".into());
+            }
+        }
         if self.patches.len() >= 4096 {
             return Err("World resource-site limit reached".into());
         }
@@ -363,12 +384,19 @@ impl World {
             y,
             stock: quantity,
             capacity: quantity,
-            renewal: if kind == 0 { 1.0 } else { 0.0 },
+            renewal: match kind {
+                0 => 1.0,
+                1 => 0.015,
+                _ => 0.0,
+            },
             growth: 0.0,
             age: 0.0,
         });
         // Player world edits are explicit initial-supply additions, never trade/mint income.
         self.ledger.initial[kind] += quantity;
+        if kind == 1 {
+            self.plant_wildlife_grove(x, y);
+        }
         self.refresh();
         self.check()?;
         Ok(id)

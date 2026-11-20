@@ -2,8 +2,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// The first 42 sensors are the shipped schema. Six slots are reserved for frontier work.
-pub const INPUTS: usize = 48;
+pub const INPUTS: usize = 52;
+pub const FRONTIER_INPUTS: usize = 48;
+pub const FOOD_READINESS_INPUT: usize = 46;
 pub const LEGACY_INPUTS: usize = 42;
 pub const MEMORY_INPUTS: usize = 4;
 const MEMORY_NODE_IDS: [u32; MEMORY_INPUTS] = [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX];
@@ -64,8 +65,12 @@ pub const SENSORS: [&str; INPUTS] = [
     "qi_pressure",
     "technique_memory",
     "bond",
-    "quest_reward",
+    "food_readiness",
     "unexplored",
+    "energy_urgency",
+    "rest_urgency",
+    "happiness_urgency",
+    "social_urgency",
 ];
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -232,7 +237,7 @@ impl Genome {
         });
         let mut genes = Vec::new();
         for h in 0..4 {
-            for sensor in 0..INPUTS {
+            for sensor in 0..FRONTIER_INPUTS {
                 let base = match sensor {
                     0 => 1.7,
                     1 => 1.1,
@@ -501,11 +506,49 @@ impl Genome {
     /// `migrate_inputs`. Detection by input-node count keeps migration safe on
     /// test fixtures that embed already-widened genomes in old schema headers.
     pub fn needs_input_migration(&self) -> bool {
+        matches!(self.input_count(), LEGACY_INPUTS | FRONTIER_INPUTS)
+    }
+    pub fn input_count(&self) -> usize {
         self.nodes
             .iter()
             .filter(|n| n.kind == Kind::Input && !MEMORY_NODE_IDS.contains(&n.id))
             .count()
-            == LEGACY_INPUTS
+    }
+    /// Give villager brains an initial survival policy that evolution can tune.
+    pub fn connect_need_inputs(&mut self, registry: &mut Innovations) {
+        let Some(output) = self.nodes.iter().find(|node| node.kind == Kind::Output) else {
+            return;
+        };
+        let output = output.id;
+        for (slot, weight) in [4.0, 2.0, 1.0, 0.75].into_iter().enumerate() {
+            let from = (FRONTIER_INPUTS + slot) as u32;
+            self.genes.push(Gene {
+                innovation: registry.edge(from, output),
+                from,
+                to: output,
+                weight,
+                enabled: true,
+            });
+        }
+    }
+    pub fn connect_food_readiness(&mut self, registry: &mut Innovations) {
+        let Some(output) = self.nodes.iter().find(|node| node.kind == Kind::Output) else {
+            return;
+        };
+        let (from, to) = (FOOD_READINESS_INPUT as u32, output.id);
+        if !self
+            .genes
+            .iter()
+            .any(|gene| gene.from == from && gene.to == to)
+        {
+            self.genes.push(Gene {
+                innovation: registry.edge(from, to),
+                from,
+                to,
+                weight: 1.5,
+                enabled: true,
+            });
+        }
     }
     /// Inserts input nodes `from..INPUTS` and shifts every node ID `>= from` up
     /// by `INPUTS - from`, keeping gene endpoints valid. The registry must be

@@ -41,4 +41,21 @@ Two days (6,000 ticks) from the same mature seed-42 checkpoint gave the followin
 | Sum of occupied shops' arrears | 0 | 1 |
 | Initial owners alive | 8/8 | 8/8 |
 
-Shop-ticks sum across shops. End cash also reflects other business activity. The experiment establishes that owners can trigger physical restocking in this fixture. It does not establish sustainable retail demand. Keep the default policy and trace eligible buyers through offer admission, choice, travel and checkout before revising incentives.
+Shop-ticks sum across shops. End cash also reflects other business activity.
+Owners triggered physical restocking in this fixture. Sustainable retail
+demand remains unverified.
+
+### Observed buyer decisions
+
+A second experimental run reproduced 11,070 stocked-and-open shop-ticks,
+seven deliveries, and zero sales. In a rotating sample of 3,520 committed
+decisions, shopping was admitted 56 times, omitted at the candidate cap
+zero times, and selected zero times. Rest won 26 of the admitted decisions,
+operating a business 11, and six other actions won the remaining 19.
+The sample yielded zero shopping travel or checkout events. The pre-tick
+probe found
+an affordable item with room to carry it on 111 sampled actor-ticks
+and a feasible urban shopping offer on 85. These probe counts use a
+different observation point from committed decisions. Conservation and
+checkpoint replay passed on both days. Choice competition was the largest
+observed drop after offer admission in this seed.

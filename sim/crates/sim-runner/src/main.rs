@@ -110,7 +110,12 @@ fn options() -> Result<Options, String> {
             "runs/civic-demo.snapshot"
         });
     }
-    if o.threads == 0 || o.threads > 256 || o.steps > 1_000_000 {
+    let step_limit = if o.mode == "soak" {
+        6_000_000
+    } else {
+        1_000_000
+    };
+    if o.threads == 0 || o.threads > 256 || o.steps > step_limit {
         return Err("Invalid thread/step budget".into());
     }
     Ok(o)
@@ -224,6 +229,9 @@ fn run() -> Result<(), String> {
 /// population dynamics, trade, settlement foundings and ecology. The world
 /// digest lets CI detect unintended nondeterminism between revisions.
 fn soak(o: &Options) -> Result<(), String> {
+    if o.steps == 0 {
+        return Err("Soak requires at least one step".into());
+    }
     if o.seeds == 0 || o.seeds > 64 {
         return Err("Seeds must be 1..64".into());
     }
@@ -231,13 +239,27 @@ fn soak(o: &Options) -> Result<(), String> {
     for s in 0..o.seeds {
         let seed = o.seed.wrapping_add(s as u64);
         let mut w = World::new_with_size(o.agents, seed, o.hill, o.map)?;
+        let initial_species = w.living_wildlife_by_species();
+        let mut extinct_species = std::collections::BTreeMap::new();
         let mut times = Vec::with_capacity(o.steps as usize);
         for tick in 0..o.steps {
             let start = Instant::now();
             w.step(!o.serial);
             times.push(start.elapsed().as_secs_f64() * 1000.0);
-            if tick % 100 == 0 {
+            if (tick + 1) % 300_000 == 0 {
+                eprintln!(
+                    "seed {seed}, day {}: {:?}",
+                    (tick + 1) / 3000,
+                    w.living_wildlife_by_species()
+                );
+            }
+            if tick % 100 == 0 || tick + 1 == o.steps {
                 w.check()?;
+                for (species, count) in w.living_wildlife_by_species() {
+                    if count == 0 && initial_species[species] > 0 {
+                        extinct_species.entry(species).or_insert(w.tick);
+                    }
+                }
             }
         }
         w.check()?;
@@ -246,9 +268,7 @@ fn soak(o: &Options) -> Result<(), String> {
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
             let mut h = DefaultHasher::new();
-            postcard::to_allocvec(&w)
-                .map_err(|e| e.to_string())?
-                .hash(&mut h);
+            w.checkpoint_payload()?.hash(&mut h);
             format!("{:016x}", h.finish())
         };
         let animals = w.animal_count();
@@ -266,6 +286,10 @@ fn soak(o: &Options) -> Result<(), String> {
             "markets": w.markets.len(),
             "villages": towns,
             "animals": animals,
+            "initial_living_by_species": initial_species,
+            "living_by_species": w.living_wildlife_by_species(),
+            "hunting": w.hunting_stats(),
+            "first_observed_extinction_tick": extinct_species,
             "wildlife_births": wildlife_births,
             "wildlife_deaths": wildlife_deaths,
             "p50_tick_ms": times[(times.len() - 1) / 2],
@@ -273,7 +297,8 @@ fn soak(o: &Options) -> Result<(), String> {
             "world_digest": digest,
         }));
     }
-    let report = json!({"mode":"soak","agents":o.agents,"steps":o.steps,"seeds":o.seeds,"runs":runs});
+    let report =
+        json!({"mode":"soak","agents":o.agents,"steps":o.steps,"seeds":o.seeds,"runs":runs});
     if let Some(path) = &o.out {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;

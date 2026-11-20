@@ -270,6 +270,18 @@ impl World {
         if matches!(a.action[i], Action::DiscussCamp | Action::MigrateToCamp) {
             return self.camp_rumour_destination(i);
         }
+        if matches!(
+            a.action[i],
+            Action::BuyInformation | Action::SellInformation
+        ) {
+            return self.information_destination(i);
+        }
+        if matches!(
+            a.action[i],
+            Action::CollectMeat | Action::SellMeat | Action::BuyMeat
+        ) {
+            return self.meat_destination(i);
+        }
         if matches!(a.action[i], Action::Gravedigger | Action::BuildGraveyard) {
             return self.job_destination(i);
         }
@@ -310,7 +322,10 @@ impl World {
                 .get(a.target[i] as usize)
                 .map(|_| self.shelter_destination(i, a.target[i] as usize));
         }
-        if matches!(a.action[i], Action::MakeCamp | Action::Wait) {
+        if matches!(
+            a.action[i],
+            Action::MakeCamp | Action::Wait | Action::Play | Action::Recover
+        ) {
             return Some((a.x[i], a.y[i]));
         }
         if a.action[i] == Action::Gather {
@@ -374,6 +389,8 @@ impl World {
                 if !self.agents.alive[i]
                     || self.agents.health[i] < 25.0
                     || self.agents.hunger[i] > 70.0
+                    || self.in_energy_emergency(i)
+                    || self.should_travel_for_food_alone(i)
                 {
                     self.agents.convoy[i] = NONE;
                     self.agents.solo_until[i] = self.tick + 120;
@@ -474,6 +491,8 @@ impl World {
                 || self.tick < a.solo_until[i]
                 || a.health[i] < 25.0
                 || a.hunger[i] > 70.0
+                || self.in_energy_emergency(i)
+                || self.should_travel_for_food_alone(i)
             {
                 continue;
             }

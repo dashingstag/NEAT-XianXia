@@ -1,5 +1,5 @@
 //! Packed native agent state and an authoritative, integer-accounted economy.
-use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS, LEGACY_INPUTS};
+use neat_core::{Compiled, Genome, Innovations, Rng, INPUTS};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::VecDeque, fs, io::Read, path::Path};
@@ -25,6 +25,8 @@ mod economy;
 mod education;
 mod legacy_v9;
 use education::Education;
+mod hunting;
+pub use hunting::HuntingStats;
 mod industry;
 mod landscape;
 mod legacy_v4;
@@ -35,6 +37,9 @@ mod wildlife;
 mod worldmap;
 use wildlife::Wildlife;
 mod life;
+mod market_information;
+mod meat;
+mod needs;
 mod social;
 use agriculture::{Farm, FertileRegion};
 use civic::{Contract, Corpse, Council, Graveyard};
@@ -68,10 +73,10 @@ pub const PRODUCTS: [&str; GOODS] = [
 pub const WORLD_WIDTH: f32 = 3072.0;
 pub const WORLD_HEIGHT: f32 = 1920.0;
 const NONE: u32 = u32::MAX;
-// Wire frames pack action into 6 bits: IDs must stay below 64 and be
-// append-only (old saves and replays store the index). Reserved ranges:
+// Action IDs are append-only. Packed frames map newer IDs to a legacy activity.
+// Reserved ranges:
 // 39-41 hunting/combat, 42-45 taming and husbandry, 46-49 guild quests,
-// 50-53 founding and migration, 54-57 qi and cultivation, 58-63 unassigned.
+// 50-53 founding and migration, 54-57 qi and cultivation, 58 bow crafting.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Action {
@@ -114,6 +119,17 @@ pub enum Action {
     BuildBank = 36,
     BorrowBusiness = 37,
     RepayLoan = 38,
+    HuntWildlife = 39,
+    EatCarcass = 40,
+    CraftSpear = 41,
+    CraftBow = 58,
+    Recover = 59,
+    Play = 60,
+    CollectMeat = 61,
+    SellMeat = 62,
+    BuyMeat = 63,
+    BuyInformation = 64,
+    SellInformation = 65,
     NominateSelf = 66,
     DiscussCamp = 67,
     MigrateToCamp = 68,
@@ -397,6 +413,11 @@ pub struct World {
     governance: governance::Governance,
     #[serde(skip)]
     camp_rumours: camp_rumours::CampRumours,
+    carcasses: std::collections::BTreeMap<u32, u64>,
+    #[serde(skip)]
+    meat_trade: meat::MeatTrade,
+    #[serde(skip)]
+    market_information: market_information::MarketInformation,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -595,6 +616,9 @@ impl World {
             explored: Exploration::default(),
             governance: governance::Governance::default(),
             camp_rumours: Default::default(),
+            carcasses: Default::default(),
+            meat_trade: Default::default(),
+            market_information: Default::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -683,6 +707,7 @@ impl World {
             a.urban_weight.push(0);
             a.tools.push([0; 4]);
             let mut genome = Genome::seeded(&mut w.rng, &mut w.innovations);
+            genome.connect_need_inputs(&mut w.innovations);
             if i % 7 == 0 {
                 genome.add_node(&mut w.rng, &mut w.innovations);
             }
@@ -690,6 +715,7 @@ impl World {
                 genome.add_connection(&mut w.rng, &mut w.innovations);
             }
             genome.add_memory_inputs(&mut w.innovations);
+            genome.connect_food_readiness(&mut w.innovations);
             w.brains.push(genome.compile()?);
             w.genomes.push(genome);
         }
@@ -787,6 +813,8 @@ impl World {
         w.init_people();
         w.init_wildlife();
         w.upgrade_landscape(true);
+        w.init_terrain_spawn_points();
+        w.sync_wildlife_spawn_habitats();
         w.relocate_fertile_land();
         w.sync_education();
         w.ledger.initial = w.stocks();
@@ -888,6 +916,8 @@ impl World {
         self.validate_wildlife()?;
         self.validate_governance()?;
         self.validate_camp_rumours()?;
+        self.validate_meat_trade()?;
+        self.validate_market_information()?;
         self.validate_education()?;
         self.validate_urban()?;
         self.validate_banking()?;
@@ -973,6 +1003,12 @@ impl World {
         limit: usize,
     ) -> ([Candidate; CANDIDATES], usize) {
         let mut out = [Candidate::default(); CANDIDATES];
+        if self.in_energy_emergency(i) {
+            let recovery = self.recovery_offers(i);
+            let count = recovery.len();
+            out[..count].copy_from_slice(&recovery);
+            return (out, count);
+        }
         if !self.is_adult(i) || self.must_stay_home(i) {
             let (mut family, mut count) = self.family_offers(i);
             if count < limit {
@@ -983,16 +1019,24 @@ impl World {
             }
             return (family, count);
         }
-        if self.agents.hunger[i] >= 55.0 {
-            if let Some(p) = self.closest_food_patch(i) {
-                out[0] = Candidate {
-                    action: Action::ForageMeal,
-                    target: p as u32,
-                    kind: self.patches[p].kind,
-                    inputs: [0.0; INPUTS],
-                    score: 10.0,
-                };
-                return (out, 1);
+        if self.needs_food_trip(i) {
+            if self.map.spec.size == MapSize::Classic {
+                if let Some(patch) = self.closest_food_patch(i) {
+                    out[0] = Candidate {
+                        action: Action::ForageMeal,
+                        target: patch as u32,
+                        kind: self.patches[patch].kind,
+                        inputs: [0.0; INPUTS],
+                        score: 10.0,
+                    };
+                    return (out, 1);
+                }
+            }
+            let food = self.urgent_food_offers(i);
+            if !food.is_empty() {
+                let count = food.len();
+                out[..count].copy_from_slice(&food);
+                return (out, count);
             }
         }
         if self.urgent_family_care(i) {
@@ -1023,8 +1067,10 @@ impl World {
         let a = &self.agents;
         let home = a.home[i] as usize;
         let m = &self.markets[home];
+        let home_quotes: [Quote; GOODS] = std::array::from_fn(|k| self.perceived_quote(i, m, k));
         let hunger = (a.hunger[i] / 100.0).clamp(0.0, 1.0);
         let held = a.berries[i] + a.fish[i] + a.rice[i];
+        let needs = self.need_priorities(i);
         let mut add = |action: Action,
                        target: u32,
                        kind: usize,
@@ -1056,7 +1102,23 @@ impl World {
                     0.0
                 };
             x[1] = benefit;
-            x[2] = risk;
+            x[2] = risk
+                + match action {
+                    Action::Trade => {
+                        self.market_information_risk(i, m)
+                            + self.market_information_risk(i, &self.markets[target as usize])
+                    }
+                    Action::BuyFood
+                    | Action::Deliver
+                    | Action::Barter
+                    | Action::WorkForFood
+                    | Action::BuyTool
+                    | Action::BuyMeat
+                    | Action::SellMeat => {
+                        self.market_information_risk(i, &self.markets[target as usize])
+                    }
+                    _ => 0.0,
+                };
             x[3] = (travel / 1000.0).min(1.0);
             x[4] = (price / 8.0).clamp(-1.0, 1.0);
             x[5] = if a.action[i] == action && a.target[i] == target {
@@ -1074,7 +1136,7 @@ impl World {
             x[17] = a.weight(i) as f32 / a.capacity[i] as f32;
             x[18] = a.room(i) as f32 / a.capacity[i] as f32;
             x[19] = if matches!(action, Action::BuyFood | Action::Trade) {
-                (a.coins[i] as f32 / m.quotes[kind].ask.max(1) as f32).min(1.0)
+                (a.coins[i] as f32 / home_quotes[kind].ask.max(1) as f32).min(1.0)
             } else {
                 0.0
             };
@@ -1119,6 +1181,16 @@ impl World {
             x[1] += self.relationship_affinity(i, action, target) * 0.1;
             x[10] = a.energy[i] / 100.0;
             x[11] = infrastructure;
+            needs.inputs(action, a.hunger[i], &mut x);
+            let food_price = if action == Action::BuyFood {
+                home_quotes[kind].ask as f32
+            } else {
+                -price
+            };
+            if self.map.spec.size != MapSize::Classic || action == Action::HarvestRice {
+                x[neat_core::FOOD_READINESS_INPUT] =
+                    Self::food_readiness(action, travel, food_price);
+            }
             let score = self.score_action(i, action, target, &x);
             out[count] = Candidate {
                 action,
@@ -1134,10 +1206,12 @@ impl World {
             let best = self
                 .markets
                 .iter()
-                .filter(|m| m.quotes[kind].remaining > 0)
+                .filter(|m| self.perceived_quote(i, m, kind).remaining > 0)
                 .max_by(|x, y| {
-                    let sx = x.quotes[kind].bid as f32 - dist(a.x[i], a.y[i], x.x, x.y) / 350.0;
-                    let sy = y.quotes[kind].bid as f32 - dist(a.x[i], a.y[i], y.x, y.y) / 350.0;
+                    let sx = self.perceived_quote(i, x, kind).bid as f32
+                        - dist(a.x[i], a.y[i], x.x, x.y) / 350.0;
+                    let sy = self.perceived_quote(i, y, kind).bid as f32
+                        - dist(a.x[i], a.y[i], y.x, y.y) / 350.0;
                     sx.total_cmp(&sy)
                 });
             if let Some(dst) = best {
@@ -1149,7 +1223,7 @@ impl World {
                     0.8,
                     0.0,
                     dist(a.x[i], a.y[i], dst.x, dst.y),
-                    dst.quotes[kind].bid as f32,
+                    self.perceived_quote(i, dst, kind).bid as f32,
                     0.0,
                 );
             }
@@ -1184,14 +1258,14 @@ impl World {
                     0.5,
                     if kind == 3 { 0.12 } else { 0.01 },
                     dist(a.x[i], a.y[i], p.x, p.y),
-                    m.quotes[kind].bid as f32,
+                    home_quotes[kind].bid as f32,
                     0.0,
                 );
             }
         }
         if held < 3 && a.cargo[i] == 0 {
             for kind in [0, 3, 8] {
-                let q = &m.quotes[kind];
+                let q = &home_quotes[kind];
                 if q.offered > 0 && a.coins[i] >= q.ask && a.room(i) >= WEIGHTS[kind] {
                     add(
                         Action::BuyFood,
@@ -1212,15 +1286,15 @@ impl World {
             let mut best = None;
             let mut profit = 0.0;
             for kind in 0..GOODS {
-                let q = &m.quotes[kind];
+                let q = &home_quotes[kind];
                 if q.offered == 0 || a.coins[i] < q.ask || a.room(i) < WEIGHTS[kind] {
                     continue;
                 }
                 for dst in &self.markets {
-                    if dst.id == m.id || dst.quotes[kind].remaining == 0 {
+                    if dst.id == m.id || self.perceived_quote(i, dst, kind).remaining == 0 {
                         continue;
                     }
-                    let gain = dst.quotes[kind].bid as f32
+                    let gain = self.perceived_quote(i, dst, kind).bid as f32
                         - q.ask as f32
                         - dist(m.x, m.y, dst.x, dst.y) / 800.0;
                     if gain > profit {
@@ -1273,7 +1347,7 @@ impl World {
             if let Some(dst) = self
                 .markets
                 .iter()
-                .filter(|dst| self.barter_terms(i, dst.id as usize).is_some())
+                .filter(|dst| self.perceived_barter_terms(i, dst).is_some())
                 .min_by(|u, v| {
                     dist(a.x[i], a.y[i], u.x, u.y).total_cmp(&dist(a.x[i], a.y[i], v.x, v.y))
                 })
@@ -1297,7 +1371,7 @@ impl World {
             && held < 3
             && [0, 3, 8]
                 .iter()
-                .any(|&k| m.stock(k) > 0 && a.room(i) >= WEIGHTS[k])
+                .any(|&k| self.perceived_market_stock(i, m, k) > 0 && a.room(i) >= WEIGHTS[k])
         {
             add(
                 Action::WorkForFood,
@@ -1368,8 +1442,8 @@ impl World {
                     );
                 }
                 if a.tools[i][kind - 9] == 0
-                    && m.stock(kind) > 0
-                    && a.coins[i] >= m.quotes[kind].ask
+                    && self.perceived_market_stock(i, m, kind) > 0
+                    && a.coins[i] >= home_quotes[kind].ask
                     && a.room(i) >= WEIGHTS[kind]
                 {
                     add(
@@ -1380,7 +1454,7 @@ impl World {
                         0.5,
                         0.0,
                         dist(a.x[i], a.y[i], m.x, m.y),
-                        -(m.quotes[kind].ask as f32),
+                        -(home_quotes[kind].ask as f32),
                         0.4,
                     );
                 }
@@ -1428,7 +1502,7 @@ impl World {
                 0.5,
             );
         }
-        if a.hunger[i] > 30.0 {
+        if a.hunger[i] > 30.0 || a.energy[i] < 30.0 && a.hunger[i] > 15.0 {
             if let Some(p) = self.closest_food_patch(i) {
                 add(
                     Action::ForageMeal,
@@ -1461,6 +1535,21 @@ impl World {
                 0.0,
                 0.6,
             );
+        } else if self.social[i] < 55.0 && m.population > 1 && a.cargo[i] == 0 {
+            add(
+                Action::Socialize,
+                NONE,
+                0,
+                0.05,
+                0.15,
+                0.0,
+                dist(a.x[i], a.y[i], m.x, m.y),
+                0.0,
+                0.0,
+            );
+        }
+        if self.people[i].happiness < 65.0 {
+            add(Action::Play, NONE, 0, 0.0, 0.15, 0.0, 0.0, 0.0, 0.0);
         }
         if let Some(t) = self.best_tavern(i, true) {
             let site = &self.taverns[t];
@@ -1475,6 +1564,47 @@ impl World {
                 0.0,
                 0.5,
             );
+        }
+        for c in self.hunting_offers(i) {
+            add(
+                c.action,
+                c.target,
+                c.kind,
+                c.inputs[0],
+                c.inputs[1],
+                c.inputs[2],
+                c.inputs[3],
+                0.0,
+                0.0,
+            );
+        }
+        if self.map.spec.size != MapSize::Classic {
+            for c in self.information_offers(i) {
+                add(
+                    c.action,
+                    c.target,
+                    c.kind,
+                    c.inputs[0],
+                    c.inputs[1],
+                    0.0,
+                    c.inputs[3],
+                    c.inputs[4],
+                    0.0,
+                );
+            }
+            for c in self.meat_offers(i) {
+                add(
+                    c.action,
+                    c.target,
+                    c.kind,
+                    c.inputs[0],
+                    c.inputs[1],
+                    0.0,
+                    c.inputs[3],
+                    c.inputs[4],
+                    0.0,
+                );
+            }
         }
         for c in self.urban_offers(i) {
             add(
@@ -1538,6 +1668,8 @@ impl World {
                 0.0,
                 0.0,
             );
+        } else if a.energy[i] < 18.0 {
+            add(Action::Recover, NONE, 0, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
         if self.can_make_camp(i) {
             add(
@@ -1619,6 +1751,17 @@ impl World {
                 .or_default()[0] += 1;
         }
         let watched = self.watch.person == Some(i);
+        let mut person = self.person_trace(i);
+        person["need_priorities"] = self.need_priorities(i).trace(self.in_energy_emergency(i));
+        person["carried_meat"] = self.meat_trade.pack(i).into();
+        if let Some(tools) = person["tools"].as_array_mut() {
+            if self.wildlife.spears.contains(&(i as u32)) {
+                tools.push("wooden spear".into());
+            }
+            if self.wildlife.bows.contains(&(i as u32)) {
+                tools.push("hunting bow".into());
+            }
+        }
         let mut choices: Vec<_> = out[..count]
             .iter()
             .map(|c| TraceChoice {
@@ -1633,6 +1776,29 @@ impl World {
                     )
                 } else if self.is_urban_action(c.action) {
                     self.urban_choice_name(c)
+                } else if matches!(c.action, Action::HuntWildlife | Action::EatCarcass) {
+                    self.wildlife
+                        .animals
+                        .get(c.target as usize)
+                        .map(|animal| wildlife::SpeciesDef::of(animal.species).name)
+                        .unwrap_or("wildlife")
+                        .into()
+                } else if c.action == Action::CraftSpear {
+                    "wooden spear".into()
+                } else if c.action == Action::CraftBow {
+                    "hunting bow".into()
+                } else if matches!(
+                    c.action,
+                    Action::CollectMeat | Action::SellMeat | Action::BuyMeat
+                ) {
+                    "meat".into()
+                } else if matches!(c.action, Action::Recover | Action::Play | Action::Socialize) {
+                    String::new()
+                } else if matches!(c.action, Action::BuyInformation | Action::SellInformation) {
+                    self.markets
+                        .get((c.target % market_information::MARKET_SLOTS) as usize)
+                        .map(|market| market.name.clone())
+                        .unwrap_or_default()
                 } else {
                     PRODUCTS[c.kind].into()
                 },
@@ -1646,7 +1812,7 @@ impl World {
         Some(AgentTrace {
             x: a.x[i],
             y: a.y[i],
-            person: self.person_trace(i),
+            person,
             job: self.job_trace(i),
             rested_meter: a.rested_meter[i],
             rested: a.rested[i],
@@ -1707,6 +1873,10 @@ impl World {
         }
         let mut new_deaths = Vec::new();
         for i in 0..self.agents.len() {
+            if self.agents.alive[i] {
+                self.eat_packed_meat(i);
+            }
+            let hunger_per_second = self.hunger_per_second(i);
             let a = &mut self.agents;
             if !a.alive[i] {
                 continue;
@@ -1716,16 +1886,9 @@ impl World {
                 if a.rested_meter[i] <= 0.0 {
                     a.rested[i] = false;
                 }
-                a.drain_energy(i, DT * 0.08);
+                a.spend_energy(i, DT * 0.08);
             }
-            a.hunger[i] += DT
-                * if self.people[i].age_days(self.tick) < 18 * 365 {
-                    0.18
-                } else if a.traits[i] & life::GLUTTON != 0 {
-                    1.05
-                } else {
-                    0.9
-                };
+            a.hunger[i] += DT * hunger_per_second;
             if a.hunger[i] > 40.0 {
                 let eaten = if a.berries[i] > 0 {
                     a.berries[i] -= 1;
@@ -1745,11 +1908,15 @@ impl World {
                 if let Some(kind) = eaten {
                     self.people[i].meals += 1;
                     a.hunger[i] -= 40.0;
+                    a.energy[i] = (a.energy[i] + needs::MEAL_ENERGY).min(100.0);
                     self.ledger.consumed[kind] += 1;
                 }
             }
             if a.hunger[i] > 85.0 {
                 a.health[i] -= DT * 0.8;
+            }
+            if a.energy[i] <= 0.0 {
+                a.health[i] -= DT * needs::EXHAUSTION_DAMAGE_PER_SECOND;
             }
             if a.health[i] <= 0.0 {
                 a.health[i] = 0.0;
@@ -1771,7 +1938,17 @@ impl World {
         }
         self.governance_step();
         self.civic_step();
+        self.expire_market_reports();
         let start = self.tick as usize % 10;
+        for i in (start..self.agents.len()).step_by(10) {
+            self.observe_local_market(i);
+            if self.agents.alive[i] && self.in_energy_emergency(i) {
+                self.pause_urban_job(i);
+                if self.agents.contract[i] != NONE {
+                    self.cancel_job(self.agents.contract[i] as usize);
+                }
+            }
+        }
         let due = self.agents.len().saturating_sub(start).div_ceil(10);
         self.expire_camp_rumours();
         for i in (start..self.agents.len()).step_by(10) {
@@ -1895,6 +2072,24 @@ impl World {
         }
         if action == Action::NominateSelf {
             return self.execute_nomination(i);
+        }
+        match action {
+            Action::Recover => return self.execute_recover(i),
+            Action::Play => return self.execute_play(i),
+            Action::CollectMeat | Action::SellMeat | Action::BuyMeat => {
+                return self.execute_meat(i, action);
+            }
+            Action::BuyInformation | Action::SellInformation => {
+                return self.execute_information(i, action);
+            }
+            _ => {}
+        }
+        if matches!(
+            action,
+            Action::HuntWildlife | Action::EatCarcass | Action::CraftSpear | Action::CraftBow
+        ) {
+            self.execute_hunting(i, action);
+            return;
         }
         if matches!(
             action,
@@ -2156,7 +2351,18 @@ impl World {
             | Action::StoreCargo
             | Action::NominateSelf
             | Action::DiscussCamp
-            | Action::MigrateToCamp => {}
+            | Action::MigrateToCamp
+            | Action::HuntWildlife
+            | Action::EatCarcass
+            | Action::CraftSpear
+            | Action::CraftBow
+            | Action::Recover
+            | Action::Play
+            | Action::CollectMeat
+            | Action::SellMeat
+            | Action::BuyMeat
+            | Action::BuyInformation
+            | Action::SellInformation => {}
         }
     }
     fn start_projects(&mut self) {
@@ -2233,23 +2439,35 @@ impl World {
             });
         }
     }
-    pub fn save(&self, path: &Path) -> Result<(), String> {
-        let payload = postcard::to_allocvec(&(
+    pub fn checkpoint_payload(&self) -> Result<Vec<u8>, String> {
+        postcard::to_allocvec(&(
             self,
             &self.food_memory,
             &self.forage_memory,
             &self.work_memory,
             &self.commitments,
             &self.map,
-            &self.explored,
-            &self.governance,
-            &self.camp_rumours,
+            (
+                &self.explored,
+                &self.carcasses,
+                &self.wildlife.spawns,
+                &self.wildlife.spears,
+                &self.wildlife.bows,
+                &self.wildlife.hunting_stats,
+                &self.meat_trade,
+                &self.market_information,
+                &self.meat_trade.demand,
+            ),
+            (&self.governance, &self.camp_rumours),
         ))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+    }
+    pub fn save(&self, path: &Path) -> Result<(), String> {
+        let payload = self.checkpoint_payload()?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE31".to_vec();
+        let mut data = b"XXSAVE32".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2264,8 +2482,23 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
-                && &data[..8] != b"XXSAVE18"
+            || (!matches!(
+                &data[..8],
+                b"XXSAVE19"
+                    | b"XXSAVE30"
+                    | b"XXSAVE31"
+                    | b"XXSAVE20"
+                    | b"XXSAVE21"
+                    | b"XXSAVE22"
+                    | b"XXSAVE23"
+                    | b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+                    | b"XXSAVE32"
+            ) && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
                 && &data[..8] != b"XXSAVE15"
@@ -2296,7 +2529,108 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31") {
+        let mut world: Self = if matches!(
+            &data[..8],
+            b"XXSAVE20"
+                | b"XXSAVE21"
+                | b"XXSAVE22"
+                | b"XXSAVE23"
+                | b"XXSAVE24"
+                | b"XXSAVE25"
+                | b"XXSAVE26"
+                | b"XXSAVE27"
+                | b"XXSAVE28"
+                | b"XXSAVE29"
+                | b"XXSAVE32"
+        ) {
+            let (
+                (mut world, purchases, foraging, work, commitments, map, (explored, carcasses)),
+                tail,
+            ): (
+                (
+                    Self,
+                    food_memory::FoodMemory,
+                    food_memory::FoodMemory,
+                    work_memory::WorkMemory,
+                    commitment_memory::Commitments,
+                    WorldMap,
+                    (Exploration, std::collections::BTreeMap<u32, u64>),
+                ),
+                &[u8],
+            ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
+            world.food_memory = purchases;
+            world.forage_memory = foraging;
+            world.work_memory = work;
+            world.commitments = commitments;
+            world.map = map;
+            world.explored = explored;
+            world.carcasses = carcasses;
+            if matches!(
+                &data[..8],
+                b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+                    | b"XXSAVE32"
+            ) {
+                let ((spawns, spears, bows, stats), remaining) =
+                    postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
+                if matches!(
+                    &data[..8],
+                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE32"
+                ) {
+                    let (mut trade, rest): (meat::MeatTrade, _) =
+                        postcard::take_from_bytes(remaining).map_err(|e| e.to_string())?;
+                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE32") {
+                        let (information, trailing) =
+                            postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
+                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE32") {
+                            let (demand, rest) =
+                                postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                            trade.demand = demand;
+                            if &data[..8] == b"XXSAVE32" {
+                                (world.governance, world.camp_rumours) =
+                                    postcard::from_bytes(rest).map_err(|e| e.to_string())?;
+                            } else if !rest.is_empty() {
+                                return Err("Unexpected meat demand checkpoint data".into());
+                            }
+                        } else if !trailing.is_empty() {
+                            return Err("Unexpected market report checkpoint data".into());
+                        }
+                        world.market_information = information;
+                    } else if &data[..8] == b"XXSAVE27" {
+                        type OldReport = (u64, Vec<([Quote; GOODS], Quote)>);
+                        let _: (Option<OldReport>, Option<OldReport>) =
+                            postcard::from_bytes(rest).map_err(|e| e.to_string())?;
+                    } else if !rest.is_empty() {
+                        return Err("Unexpected meat trade checkpoint data".into());
+                    }
+                    world.meat_trade = trade;
+                } else if !remaining.is_empty() {
+                    return Err("Unexpected hunting checkpoint data".into());
+                }
+                world.wildlife.spawns = spawns;
+                world.wildlife.spears = spears;
+                world.wildlife.bows = bows;
+                world.wildlife.hunting_stats = stats;
+            } else if &data[..8] == b"XXSAVE23" {
+                let (spawns, spears) = postcard::from_bytes(tail).map_err(|e| e.to_string())?;
+                world.wildlife.spawns = spawns;
+                world.wildlife.spears = spears;
+            } else if &data[..8] == b"XXSAVE22" {
+                world.wildlife.spawns = postcard::from_bytes(tail).map_err(|e| e.to_string())?;
+            } else if &data[..8] == b"XXSAVE21" {
+                world.wildlife.spawns =
+                    postcard::from_bytes::<wildlife::LegacyWildlifeSpawns>(tail)
+                        .map_err(|e| e.to_string())?
+                        .into();
+            } else if !tail.is_empty() {
+                return Err("Unexpected checkpoint data".into());
+            }
+            world
+        } else if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31") {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
                     Self,
@@ -2310,23 +2644,28 @@ impl World {
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
             if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31") {
-                let (governance, trailing) =
+                let (governance, rest) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                let trailing = if &data[..8] == b"XXSAVE31" {
-                    let (rumours, rest) =
-                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
-                    world.camp_rumours = rumours;
-                    rest
-                } else {
-                    trailing
-                };
-                if !trailing.is_empty() {
+                world.governance = governance;
+                if &data[..8] == b"XXSAVE31" {
+                    world.camp_rumours = postcard::from_bytes(rest).map_err(|e| e.to_string())?;
+                } else if !rest.is_empty() {
                     return Err("Unexpected governance checkpoint data".into());
                 }
-                world.governance = governance;
+                // The two release formats assigned variant indices 39–41
+                // before the development formats' action list was merged.
+                for action in &mut world.agents.action {
+                    *action = match *action {
+                        Action::HuntWildlife => Action::NominateSelf,
+                        Action::EatCarcass => Action::DiscussCamp,
+                        Action::CraftSpear => Action::MigrateToCamp,
+                        other => other,
+                    }
+                }
             } else if !tail.is_empty() {
                 return Err("Unexpected checkpoint data".into());
             }
+
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
@@ -2448,8 +2787,23 @@ impl World {
                 }
             }
         }
-        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
-            && &data[..8] != b"XXSAVE15"
+        if !matches!(
+            &data[..8],
+            b"XXSAVE19"
+                | b"XXSAVE30"
+                | b"XXSAVE31"
+                | b"XXSAVE20"
+                | b"XXSAVE21"
+                | b"XXSAVE22"
+                | b"XXSAVE23"
+                | b"XXSAVE24"
+                | b"XXSAVE25"
+                | b"XXSAVE26"
+                | b"XXSAVE27"
+                | b"XXSAVE28"
+                | b"XXSAVE29"
+                | b"XXSAVE32"
+        ) && &data[..8] != b"XXSAVE15"
         {
             world.map = WorldMap::classic(world.seed);
         }
@@ -2466,7 +2820,23 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(
+                &data[..8],
+                b"XXSAVE19"
+                    | b"XXSAVE30"
+                    | b"XXSAVE31"
+                    | b"XXSAVE20"
+                    | b"XXSAVE21"
+                    | b"XXSAVE22"
+                    | b"XXSAVE23"
+                    | b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+                    | b"XXSAVE32"
+            )
         {
             world.init_wildlife();
         }
@@ -2480,7 +2850,23 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(
+                &data[..8],
+                b"XXSAVE19"
+                    | b"XXSAVE30"
+                    | b"XXSAVE31"
+                    | b"XXSAVE20"
+                    | b"XXSAVE21"
+                    | b"XXSAVE22"
+                    | b"XXSAVE23"
+                    | b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+                    | b"XXSAVE32"
+            )
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2495,9 +2881,54 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(
+                &data[..8],
+                b"XXSAVE19"
+                    | b"XXSAVE30"
+                    | b"XXSAVE31"
+                    | b"XXSAVE20"
+                    | b"XXSAVE21"
+                    | b"XXSAVE22"
+                    | b"XXSAVE23"
+                    | b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+                    | b"XXSAVE32"
+            )
         {
             world.relocate_fertile_land();
+        }
+        if !matches!(
+            &data[..8],
+            b"XXSAVE21"
+                | b"XXSAVE22"
+                | b"XXSAVE23"
+                | b"XXSAVE24"
+                | b"XXSAVE25"
+                | b"XXSAVE26"
+                | b"XXSAVE27"
+                | b"XXSAVE28"
+                | b"XXSAVE29"
+                | b"XXSAVE32"
+        ) {
+            world.wildlife.spawns = Default::default();
+        }
+        if !matches!(
+            &data[..8],
+            b"XXSAVE22"
+                | b"XXSAVE23"
+                | b"XXSAVE24"
+                | b"XXSAVE25"
+                | b"XXSAVE26"
+                | b"XXSAVE27"
+                | b"XXSAVE28"
+                | b"XXSAVE29"
+                | b"XXSAVE32"
+        ) {
+            world.init_terrain_spawn_points();
         }
         world.migrate_brain_schemas();
         world.sync_education();
@@ -2506,11 +2937,26 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
-        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31") {
+        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
             world.governance_step();
+        }
+        if !matches!(
+            &data[..8],
+            b"XXSAVE22"
+                | b"XXSAVE23"
+                | b"XXSAVE24"
+                | b"XXSAVE25"
+                | b"XXSAVE26"
+                | b"XXSAVE27"
+                | b"XXSAVE28"
+                | b"XXSAVE29"
+                | b"XXSAVE32"
+        ) {
+            world.sync_wildlife_spawn_habitats();
         }
         for genome in &mut world.genomes {
             genome.add_memory_inputs(&mut world.innovations);
+            genome.connect_food_readiness(&mut world.innovations);
         }
         world.brains = world
             .genomes
@@ -2519,41 +2965,39 @@ impl World {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(world)
     }
-    /// Widens pre-format-15 brains from the 42-sensor schema to the reserved
-    /// 48-sensor layout, shifting hidden and output node IDs consistently.
     fn migrate_brain_schemas(&mut self) {
-        let delta = (INPUTS - LEGACY_INPUTS) as u32;
-        if delta == 0 {
-            return;
+        fn migrate_registry(registry: &mut Innovations, from: usize) {
+            registry.migrate_node_ids(from as u32, (INPUTS - from) as u32);
         }
-        let mut migrated = false;
+
+        if let Some(g) = self.genomes.iter().find(|g| g.needs_input_migration()) {
+            migrate_registry(&mut self.innovations, g.input_count());
+        }
         for g in &mut self.genomes {
             if g.needs_input_migration() {
-                g.migrate_inputs(LEGACY_INPUTS);
-                migrated = true;
+                g.migrate_inputs(g.input_count());
+                g.connect_need_inputs(&mut self.innovations);
             }
-        }
-        if migrated {
-            self.innovations
-                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
         }
         for c in &mut self.councils {
             if c.genome.needs_input_migration() {
-                c.genome.migrate_inputs(LEGACY_INPUTS);
-                c.innovations.migrate_node_ids(LEGACY_INPUTS as u32, delta);
+                let from = c.genome.input_count();
+                c.genome.migrate_inputs(from);
+                migrate_registry(&mut c.innovations, from);
             }
         }
-        let mut wild = false;
+        if let Some(a) = self
+            .wildlife
+            .animals
+            .iter()
+            .find(|a| a.genome.needs_input_migration())
+        {
+            migrate_registry(&mut self.wildlife.innovations, a.genome.input_count());
+        }
         for a in &mut self.wildlife.animals {
             if a.genome.needs_input_migration() {
-                a.genome.migrate_inputs(LEGACY_INPUTS);
-                wild = true;
+                a.genome.migrate_inputs(a.genome.input_count());
             }
-        }
-        if wild {
-            self.wildlife
-                .innovations
-                .migrate_node_ids(LEGACY_INPUTS as u32, delta);
         }
     }
     fn validate(&self) -> Result<(), String> {
@@ -2674,7 +3118,20 @@ impl World {
             .iter()
             .map(|s| s.len())
             .collect::<Vec<_>>());
+        if self.map.spec.size != MapSize::Classic {
+            result["chunk_size"] = serde_json::json!(CHUNK_SIZE);
+        }
         result["wildlife"] = self.wildlife_summary();
+        result["meat_trade"] = self.meat_trade.summary(&self.markets, self.tick);
+        result["information_trade"] = self.information_summary();
+        if !self.carcasses.is_empty() {
+            result["wildlife"]["carcasses"] = self.carcass_sites();
+        }
+        if self.map.spec.size != MapSize::Classic {
+            result["wildlife"]["living_by_species"] =
+                serde_json::json!(self.living_wildlife_by_species());
+            result["wildlife"]["carcass_meat"] = self.carcasses.values().sum::<u64>().into();
+        }
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
         result["banking"] = self.banking_summary();
@@ -2756,12 +3213,15 @@ impl World {
             out.extend((i as u32).to_le_bytes());
             out.extend(self.agents.x[i].to_le_bytes());
             out.extend(self.agents.y[i].to_le_bytes());
+            let wire_action = match self.agents.action[i] {
+                Action::BuyInformation | Action::SellInformation | Action::DiscussCamp => {
+                    Action::Socialize
+                }
+                Action::NominateSelf | Action::MigrateToCamp => Action::Wait,
+                action => action,
+            };
             out.push(
-                (match self.agents.action[i] {
-                    Action::NominateSelf | Action::MigrateToCamp => Action::Wait,
-                    Action::DiscussCamp => Action::Socialize,
-                    action => action,
-                }) as u8
+                wire_action as u8
                     | if self.agents.rested[i] { 64 } else { 0 }
                     | if self.agents.alive[i]
                         && visible_convoys.contains(&(self.agents.convoy[i] as usize))
@@ -2880,6 +3340,63 @@ mod tests {
         assert_eq!(a.agents, b.agents);
         assert_eq!(a.markets, b.markets);
         assert_eq!(a.rng, b.rng);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn release_checkpoints_restore_their_original_action_indices() {
+        let mut world = World::new(8, 17).unwrap();
+        // Postcard encodes the declaration index instead of the repr value.
+        // These first three gameplay variants occupy the indices used by
+        // nomination and migration in the earlier release checkpoint format.
+        world.agents.action[..3].copy_from_slice(&[
+            Action::HuntWildlife,
+            Action::EatCarcass,
+            Action::CraftSpear,
+        ]);
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-release-actions-{}.snapshot",
+            std::process::id()
+        ));
+        for (header, expected) in [
+            (b"XXSAVE30", &[Action::NominateSelf][..]),
+            (
+                b"XXSAVE31",
+                &[
+                    Action::NominateSelf,
+                    Action::DiscussCamp,
+                    Action::MigrateToCamp,
+                ][..],
+            ),
+        ] {
+            world.agents.action[1..3].copy_from_slice(if expected.len() == 1 {
+                &[Action::Wait, Action::Wait]
+            } else {
+                &[Action::EatCarcass, Action::CraftSpear]
+            });
+            let mut raw = postcard::to_allocvec(&(
+                &world,
+                &world.food_memory,
+                &world.forage_memory,
+                &world.work_memory,
+                &world.commitments,
+                &world.map,
+                &world.explored,
+                &world.governance,
+            ))
+            .unwrap();
+            if header == b"XXSAVE31" {
+                raw.extend(postcard::to_allocvec(&world.camp_rumours).unwrap());
+            }
+            let mut data = header.to_vec();
+            data.extend((raw.len() as u64).to_le_bytes());
+            data.extend(zstd::stream::encode_all(raw.as_slice(), 3).unwrap());
+            std::fs::write(&path, data).unwrap();
+            let restored = World::load(&path).unwrap();
+            assert_eq!(&restored.agents.action[..expected.len()], expected);
+            restored.save(&path).unwrap();
+            let reopened = World::load(&path).unwrap();
+            assert_eq!(reopened.agents.action, restored.agents.action);
+        }
         std::fs::remove_file(path).unwrap();
     }
     #[test]

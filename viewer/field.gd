@@ -55,6 +55,8 @@ var detail_material: ShaderMaterial
 var atlas_view: SubViewport
 var spatial: Dictionary = {}
 var camera_dirty := false
+const WILDLIFE_COLORS := [Color("f0e8d5"), Color("dcba80"), Color("e09557"), Color("b3bfcb"), Color("d885a1")]
+const WILDLIFE_ATLAS_COLUMNS := [0, 1, 4, -1, 3]
 var overview_dirty := true
 var record_cache := PackedByteArray()
 var snapshot_age := 0.0
@@ -270,6 +272,11 @@ func _select_at(position: Vector2) -> void:
 		placement_kind = -1
 		resource_placed.emit(kind,p)
 		return
+	if pick_mode in ["Auto", "Wildlife"]:
+		var carcass_id := _pick_carcass(p)
+		if carcass_id >= 0:
+			site_selected.emit({"kind":"carcasses", "id":carcass_id})
+			return
 	var animal_best := -1
 	var animal_distance := 12.0 / maxf(1.0,magnification*0.3)
 	for animal in world.get("wildlife",{}).get("animals",[]) if pick_mode in ["Auto","Wildlife"] else []:
@@ -311,6 +318,18 @@ func _select_at(position: Vector2) -> void:
 		agent_selected.emit(selected)
 		queue_redraw()
 
+func _pick_carcass(p: Vector2) -> int:
+	var best := -1
+	var closest := 9.0 / zoom
+	for carcass in world.get("wildlife", {}).get("carcasses", []):
+		if int(carcass.portions) <= 0:
+			continue
+		var distance := p.distance_to(Vector2(carcass.x, carcass.y))
+		if distance <= closest:
+			closest = distance
+			best = int(carcass.id)
+	return best
+
 func _pick_site(p: Vector2) -> Dictionary:
 	if pick_mode in ["Auto","Buildings"]:
 		for building in world.get("urban",{}).get("buildings",[]):
@@ -343,7 +362,8 @@ func _pick_site(p: Vector2) -> Dictionary:
 		var forests: Array = world.get("wildlife",{}).get("forests",[])
 		for id in range(forests.size()):
 			var forest: Dictionary = forests[id]
-			if p.distance_to(Vector2(forest.x,forest.y))<float(forest.radius):
+			var center := Vector2(forest.x, forest.y)
+			if p.distance_to(center) < float(forest.radius) and terrain.is_explored(center):
 				return {"kind":"forests","id":id,"market":-1}
 	if pick_mode=="Buildings":
 		var roads: Array = world.get("roads",[])
@@ -661,30 +681,49 @@ func _draw() -> void:
 		draw_circle(p+Vector2(-4,5),2,Color("443c30"))
 		draw_circle(p+Vector2(4,5),2,Color("443c30"))
 		draw_string(ThemeDB.fallback_font,p+Vector2(8,-4),str(int(convoy.members)),HORIZONTAL_ALIGNMENT_LEFT,-1,10,color)
+	var marker_radius := 6.0 / zoom
+	var carcass_view := Rect2(-offset / zoom, size / zoom).grow(marker_radius)
+	for carcass in world.get("wildlife", {}).get("carcasses", []):
+		var at := Vector2(carcass.x, carcass.y)
+		if int(carcass.portions) <= 0 or not carcass_view.has_point(at):
+			continue
+		draw_circle(at, marker_radius, Color("43281f"))
+		draw_arc(at, marker_radius, 0.0, TAU, 16, Color("f2ba89"), 1.5 / zoom, true)
+		var ring := Vector2.ONE * marker_radius * 0.42
+		draw_line(at - ring, at + ring, Color("f2ba89"), 1.5 / zoom, true)
+		draw_line(at + Vector2(-ring.x, ring.y), at + Vector2(ring.x, -ring.y), Color("f2ba89"), 1.5 / zoom, true)
 	var animal_view := Rect2(-offset/zoom,size/zoom).grow(12.0)
 	for animal in world.get("wildlife",{}).get("animals",[]):
 		var at := Vector2(animal.x,animal.y)
 		if not animal_view.has_point(at):
 			continue
+		var species := clampi(int(animal.species), 0, WILDLIFE_COLORS.size() - 1)
 		if fidelity==1:
-			draw_circle(at,3.3 if int(animal.species)==1 else 2.2,Color("dcba80") if int(animal.species)==1 else Color("f0e8d5"))
+			draw_circle(at,3.3 if species in [1, 3] else 2.2,WILDLIFE_COLORS[species])
 		else:
 			var scale_animal := 0.6 if animal.young else 1.0
 			var bob := sin(animation_time*10.0+float(animal.id))*0.5 if fidelity==3 and int(animal.action)!=3 else 0.0
-			var species_col := int(animal.species)
+			var species_col: int = WILDLIFE_ATLAS_COLUMNS[species]
 			var stance_row := 0
 			match int(animal.action):
-				0, 1: stance_row = 3 # Feeding
+				0, 1, 7: stance_row = 3 # Feeding
 				2: stance_row = 4 # Fleeing
-				4, 5:
+				4, 5, 6, 8:
 					if fidelity == 3:
 						stance_row = 1 + int(animation_time*10.0 + float(animal.id)) % 2
 			var animal_tex := _tex("animal-table-xianxia/atlas.png")
 			draw_set_transform(offset+at*zoom,float(animal.heading),Vector2.ONE*zoom*scale_animal)
-			if animal_tex != null and species_col < 9:
+			if animal_tex != null and species_col >= 0:
 				draw_texture_rect_region(animal_tex,Rect2(-9,-9,18,18),Rect2(species_col*64,stance_row*64,64,64))
+			elif species == 3:
+				var coat := Color("85929c")
+				draw_set_transform(offset+at*zoom,float(animal.heading),Vector2(1.5, 0.8)*zoom*scale_animal)
+				draw_circle(Vector2.ZERO,5.5,coat)
+				draw_circle(Vector2(5,-1),3.0,coat.lightened(0.18))
+				draw_colored_polygon(PackedVector2Array([Vector2(4,-2),Vector2(4,-6),Vector2(6,-2)]),coat)
+				draw_line(Vector2(-4,0),Vector2(-8,3),coat,2)
 			else:
-				var deer := int(animal.species)==1
+				var deer := species == 1
 				draw_circle(Vector2.ZERO,4.0 if deer else 2.8,Color("af8558") if deer else Color("e5ddc8"))
 				draw_circle(Vector2(3.5,0),2.0 if deer else 1.6,Color("ccaa78") if deer else Color("f4ecdc"))
 				if deer:

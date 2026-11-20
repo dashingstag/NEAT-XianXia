@@ -156,10 +156,35 @@ mod tests {
 impl World {
     // Accepted goods-for-food quote: incoming units are rounded up, never free credit.
     pub(super) fn barter_terms(&self, i: usize, market: usize) -> Option<(usize, u32, u32)> {
+        self.barter_terms_with_quotes(
+            i,
+            |kind| self.markets[market].quotes[kind].clone(),
+            |kind| self.markets[market].stock(kind),
+        )
+    }
+    pub(super) fn perceived_barter_terms(
+        &self,
+        i: usize,
+        market: &Market,
+    ) -> Option<(usize, u32, u32)> {
+        if self.local_market_information(i, market) {
+            return self.barter_terms(i, market.id as usize);
+        }
+        self.barter_terms_with_quotes(
+            i,
+            |kind| self.perceived_quote(i, market, kind),
+            |kind| self.perceived_quote(i, market, kind).offered,
+        )
+    }
+    fn barter_terms_with_quotes(
+        &self,
+        i: usize,
+        quote: impl Fn(usize) -> Quote,
+        stock: impl Fn(usize) -> u64,
+    ) -> Option<(usize, u32, u32)> {
         let a = &self.agents;
-        let m = &self.markets[market];
         let k = a.cargo_kind[i] as usize;
-        let bid = m.quotes[k].bid;
+        let bid = quote(k).bid;
         if a.cargo[i] == 0 || bid == 0 {
             return None;
         }
@@ -167,12 +192,12 @@ impl World {
             if food == k {
                 continue;
             }
-            let ask = m.quotes[food].ask;
+            let ask = quote(food).ask;
             if ask == 0 {
                 continue;
             }
-            let max_food = (3u32.saturating_sub(a.berries[i] + a.fish[i] + a.rice[i]))
-                .min(m.stock(food) as u32);
+            let max_food =
+                (3u32.saturating_sub(a.berries[i] + a.fish[i] + a.rice[i])).min(stock(food) as u32);
             for quantity in (1..=max_food).rev() {
                 let offered = (quantity as u64 * ask).div_ceil(bid);
                 if offered <= a.cargo[i] as u64

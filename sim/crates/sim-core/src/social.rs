@@ -78,7 +78,29 @@ impl World {
     }
     pub(super) fn execute_social(&mut self, i: usize, action: Action) {
         let id = self.agents.target[i] as usize;
-        if id >= self.taverns.len() || !self.is_adult(i) || self.must_stay_home(i) {
+        if !self.is_adult(i) || self.must_stay_home(i) {
+            return;
+        }
+        if action == Action::Socialize && self.agents.target[i] == NONE {
+            self.agents.timer[i] += DT;
+            if self.agents.timer[i] >= 5.0 {
+                self.agents.timer[i] = 0.0;
+                let a = &self.agents;
+                let companion = (0..a.len()).find(|&j| {
+                    i != j
+                        && a.alive[j]
+                        && !a.sleeping[j]
+                        && a.home[j] == a.home[i]
+                        && dist(a.x[i], a.y[i], a.x[j], a.y[j]) <= 12.0
+                });
+                if let Some(j) = companion {
+                    self.gain_social(i);
+                    self.relationship_contact(i, j, relationships::Context::Village);
+                }
+            }
+            return;
+        }
+        if id >= self.taverns.len() {
             return;
         }
         if action == Action::BuildTavern {
@@ -110,14 +132,9 @@ impl World {
         }
         self.agents.timer[i] += DT;
         if self.agents.timer[i] >= 5.0 {
-            let gain = if self.agents.traits[i] & life::GREGARIOUS != 0 {
-                12.0
-            } else {
-                8.0
-            };
-            self.social[i] = (self.social[i] + gain).min(100.0);
-            self.agents.timer[i] = 0.0;
             let peers = t.guests.clone();
+            self.gain_social(i);
+            self.agents.timer[i] = 0.0;
             for j in peers {
                 let j = j as usize;
                 if self.agents.action[j] == Action::Socialize
@@ -133,6 +150,14 @@ impl World {
                 }
             }
         }
+    }
+    fn gain_social(&mut self, i: usize) {
+        let gain = if self.agents.traits[i] & life::GREGARIOUS != 0 {
+            12.0
+        } else {
+            8.0
+        };
+        self.social[i] = (self.social[i] + gain).min(100.0);
     }
     pub(super) fn social_step(&mut self) {
         if self.tick % 10 != 0 {

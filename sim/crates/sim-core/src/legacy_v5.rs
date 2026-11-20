@@ -313,6 +313,9 @@ impl From<LegacyWorld> for World {
             explored: crate::Exploration::default(),
             governance: Default::default(),
             camp_rumours: Default::default(),
+            carcasses: Default::default(),
+            meat_trade: Default::default(),
+            market_information: Default::default(),
         }
     }
 }

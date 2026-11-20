@@ -1,7 +1,7 @@
 //! Settlement NEAT policy, escrowed completion contracts and physical corpse handling.
 use super::*;
 pub const BODY_WEIGHT: u32 = 20;
-pub const COUNCIL_SENSORS: [&str; INPUTS] = [
+pub const COUNCIL_SENSORS: [&str; neat_core::FRONTIER_INPUTS] = [
     "need",
     "public_benefit",
     "fiscal_risk",
@@ -439,6 +439,10 @@ impl World {
                 .sum::<u64>()
     }
     pub(super) fn register_corpse(&mut self, i: usize) {
+        if self.meat_trade.pack(i) > 0 {
+            self.meat_trade.discard_pack(i);
+            self.update_urban_weight(i);
+        }
         self.relationship_death(i);
         if self.agents.corpse[i] != NONE {
             return;

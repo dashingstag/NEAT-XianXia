@@ -13,6 +13,7 @@ pub(super) enum Context {
     Shop = 4,
     Tavern = 8,
     Camp = 16,
+    Village = 32,
 }
 
 #[cfg(test)]
@@ -711,7 +712,7 @@ impl World {
         peers.into_iter().map(|j| {
             let pair=if (i as u32)<j {(i as u32,j)}else{(j,i as u32)};let l=&self.relationships.edges[&pair];
             let (positive,negative)=self.relationship_chances(i,j as usize,l.score);
-            serde_json::json!({"id":j,"name":self.people[j as usize].name(),"score":l.score,"family":self.relationship_family(i,j as usize),"shared_trait":self.agents.traits[i]&self.agents.traits[j as usize]!=0,"positive_chance_percent":positive,"negative_chance_percent":negative,"days_to_drift":l.next_decay.saturating_sub(self.tick) as f64/rest::DAY_TICKS as f64,"contexts":([(1,"Caravan"),(2,"House"),(4,"Shop"),(8,"Tavern"),(16,"Camp")].iter().filter(|(bit,_)|l.contexts&bit!=0).map(|(_,name)|*name).collect::<Vec<_>>())})
+            serde_json::json!({"id":j,"name":self.people[j as usize].name(),"score":l.score,"family":self.relationship_family(i,j as usize),"shared_trait":self.agents.traits[i]&self.agents.traits[j as usize]!=0,"positive_chance_percent":positive,"negative_chance_percent":negative,"days_to_drift":l.next_decay.saturating_sub(self.tick) as f64/rest::DAY_TICKS as f64,"contexts":([(1,"Caravan"),(2,"House"),(4,"Shop"),(8,"Tavern"),(16,"Camp"),(32,"Village")].iter().filter(|(bit,_)|l.contexts&bit!=0).map(|(_,name)|*name).collect::<Vec<_>>())})
         }).collect()
     }
     pub(super) fn relationships_summary(&self) -> serde_json::Value {

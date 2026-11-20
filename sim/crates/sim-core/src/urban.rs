@@ -1453,7 +1453,7 @@ impl World {
             })
             .map(|(id, _)| id)
     }
-    fn update_urban_weight(&mut self, i: usize) {
+    pub(super) fn update_urban_weight(&mut self, i: usize) {
         let worn = [1u8, 2u8]
             .into_iter()
             .map(|k| {
@@ -1470,7 +1470,7 @@ impl World {
             .filter(|j| j.phase == 1 && j.worker == i as u32)
             .map(Job::weight)
             .unwrap_or(0);
-        self.agents.urban_weight[i] = worn + load;
+        self.agents.urban_weight[i] = worn + load + self.meat_trade.pack(i) as u32;
     }
     pub(super) fn execute_urban(&mut self, i: usize, action: Action) {
         if !self.is_adult(i) || self.must_stay_home(i) {
@@ -2088,6 +2088,7 @@ impl World {
                 p.growth = 0.0;
             }
         }
+        self.sync_wildlife_spawn_habitats();
     }
     fn refund_urban_job(&mut self, id: usize) {
         self.commitments.delivery_cancelled(id);
@@ -2336,7 +2337,9 @@ impl World {
                 return Err(format!("{} conservation error", WARE_NAMES[k]));
             }
         }
-        let mut carried = vec![0u32; self.agents.len()];
+        let mut carried: Vec<_> = (0..self.agents.len())
+            .map(|i| self.meat_trade.pack(i) as u32)
+            .collect();
         for j in self.urban.jobs.iter().flatten() {
             if j.market as usize >= self.markets.len()
                 || j.worker != NONE && j.worker as usize >= self.agents.len()

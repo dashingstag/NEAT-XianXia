@@ -47,7 +47,7 @@ pub struct WaterBlock {
 /// buildable ground marching from the block toward what the walker was
 /// trying to reach. `ferry` marks landings no dry route can reach — the
 /// far side then waits for a ship to carry builders over (M8-P3).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Port {
     pub market: u32,
     pub x: f32,
@@ -57,6 +57,26 @@ pub struct Port {
     pub near_done: bool,
     pub far_done: bool,
     pub ferry: bool,
+    /// Agents waiting at the home-shore dock for the ship.
+    pub queue: Vec<u32>,
+    /// Agents waiting at the landing dock for the return trip.
+    pub queue_far: Vec<u32>,
+}
+
+/// A ferry shuttling between a port's two docks. It sails once eight
+/// passengers board (or one has waited a long while), carries up to a
+/// hundred, and returns whenever a queue forms on the far side.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Ship {
+    pub port: u32,
+    pub x: f32,
+    pub y: f32,
+    /// Currently moored at the landing dock rather than the home dock.
+    pub at_far: bool,
+    /// Passengers aboard; their positions pin to the ship like a convoy.
+    pub aboard: Vec<u32>,
+    pub departed: bool,
+    pub docked_since: u64,
 }
 
 /// Water-route reporting state. Persisted so pending reports survive
@@ -73,6 +93,8 @@ pub struct WaterState {
     pub blocks: Vec<WaterBlock>,
     /// Paired landings planned from delivered blocks.
     pub ports: Vec<Port>,
+    /// Ferries built at finished ports.
+    pub ships: Vec<Ship>,
 }
 
 fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -276,7 +298,7 @@ mod tests {
         w.markets[0].add(2, 4, 0);
         w.plan_ports();
         assert_eq!(w.water.ports.len(), 1, "block should plan one port");
-        let p = w.water.ports[0];
+        let p = w.water.ports[0].clone();
         assert!(w.map.buildable(p.x, p.y), "home port must be dry");
         assert!(w.map.buildable(p.lx, p.ly), "landing port must be dry");
         let near = w
@@ -298,6 +320,73 @@ mod tests {
             }
         }
         assert!(w.water.ports[0].near_done, "shipwright finishes the port");
+    }
+    #[test]
+    fn ship_ferries_queued_walkers_across_water() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut span = None;
+        'outer: for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 2 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                let mut k = i + 1;
+                while k < r.cols - 1 && r.terrain[j * r.cols + k] == Terrain::Water as u8 {
+                    k += 1;
+                }
+                if k > i + 1
+                    && k < r.cols - 1
+                    && r.terrain[j * r.cols + k] != Terrain::Water as u8
+                {
+                    span = Some((
+                        (i as f32 + 0.5) * r.cell,
+                        (j as f32 + 0.5) * r.cell,
+                        (k as f32 + 0.5) * r.cell,
+                    ));
+                    break 'outer;
+                }
+            }
+        }
+        let Some((bx, by, lx)) = span else { return };
+        w.water.ports.push(Port {
+            market: 0,
+            x: bx,
+            y: by,
+            lx,
+            ly: by,
+            near_done: true,
+            far_done: true,
+            ferry: true,
+            queue: Vec::new(),
+            queue_far: Vec::new(),
+        });
+        w.water.ships.push(Ship {
+            port: 0,
+            x: bx,
+            y: by,
+            at_far: false,
+            aboard: Vec::new(),
+            departed: false,
+            docked_since: w.tick,
+        });
+        for i in 0..8u32 {
+            w.water.ports[0].queue.push(i);
+            w.agents.x[i as usize] = bx;
+            w.agents.y[i as usize] = by;
+        }
+        for _ in 0..6000 {
+            w.ship_step();
+            if w.water.ships[0].at_far {
+                break;
+            }
+        }
+        assert!(w.water.ships[0].at_far, "ship should cross to the landing");
+        assert!(w.water.ships[0].aboard.is_empty(), "riders disembark");
+        for i in 0..8usize {
+            let d = dist(w.agents.x[i], w.agents.y[i], lx, by);
+            assert!(d < 40.0, "rider {i} left {d} from the far dock");
+        }
     }
     #[test]
     fn roads_detour_around_water_bodies() {
@@ -872,6 +961,213 @@ impl World {
         self.map.spec.size == MapSize::Classic
             || self.map.terrain_at(x, y) != Terrain::Water
     }
+    /// Water-only mirror of `steer` for ferries: the direct step wins
+    /// when it stays on water or river, otherwise the smallest rotation
+    /// that does. Ships may nose onto the dock shore to board.
+    fn sail_steer(
+        &self,
+        x: f32,
+        y: f32,
+        tx: f32,
+        ty: f32,
+        step: f32,
+        side: bool,
+        home: (f32, f32),
+    ) -> Option<(f32, f32)> {
+        let d = dist(x, y, tx, ty);
+        let (ux, uy) = ((tx - x) / d, (ty - y) / d);
+        let wet = |nx: f32, ny: f32| {
+            self.map.spec.size == MapSize::Classic
+                || matches!(
+                    self.map.terrain_at(nx, ny),
+                    Terrain::Water | Terrain::River
+                )
+                // May nose up to either dock's shore to moor or push off.
+                || dist(nx, ny, tx, ty) < 18.0
+                || dist(nx, ny, home.0, home.1) < 24.0
+        };
+        if wet(x + ux * step, y + uy * step) {
+            return Some((x + ux * step, y + uy * step));
+        }
+        for deg in [15.0f32, 30.0, 45.0, 60.0, 75.0, 90.0, 120.0, 150.0, 165.0] {
+            for s in if side { [1.0f32, -1.0] } else { [-1.0f32, 1.0] } {
+                let a = (s * deg).to_radians();
+                let (sn, cs) = a.sin_cos();
+                let (rx, ry) = (ux * cs - uy * sn, ux * sn + uy * cs);
+                let (nx, ny) = (x + rx * step, y + ry * step);
+                if wet(nx, ny) {
+                    return Some((nx, ny));
+                }
+            }
+        }
+        None
+    }
+    /// A stranded agent joins the nearest port dock that can ferry it
+    /// toward its blocked target: only when no dry route to the target
+    /// exists but the partner shore can reach it. Returns true when the
+    /// agent joined a queue.
+    fn try_board(&mut self, i: usize, tx: f32, ty: f32) -> bool {
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        for pi in 0..self.water.ports.len() {
+            if !self.water.ports[pi].near_done {
+                continue;
+            }
+            for side in 0..2 {
+                let (dock, partner) = {
+                    let p = &self.water.ports[pi];
+                    if side == 0 {
+                        ((p.x, p.y), (p.lx, p.ly))
+                    } else {
+                        ((p.lx, p.ly), (p.x, p.y))
+                    }
+                };
+                if dist(x, y, dock.0, dock.1) >= 192.0 {
+                    continue;
+                }
+                let aboard_ship = self
+                    .water
+                    .ships
+                    .iter()
+                    .any(|s| s.aboard.contains(&(i as u32)));
+                let queued = {
+                    let p = &self.water.ports[pi];
+                    p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
+                };
+                if aboard_ship || queued {
+                    continue;
+                }
+                if self.route_between(x, y, tx, ty).is_some()
+                    || self.route_between(partner.0, partner.1, tx, ty).is_none()
+                {
+                    continue;
+                }
+                let q = if side == 0 {
+                    &mut self.water.ports[pi].queue
+                } else {
+                    &mut self.water.ports[pi].queue_far
+                };
+                if q.len() < 100 {
+                    q.push(i as u32);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    /// Ferries board queues, cross when enough passengers wait, pin
+    /// riders to the hull like convoy members, and disembark them at
+    /// the far dock where their own targets resume.
+    pub(super) fn ship_step(&mut self) {
+        if self.water.ships.is_empty() {
+            return;
+        }
+        for si in 0..self.water.ships.len() {
+            let pi = self.water.ships[si].port as usize;
+            let (at_far, departed) = {
+                let s = &self.water.ships[si];
+                (s.at_far, s.departed)
+            };
+            let p = match self.water.ports.get(pi) {
+                Some(p) => p.clone(),
+                None => continue,
+            };
+            let (dock, other) = if at_far {
+                ((p.lx, p.ly), (p.x, p.y))
+            } else {
+                ((p.x, p.y), (p.lx, p.ly))
+            };
+            if !departed {
+                // Board waiting passengers standing near the dock.
+                for qi in (0..self.port_queue_mut(pi, at_far).len()).rev() {
+                    if self.water.ships[si].aboard.len() >= 100 {
+                        break;
+                    }
+                    let id = self.port_queue_mut(pi, at_far)[qi];
+                    let i = id as usize;
+                    if !self.agents.alive[i]
+                        || self.agents.health[i] < 25.0
+                        || self.agents.hunger[i] > 70.0
+                    {
+                        self.port_queue_mut(pi, at_far).remove(qi);
+                        continue;
+                    }
+                    // The dock sits inside the same dedup cell the block
+                    // was reported from, so a strand pocket counts as
+                    // waiting at the pier.
+                    if dist(self.agents.x[i], self.agents.y[i], dock.0, dock.1) < 96.0 {
+                        self.port_queue_mut(pi, at_far).remove(qi);
+                        self.water.ships[si].aboard.push(id);
+                    }
+                }
+                let aboard: Vec<u32> = self.water.ships[si]
+                    .aboard
+                    .iter()
+                    .copied()
+                    .filter(|&id| self.agents.alive[id as usize])
+                    .collect();
+                self.water.ships[si].aboard = aboard;
+                let aboard = self.water.ships[si].aboard.len();
+                let waited = self
+                    .tick
+                    .saturating_sub(self.water.ships[si].docked_since);
+                if aboard >= 8 || (aboard >= 1 && waited > 2400) {
+                    self.water.ships[si].departed = true;
+                }
+                // Riders hold position on the moored hull.
+                self.pin_riders(si);
+                continue;
+            }
+            let (sx, sy) = (self.water.ships[si].x, self.water.ships[si].y);
+            let d = dist(sx, sy, other.0, other.1);
+            if d < 14.0 {
+                // Disembark everyone at the new dock; each resumes its own
+                // action with the far shore now underfoot.
+                let riders = std::mem::take(&mut self.water.ships[si].aboard);
+                for (rank, id) in riders.iter().enumerate() {
+                    let i = *id as usize;
+                    if !self.agents.alive[i] {
+                        continue;
+                    }
+                    self.agents.x[i] = other.0 + (rank % 7) as f32 * 3.0 - 9.0;
+                    self.agents.y[i] = other.1 + (rank / 7) as f32 * 3.0 - 10.5;
+                }
+                let s = &mut self.water.ships[si];
+                s.at_far = !s.at_far;
+                s.departed = false;
+                s.docked_since = self.tick;
+                s.x = other.0 + (other.0 - dock.0) / d.max(1.0) * -10.0;
+                s.y = other.1 + (other.1 - dock.1) / d.max(1.0) * -10.0;
+                continue;
+            }
+            let step = (5.0 * DT).min(d);
+            if let Some((nx, ny)) =
+                self.sail_steer(sx, sy, other.0, other.1, step, si % 2 == 0, dock)
+            {
+                self.water.ships[si].x = nx;
+                self.water.ships[si].y = ny;
+            }
+            self.pin_riders(si);
+        }
+    }
+    fn port_queue_mut(&mut self, port: usize, far: bool) -> &mut Vec<u32> {
+        if far {
+            &mut self.water.ports[port].queue_far
+        } else {
+            &mut self.water.ports[port].queue
+        }
+    }
+    /// Riders ride the hull in convoy-style rank offsets.
+    fn pin_riders(&mut self, si: usize) {
+        let (sx, sy) = (self.water.ships[si].x, self.water.ships[si].y);
+        for (rank, id) in self.water.ships[si].aboard.iter().enumerate() {
+            let i = *id as usize;
+            if !self.agents.alive[i] {
+                continue;
+            }
+            self.agents.x[i] = sx + (rank % 7) as f32 * 3.0 - 9.0;
+            self.agents.y[i] = sy + (rank / 7) as f32 * 3.0 - 10.5;
+        }
+    }
     /// Steer `step` units from (x, y) toward (tx, ty). When the direct step
     /// lands in water, try progressively larger rotations so the mover
     /// follows the shoreline around the obstacle. Each mover prefers one
@@ -961,6 +1257,9 @@ impl World {
                         ty,
                         tick: self.tick,
                     });
+                    // A working ferry nearby beats walking the report home:
+                    // queue at the dock and let the ship do the crossing.
+                    self.try_board(i, tx, ty);
                 }
             }
             _ => self.water.progress[i] = Some((x, y, self.tick)),
@@ -1029,7 +1328,7 @@ impl World {
         // Repost sides whose job was refunded or abandoned — the escrowed
         // materials stay committed to the port, only the wage is re-paid.
         for pi in 0..self.water.ports.len() {
-            let p = self.water.ports[pi];
+            let p = self.water.ports[pi].clone();
             let m = p.market as usize;
             if m >= self.markets.len() {
                 continue;
@@ -1048,6 +1347,29 @@ impl World {
                     let j = self.new_job(m, 4, NONE, NONE, side, pi as u32, x, y, WAGE);
                     self.post_urban_job(j);
                 }
+            }
+            // A finished home dock on a ferry port commissions its ship:
+            // forty timber and a shipwright crew, posted like a build job.
+            if p.near_done
+                && p.ferry
+                && !self.water.ships.iter().any(|s| s.port == pi as u32)
+                && !self.urban.jobs.iter().flatten().any(|j| {
+                    j.kind == 4 && j.target == pi as u32 && j.source == 2
+                })
+                && self.markets[m].stock(1) >= 40
+                && self.markets[m].coins >= WAGE
+            {
+                let mut left = 40;
+                while left > 0 {
+                    left -= self.markets[m]
+                        .take(1, left)
+                        .expect("reserved ship timber")
+                        .quantity;
+                }
+                self.ledger.built[1] += 40;
+                self.markets[m].coins -= WAGE;
+                let j = self.new_job(m, 4, NONE, NONE, 2, pi as u32, p.x, p.y, WAGE);
+                self.post_urban_job(j);
             }
         }
         let mut done: Vec<usize> = Vec::new();
@@ -1105,6 +1427,8 @@ impl World {
                 near_done: false,
                 far_done: false,
                 ferry: !land_link,
+                queue: Vec::new(),
+                queue_far: Vec::new(),
             });
             for (k, q) in [(1usize, WOOD), (2, STONE)] {
                 let mut left = q;

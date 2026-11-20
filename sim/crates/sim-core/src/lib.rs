@@ -43,7 +43,7 @@ use social::Tavern;
 mod rest;
 use rest::Shelter;
 mod travel;
-pub use travel::WaterState;
+pub use travel::{Ship, WaterState};
 use travel::Convoy;
 
 pub const DT: f32 = 0.1;
@@ -1898,6 +1898,7 @@ impl World {
         self.update_explored();
         self.update_water_reports();
         self.plan_ports();
+        self.ship_step();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2712,6 +2713,7 @@ impl World {
         result["wildlife"] = self.wildlife_summary();
         result["water_blocks"] = serde_json::json!(self.water.blocks);
         result["ports"] = serde_json::json!(self.water.ports);
+        result["ships"] = serde_json::json!(self.water.ships);
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
         result["banking"] = self.banking_summary();
@@ -2748,11 +2750,13 @@ impl World {
         animal: Option<usize>,
         leaderboard: Option<&serde_json::Value>,
     ) -> Vec<u8> {
+        // Only a departed convoy absorbs its members into the cart marker;
+        // rallying members still gather visibly around it.
         let visible_convoys: std::collections::BTreeSet<usize> = self
             .convoys
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.is_some())
+            .filter(|(_, c)| matches!(c, Some(c) if c.departed))
             .take(2000)
             .map(|(i, _)| i)
             .collect();

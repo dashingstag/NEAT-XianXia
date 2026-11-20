@@ -349,6 +349,7 @@ func _draw() -> void:
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
 	_draw_ports()
+	_draw_ships()
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()
@@ -524,3 +525,29 @@ func _pier(at: Vector2, toward: Vector2, done: bool) -> void:
 		draw_line(post - side * 4.5, post + side * 4.5, Color("4d3f2e"), 2.4, true)
 	if not done:
 		draw_circle(at - dir * 6.0, 4.0, Color("e0b64f", 0.85))
+
+func _draw_ships() -> void:
+	for ship in field.world.get("ships", []):
+		var pos := Vector2(ship.x, ship.y)
+		var ports: Array = field.world.get("ports", [])
+		var heading := Vector2(1, 0)
+		var pi := int(ship.get("port", -1))
+		if pi >= 0 and pi < ports.size():
+			var port = ports[pi]
+			var dock := Vector2(port.lx, port.ly) if not ship.get("at_far", false) else Vector2(port.x, port.y)
+			if pos.distance_to(dock) > 1.0:
+				heading = (dock - pos).normalized()
+		var side := heading.orthogonal()
+		# Flat-sailed river junk: hull, deckhouse and a battened lug sail.
+		var hull := PackedVector2Array([pos - heading * 14.0, pos - heading * 8.0 + side * 5.5, pos + heading * 8.0 + side * 5.5, pos + heading * 14.0, pos + heading * 8.0 - side * 5.5, pos - heading * 8.0 - side * 5.5])
+		draw_colored_polygon(hull, Color("7a5c38"))
+		var closed := PackedVector2Array(hull)
+		closed.append(hull[0])
+		draw_polyline(closed, Color("4d3a22"), 1.6, true)
+		draw_circle(pos + heading * 7.0, 3.2, Color("8a6f4d"))
+		var mast := pos - heading * 2.0
+		var sail := PackedVector2Array([mast + heading * 1.5, mast - heading * 7.0 + side * 6.5, mast + heading * 9.5 + side * 3.5])
+		draw_colored_polygon(sail, Color("d8c9a3") if ship.get("departed", false) else Color("b8ab8e"))
+		var riders := int(ship.get("aboard", []).size())
+		if riders > 0 and field.fidelity == 1:
+			draw_string(ThemeDB.fallback_font, pos + side * 10.0, str(riders), HORIZONTAL_ALIGNMENT_CENTER, -1, 9, Color("2e2618"))

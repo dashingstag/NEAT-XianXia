@@ -1948,7 +1948,22 @@ impl World {
                 return;
             }
             let port = j.target as usize;
-            if let Some(p) = self.water.ports.get_mut(port) {
+            if j.source == 2 {
+                // Shipwright crew finished a ferry: it launches moored a
+                // few units off the home dock, ready to board.
+                if let Some(p) = self.water.ports.get(port) {
+                    let d = dist(p.x, p.y, p.lx, p.ly).max(1.0);
+                    self.water.ships.push(Ship {
+                        port: port as u32,
+                        x: p.x + (p.lx - p.x) / d * 12.0,
+                        y: p.y + (p.ly - p.y) / d * 12.0,
+                        at_far: false,
+                        aboard: Vec::new(),
+                        departed: false,
+                        docked_since: self.tick,
+                    });
+                }
+            } else if let Some(p) = self.water.ports.get_mut(port) {
                 if j.source == 0 {
                     p.near_done = true;
                 } else {

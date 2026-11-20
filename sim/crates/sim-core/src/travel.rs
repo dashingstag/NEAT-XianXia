@@ -17,6 +17,45 @@ pub struct Convoy {
     pub departed: bool,
 }
 
+/// A blockage a stranded traveler could not get around.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PendingBlock {
+    pub agent: u32,
+    pub x: f32,
+    pub y: f32,
+    pub tx: f32,
+    pub ty: f32,
+    pub tick: u64,
+}
+
+/// A blockage report physically delivered to a settlement. Villages
+/// read these when planning ports (M8-P2); `reports` counts how many
+/// travelers hit the same stretch of water.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WaterBlock {
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub tx: f32,
+    pub ty: f32,
+    pub tick: u64,
+    pub reports: u16,
+}
+
+/// Water-route reporting state. Persisted so pending reports survive
+/// checkpoints; `progress` is a per-agent movement probe rebuilt the
+/// same way on load.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct WaterState {
+    /// idx -> (x, y, since): last position from which the agent failed
+    /// to make 24 units of progress while still having a destination.
+    pub progress: Vec<Option<(f32, f32, u64)>>,
+    /// Reports carried by stranded agents until they reach home.
+    pub pending: Vec<PendingBlock>,
+    /// Reports delivered to markets, deduped by 96-unit cell.
+    pub blocks: Vec<WaterBlock>,
+}
+
 fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let l2 = dx * dx + dy * dy;
@@ -109,6 +148,69 @@ mod tests {
             w.agents.x[0],
             w.agents.y[0]
         );
+    }
+    #[test]
+    fn stranded_walkers_report_blocks_home() {
+        let mut w = World::new_with_size(24, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut spot = None;
+        'outer: for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 1 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let n = ((j as i32 + dj) * r.cols as i32 + i as i32 + di) as usize;
+                    if r.terrain[n] == Terrain::Water as u8 {
+                        spot = Some((
+                            (i as f32 + 0.5) * r.cell,
+                            (j as f32 + 0.5) * r.cell,
+                            di as f32,
+                            dj as f32,
+                        ));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, dx, dy)) = spot else { return };
+        let (tx, ty) = (x + dx * 400.0, y + dy * 400.0);
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        // Establish the progress probe, then let 600+ ticks pass with
+        // the walker pinned against the water.
+        for _ in 0..8 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        w.tick += 601;
+        for _ in 0..4 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        assert_eq!(w.water.pending.len(), 1, "stranded walker carries a report");
+        // Reaching home ground delivers the report to the market.
+        let home = w.agents.home[0] as usize;
+        w.agents.x[0] = w.markets[home].x;
+        w.agents.y[0] = w.markets[home].y;
+        w.update_water_reports();
+        assert!(w.water.pending.is_empty());
+        assert_eq!(w.water.blocks.len(), 1);
+        assert_eq!(w.water.blocks[0].market, home as u32);
+        assert_eq!(w.water.blocks[0].reports, 1);
+        // A second report at the same shore dedupes into `reports`.
+        w.water.pending.push(PendingBlock {
+            agent: 1,
+            x: w.water.blocks[0].x + 8.0,
+            y: w.water.blocks[0].y,
+            tx,
+            ty,
+            tick: w.tick,
+        });
+        w.agents.home[1] = home as u32;
+        w.agents.x[1] = w.markets[home].x;
+        w.agents.y[1] = w.markets[home].y;
+        w.update_water_reports();
+        assert_eq!(w.water.blocks.len(), 1);
+        assert_eq!(w.water.blocks[0].reports, 2);
     }
     #[test]
     fn roads_detour_around_water_bodies() {
@@ -666,7 +768,7 @@ impl World {
     /// Whether a walker may stand at (x, y). Classic maps keep the
     /// historical everything-walkable rule; generated maps treat water
     /// as impassable so shores shape real routes.
-    pub(super) fn passable(&mut self, x: f32, y: f32) -> bool {
+    pub(super) fn passable(&self, x: f32, y: f32) -> bool {
         self.map.spec.size == MapSize::Classic
             || self.map.terrain_at(x, y) != Terrain::Water
     }
@@ -730,6 +832,84 @@ impl World {
             };
             self.agents.x[i] = x + (nx - x) * f;
             self.agents.y[i] = y + (ny - y) * f;
+        }
+        if self.map.spec.size != MapSize::Classic {
+            self.track_stranded(i, tx, ty);
+        }
+    }
+    /// An agent still en route but unable to make 24 units of progress
+    /// for ~600 ticks is stranded at water and starts carrying a report
+    /// home (delivered by `update_water_reports` on arrival).
+    fn track_stranded(&mut self, i: usize, tx: f32, ty: f32) {
+        if !self.agents.alive[i] || self.water.pending.len() >= 256 {
+            return;
+        }
+        if self.water.progress.len() <= i {
+            self.water.progress.resize(i + 1, None);
+        }
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        match self.water.progress[i] {
+            Some((px, py, since)) if dist(x, y, px, py) < 24.0 => {
+                if self.tick.saturating_sub(since) > 600
+                    && !self.water.pending.iter().any(|p| p.agent == i as u32)
+                {
+                    self.water.pending.push(PendingBlock {
+                        agent: i as u32,
+                        x,
+                        y,
+                        tx,
+                        ty,
+                        tick: self.tick,
+                    });
+                }
+            }
+            _ => self.water.progress[i] = Some((x, y, self.tick)),
+        }
+    }
+    /// Deliver carried reports once their bearer reaches home ground.
+    pub(super) fn update_water_reports(&mut self) {
+        if self.map.spec.size == MapSize::Classic || self.water.pending.is_empty() {
+            return;
+        }
+        let mut arrived: Vec<PendingBlock> = Vec::new();
+        self.water.pending.retain(|p| {
+            let i = p.agent as usize;
+            let home = self.agents.home[i] as usize;
+            let keep = self.agents.alive[i]
+                && home < self.markets.len()
+                && {
+                    let m = &self.markets[home];
+                    let r = rest::settlement_radius(m.housing_blocks).max(160.0);
+                    dist(self.agents.x[i], self.agents.y[i], m.x, m.y) >= r
+                };
+            if !keep {
+                arrived.push(*p);
+            }
+            keep
+        });
+        for p in arrived {
+            if !self.agents.alive[p.agent as usize] {
+                continue;
+            }
+            let market = self.agents.home[p.agent as usize];
+            let cell = ((p.x / 96.0) as i32, (p.y / 96.0) as i32);
+            if let Some(b) = self.water.blocks.iter_mut().find(|b| {
+                b.market == market as u32
+                    && ((b.x / 96.0) as i32, (b.y / 96.0) as i32) == cell
+            }) {
+                b.reports = b.reports.saturating_add(1);
+                b.tick = p.tick;
+            } else if self.water.blocks.len() < 64 {
+                self.water.blocks.push(WaterBlock {
+                    market: market as u32,
+                    x: p.x,
+                    y: p.y,
+                    tx: p.tx,
+                    ty: p.ty,
+                    tick: p.tick,
+                    reports: 1,
+                });
+            }
         }
     }
     pub(super) fn travel_step(&mut self) {

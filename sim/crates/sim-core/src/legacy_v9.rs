@@ -78,6 +78,7 @@ impl From<LegacyWorld> for World {
             governance: Default::default(),
             camp_rumours: Default::default(),
             road_paths: Vec::new(),
+            water: WaterState::default(),
         }
     }
 }

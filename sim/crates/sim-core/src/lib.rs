@@ -43,6 +43,7 @@ use social::Tavern;
 mod rest;
 use rest::Shelter;
 mod travel;
+pub use travel::WaterState;
 use travel::Convoy;
 
 pub const DT: f32 = 0.1;
@@ -402,6 +403,10 @@ pub struct World {
     /// after loading instead of being serialized.
     #[serde(skip)]
     road_paths: Vec<Vec<(f32, f32)>>,
+    /// Stranded-at-water reports on their way to and held by villages.
+    /// Serialized as a checkpoint tail, not in the base struct.
+    #[serde(skip)]
+    pub water: WaterState,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -601,6 +606,7 @@ impl World {
             governance: governance::Governance::default(),
             camp_rumours: Default::default(),
             road_paths: Vec::new(),
+            water: WaterState::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -1890,6 +1896,7 @@ impl World {
         self.relationships_step();
         self.wildlife_step();
         self.update_explored();
+        self.update_water_reports();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2262,12 +2269,13 @@ impl World {
             &self.explored,
             &self.governance,
             &self.camp_rumours,
+            &self.water,
         ))
         .map_err(|e| e.to_string())?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE31".to_vec();
+        let mut data = b"XXSAVE32".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2282,7 +2290,7 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
                 && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
@@ -2314,7 +2322,7 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31") {
+        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
                     Self,
@@ -2327,13 +2335,21 @@ impl World {
                 ),
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
-            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31") {
+            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
                 let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                let trailing = if &data[..8] == b"XXSAVE31" {
+                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32") {
                     let (rumours, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.camp_rumours = rumours;
+                    rest
+                } else {
+                    trailing
+                };
+                let trailing = if &data[..8] == b"XXSAVE32" {
+                    let (water, rest) =
+                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                    world.water = water;
                     rest
                 } else {
                     trailing
@@ -2466,7 +2482,7 @@ impl World {
                 }
             }
         }
-        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
             && &data[..8] != b"XXSAVE15"
         {
             world.map = WorldMap::classic(world.seed);
@@ -2484,7 +2500,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
         {
             world.init_wildlife();
         }
@@ -2498,7 +2514,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2513,7 +2529,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
         {
             world.relocate_fertile_land();
         }
@@ -2524,7 +2540,7 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
-        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31") {
+        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
             world.governance_step();
         }
         for genome in &mut world.genomes {
@@ -2693,6 +2709,7 @@ impl World {
             .map(|s| s.len())
             .collect::<Vec<_>>());
         result["wildlife"] = self.wildlife_summary();
+        result["water_blocks"] = serde_json::json!(self.water.blocks);
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
         result["banking"] = self.banking_summary();
@@ -2899,6 +2916,28 @@ mod tests {
         assert_eq!(a.markets, b.markets);
         assert_eq!(a.rng, b.rng);
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn checkpoint_load_preserves_world_state_exactly() {
+        // A current-format checkpoint must deserialize without running the
+        // legacy init/migration fixups (init_wildlife, upgrade_landscape,
+        // relocate_fertile_land, governance_step, map reset). Version guards
+        // that miss the newest header re-run those fixups and corrupt fresh
+        // state — animals respawn, patches shift, replay diverges.
+        let mut w = World::new(64, 42).unwrap();
+        for _ in 0..40 {
+            w.step(false);
+        }
+        let path = std::env::temp_dir()
+            .join(format!("xianxia-load-{}.snapshot", std::process::id()));
+        w.save(&path).unwrap();
+        let restored = World::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            postcard::to_allocvec(&w).unwrap(),
+            postcard::to_allocvec(&restored).unwrap(),
+            "load mutated world state"
+        );
     }
     #[test]
     fn snapshot_is_bounded_and_versioned() {

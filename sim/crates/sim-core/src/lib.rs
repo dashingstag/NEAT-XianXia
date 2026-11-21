@@ -495,6 +495,9 @@ pub struct Account {
 pub struct AgentTrace {
     pub x: f32,
     pub y: f32,
+    pub action: String,
+    pub action_target: u32,
+    pub action_label: String,
     pub person: serde_json::Value,
     pub job: serde_json::Value,
     pub rested_meter: f32,
@@ -1877,6 +1880,11 @@ impl World {
         let mut person = self.person_trace(i);
         person["need_priorities"] = self.need_priorities(i).trace(self.in_energy_emergency(i));
         person["carried_meat"] = self.meat_trade.pack(i).into();
+        person["carried_food"] = serde_json::json!({
+            "berries": self.agents.berries[i],
+            "fish": self.agents.fish[i],
+            "rice": self.agents.rice[i],
+        });
         if let Some(tools) = person["tools"].as_array_mut() {
             if self.wildlife.spears.contains(&(i as u32)) {
                 tools.push("wooden spear".into());
@@ -1890,47 +1898,7 @@ impl World {
             .map(|c| TraceChoice {
                 action: format!("{:?}", c.action),
                 target: c.target,
-                product: if c.action == Action::MigrateToCamp {
-                    self.markets[c.target as usize].name.clone()
-                } else if c.action == Action::DiscussCamp {
-                    format!(
-                        "{} tavern",
-                        self.markets[self.taverns[c.target as usize].market as usize].name
-                    )
-                } else if self.is_urban_action(c.action) {
-                    self.urban_choice_name(c)
-                } else if matches!(c.action, Action::HuntWildlife | Action::EatCarcass) {
-                    self.wildlife
-                        .animals
-                        .get(c.target as usize)
-                        .map(|animal| wildlife::SpeciesDef::of(animal.species).name)
-                        .unwrap_or("wildlife")
-                        .into()
-                } else if c.action == Action::CraftSpear {
-                    "wooden spear".into()
-                } else if c.action == Action::CraftBow {
-                    "hunting bow".into()
-                } else if matches!(
-                    c.action,
-                    Action::CollectMeat | Action::SellMeat | Action::BuyMeat
-                ) {
-                    "meat".into()
-                } else if c.action == Action::Play {
-                    self.landmarks
-                        .get(c.target as usize)
-                        .map(|site| site.name)
-                        .unwrap_or("")
-                        .into()
-                } else if matches!(c.action, Action::Recover | Action::Socialize) {
-                    String::new()
-                } else if matches!(c.action, Action::BuyInformation | Action::SellInformation) {
-                    self.markets
-                        .get((c.target % market_information::MARKET_SLOTS) as usize)
-                        .map(|market| market.name.clone())
-                        .unwrap_or_default()
-                } else {
-                    PRODUCTS[c.kind].into()
-                },
+                product: self.choice_label(c),
                 score: c.score,
                 inputs: c.inputs.to_vec(),
                 memory_inputs: self.action_memory_inputs(i, c.action, c.target),
@@ -1938,9 +1906,22 @@ impl World {
             .collect();
         choices.sort_by(|a, b| b.score.total_cmp(&a.score));
         let a = &self.agents;
+        let committed = Candidate {
+            action: a.action[i],
+            target: a.target[i],
+            kind: self
+                .patches
+                .get(a.target[i] as usize)
+                .map(|p| p.kind)
+                .unwrap_or(a.cargo_kind[i] as usize),
+            ..Default::default()
+        };
         Some(AgentTrace {
             x: a.x[i],
             y: a.y[i],
+            action: format!("{:?}", a.action[i]),
+            action_target: a.target[i],
+            action_label: self.choice_label(&committed),
             person,
             job: self.job_trace(i),
             rested_meter: a.rested_meter[i],
@@ -1974,6 +1955,49 @@ impl World {
             },
             choices,
         })
+    }
+    fn choice_label(&self, c: &Candidate) -> String {
+        if c.action == Action::MigrateToCamp {
+            self.markets[c.target as usize].name.clone()
+        } else if c.action == Action::DiscussCamp {
+            format!(
+                "{} tavern",
+                self.markets[self.taverns[c.target as usize].market as usize].name
+            )
+        } else if self.is_urban_action(c.action) {
+            self.urban_choice_name(c)
+        } else if matches!(c.action, Action::HuntWildlife | Action::EatCarcass) {
+            self.wildlife
+                .animals
+                .get(c.target as usize)
+                .map(|animal| wildlife::SpeciesDef::of(animal.species).name)
+                .unwrap_or("wildlife")
+                .into()
+        } else if c.action == Action::CraftSpear {
+            "wooden spear".into()
+        } else if c.action == Action::CraftBow {
+            "hunting bow".into()
+        } else if matches!(
+            c.action,
+            Action::CollectMeat | Action::SellMeat | Action::BuyMeat
+        ) {
+            "meat".into()
+        } else if c.action == Action::Play {
+            self.landmarks
+                .get(c.target as usize)
+                .map(|site| site.name)
+                .unwrap_or("")
+                .into()
+        } else if matches!(c.action, Action::Recover | Action::Socialize) {
+            String::new()
+        } else if matches!(c.action, Action::BuyInformation | Action::SellInformation) {
+            self.markets
+                .get((c.target % market_information::MARKET_SLOTS) as usize)
+                .map(|market| market.name.clone())
+                .unwrap_or_default()
+        } else {
+            PRODUCTS[c.kind].into()
+        }
     }
     pub fn step(&mut self, parallel: bool) {
         self.tick += 1;

@@ -22,10 +22,16 @@ var last_connect := 0.0
 var last_inspector_ms := 0
 var last_inspector_id := -1
 var clock_label: Label
-var rested_bar: ProgressBar
-var happiness_bar: ProgressBar
-var happiness_label: Label
-var rest_label: Label
+var vital_rows := {}
+var chips_row: FlowContainer
+var needs_label: Label
+var needs_box: VBoxContainer
+var person_tabs: TabContainer
+var summary_label: RichTextLabel
+var mind_label: RichTextLabel
+var relations_label: Label
+var relations_tree: Tree
+var policy_label: RichTextLabel
 var board_focus := -1
 var site_selection: Dictionary = {}
 var follow_button: Button
@@ -187,19 +193,60 @@ func _ready() -> void:
 	camera_controls.add_child(follow_button)
 	camera_controls.add_child(label("Drag releases follow",11))
 	vitals = VBoxContainer.new()
+	vitals.add_theme_constant_override("separation",4)
 	inspect_panel.add_child(vitals)
-	happiness_label = label("Happiness / selected person",12)
-	vitals.add_child(happiness_label)
-	happiness_bar = ProgressBar.new()
-	happiness_bar.custom_minimum_size = Vector2(200,16)
-	happiness_bar.max_value = 100
-	vitals.add_child(happiness_bar)
-	rest_label = label("Rested meter / selected person",12)
-	vitals.add_child(rest_label)
-	rested_bar = ProgressBar.new()
-	rested_bar.custom_minimum_size = Vector2(200,18)
-	rested_bar.max_value = 100
-	vitals.add_child(rested_bar)
+	chips_row = FlowContainer.new()
+	chips_row.add_theme_constant_override("h_separation",6)
+	chips_row.add_theme_constant_override("v_separation",4)
+	vitals.add_child(chips_row)
+	for spec in [["health","Health","d98a7a",false],["energy","Energy","e0c878",false],["hunger","Hunger","dd9c91",true],["happiness","Happiness","a8cea0",false],["rested","Rested","9db8dd",false]]:
+		vital_rows[spec[0]] = _meter_row(spec[1],Color(spec[2]),spec[3])
+		vitals.add_child(vital_rows[spec[0]].row)
+	person_tabs = TabContainer.new()
+	person_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	person_tabs.visible = false
+	inspect_panel.add_child(person_tabs)
+	summary_label = _person_label("Summary")
+	person_tabs.add_child(summary_label)
+	var mind := VBoxContainer.new()
+	mind.name = "Mind"
+	mind.add_theme_constant_override("separation",6)
+	needs_label = label("DRIVES / urgency",11)
+	mind.add_child(needs_label)
+	needs_box = VBoxContainer.new()
+	needs_box.add_theme_constant_override("separation",3)
+	mind.add_child(needs_box)
+	mind_label = _person_label("Mind")
+	mind.add_child(mind_label)
+	person_tabs.add_child(mind)
+	var rel_tab := VBoxContainer.new()
+	rel_tab.name = "Relations"
+	rel_tab.add_theme_constant_override("separation",4)
+	relations_label = label("RELATIONSHIPS",12)
+	rel_tab.add_child(relations_label)
+	relations_tree = Tree.new()
+	relations_tree.columns = 4
+	relations_tree.column_titles_visible = true
+	relations_tree.hide_root = true
+	relations_tree.custom_minimum_size = Vector2(350,200)
+	relations_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	relations_tree.add_theme_font_size_override("font_size",12)
+	relations_tree.add_theme_font_size_override("title_button_font_size",12)
+	var col_ratios := [5,1,3,3]
+	for i in range(4):
+		relations_tree.set_column_title(i,["Name","Bond","Context","Drift · ±"][i])
+		relations_tree.set_column_expand(i,true)
+		relations_tree.set_column_expand_ratio(i,col_ratios[i])
+		relations_tree.set_column_clip_content(i,true)
+	relations_tree.item_selected.connect(func():
+		var row := relations_tree.get_selected()
+		if row != null:
+			_select_agent(int(row.get_metadata(0)))
+	)
+	rel_tab.add_child(relations_tree)
+	person_tabs.add_child(rel_tab)
+	policy_label = _person_label("Policy")
+	person_tabs.add_child(policy_label)
 	detail = RichTextLabel.new()
 	detail.bbcode_enabled = true
 	detail.meta_clicked.connect(_inspect_link)
@@ -302,6 +349,135 @@ func send(command: Dictionary) -> void:
 	frame.append_array(body)
 	tcp.put_data(frame)
 
+func _meter_row(title: String, fill: Color, danger: bool) -> Dictionary:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation",6)
+	var name_label := label(title,12)
+	name_label.custom_minimum_size = Vector2(70,0)
+	row.add_child(name_label)
+	var bar := ProgressBar.new()
+	bar.max_value = 100
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0,14)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var track := StyleBoxFlat.new()
+	track.bg_color = Color(0.16,0.19,0.16)
+	track.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("background",track)
+	var fill_box := StyleBoxFlat.new()
+	fill_box.bg_color = fill
+	fill_box.set_corner_radius_all(3)
+	bar.add_theme_stylebox_override("fill",fill_box)
+	row.add_child(bar)
+	var value_label := label("",12)
+	value_label.custom_minimum_size = Vector2(34,0)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	row.add_child(value_label)
+	return {"row":row,"bar":bar,"value":value_label,"fill":fill,"danger":danger}
+
+func _meter_set(key: String, amount: float) -> void:
+	var r: Dictionary = vital_rows[key]
+	r.row.visible = true
+	r.bar.value = amount
+	r.value.text = str(roundi(amount))
+	if r.danger:
+		(r.bar.get_theme_stylebox("fill") as StyleBoxFlat).bg_color = Color("e0b078").lerp(Color("dd5030"),clampf(amount/100.0,0.0,1.0))
+
+func _chip(text: String, color: Color) -> Label:
+	var c := label(text,11)
+	c.add_theme_color_override("font_color",Color("1c2018"))
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.set_corner_radius_all(7)
+	style.content_margin_left = 7
+	style.content_margin_right = 7
+	c.add_theme_stylebox_override("normal",style)
+	return c
+
+func _update_vitals(info: Dictionary, kind: String) -> void:
+	for child in chips_row.get_children():
+		child.queue_free()
+	for child in needs_box.get_children():
+		child.queue_free()
+	var chips: Array = []
+	if kind == "person":
+		var person: Dictionary = info.get("person",{})
+		_meter_set("health",float(info.get("health",0)))
+		_meter_set("energy",float(info.get("energy",0)))
+		_meter_set("hunger",float(info.get("hunger",0)))
+		_meter_set("happiness",float(person.get("happiness",50)))
+		_meter_set("rested",float(info.get("rested_meter",0)))
+		if not bool(info.get("alive",true)):
+			chips.append(["DECEASED",Color("686a60")])
+		if bool(info.get("sleeping",false)):
+			chips.append(["SLEEPING",Color("b5cce3")])
+		elif bool(info.get("rested",false)):
+			chips.append(["RESTED",Color("a8cea0")])
+		if float(info.get("hunger",0)) >= 80.0:
+			chips.append(["STARVING",Color("dd9c91")])
+		if not bool(person.get("adult",true)):
+			chips.append(["CHILD",Color("e5c78e")])
+		if str(info.get("travel","")).to_lower().contains("travel") or str(info.get("travel","")).to_lower().contains("convoy"):
+			chips.append(["TRAVELLING",Color("99c8d7")])
+		var priorities: Array = person.get("need_priorities",[])
+		needs_label.visible = not priorities.is_empty()
+		needs_box.visible = needs_label.visible
+		for priority in priorities:
+			var urgency := float(priority.get("urgency",0))*100.0
+			var critical := bool(priority.get("critical",false))
+			var row := _meter_row(str(priority.get("need","?")).capitalize(),Color("dd9c91") if critical else Color("cbb1de"),false)
+			needs_box.add_child(row.row)
+			row.bar.value = urgency
+			row.value.text = str(roundi(urgency))
+	elif kind == "animal":
+		_meter_set("health",float(info.get("health",0)))
+		_meter_set("energy",float(info.get("energy",0)))
+		_meter_set("hunger",float(info.get("hunger",0)))
+		vital_rows["happiness"].row.visible = false
+		vital_rows["rested"].row.visible = false
+		if not bool(info.get("alive",true)):
+			chips.append(["DECEASED",Color("686a60")])
+		if not bool(info.get("adult",true)):
+			chips.append(["YOUNG",Color("e5c78e")])
+		if bool(info.get("predator",str(info.get("species","")) in ["Fox","Wolf"])):
+			chips.append(["PREDATOR",Color("dd9c91")])
+		if info.get("pregnancy_days_left") != null:
+			chips.append(["PREGNANT",Color("d885a1")])
+	for entry in chips:
+		chips_row.add_child(_chip(entry[0],entry[1]))
+
+func _person_label(tab_name: String) -> RichTextLabel:
+	var l := RichTextLabel.new()
+	l.name = tab_name
+	l.bbcode_enabled = true
+	l.meta_clicked.connect(_inspect_link)
+	l.add_theme_font_size_override("normal_font_size",15)
+	l.custom_minimum_size = Vector2(350,200)
+	l.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	return l
+
+func _relations_fill(info: Dictionary) -> void:
+	relations_tree.clear()
+	var person: Dictionary = info.get("person",{})
+	var relationships: Array = person.get("relationships",[]).duplicate()
+	relations_label.text = "RELATIONSHIPS / %s OF 50" % relationships.size()
+	relationships.sort_custom(func(a, b): return int(a.score) > int(b.score))
+	var root := relations_tree.create_item()
+	for r in relationships:
+		var row := relations_tree.create_item(root)
+		row.set_text(0,str(r.name))
+		row.set_metadata(0,int(r.id))
+		row.set_text(1,"%+d" % int(r.score))
+		row.set_custom_color(1,Color("a8cea0") if int(r.score) > 0 else Color("dd9c91"))
+		var context: Array = []
+		if r.get("family",false):
+			context.append("family")
+		if r.get("shared_trait",false):
+			context.append("trait")
+		context.append_array(r.get("contexts",[]))
+		row.set_text(2,"·".join(context) if not context.is_empty() else "—")
+		row.set_text(3,"%.0fd · %s/%s" % [float(r.days_to_drift),int(r.positive_chance_percent),int(r.negative_chance_percent)])
+
 func _buyer_link() -> String:
 	return "[url=buyer]Return to buyer #%s[/url]\n\n" % purchase_buyer if purchase_buyer >= 0 else ""
 
@@ -341,6 +517,8 @@ func _select_agent(id: int, keep_buyer := false) -> void:
 	selected_input.value = id
 	field.selected = id
 	field.selected_animal = -1
+	person_tabs.visible = true
+	detail.visible = false
 	last_inspector_ms = 0
 	send({"command":"select","agent":id})
 
@@ -352,6 +530,8 @@ func _select_animal(id: int) -> void:
 	field.selected_animal = id
 	field.selected = -1
 	field.selected_index = -1
+	person_tabs.visible = false
+	detail.visible = true
 	last_inspector_ms = 0
 	send({"command":"select_animal","animal":id})
 
@@ -370,7 +550,11 @@ func _show_wildlife() -> void:
 
 func _animal_text(animal: Dictionary) -> String:
 	var text := "[color=#e5c78e][font_size=20]WILDLIFE MIND / #%s[/font_size][/color]\n" % int(animal.id)
+	if not bool(animal.get("alive",true)):
+		text += "[color=#dd9c91][b]DECEASED[/b][/color]\n"
 	text += "[b]%s[/b] / %s / %s days old / %s\n" % [animal.species,animal.gender,int(animal.age_days),"Adult" if animal.adult else "Young"]
+	if animal.get("x") != null:
+		text += "At (%s, %s)\n" % [roundi(float(animal.x)),roundi(float(animal.y))]
 	text += "Health %.0f / hunger %.0f / food energy %.0f\n" % [float(animal.health),float(animal.hunger),float(animal.energy)]
 	text += "Home grove %s / %s\n" % [int(animal.forest),animal.action]
 	text += "Mother %s / father %s\n" % [str(animal.mother) if animal.get("mother") != null else "Wild-born",str(animal.father) if animal.get("father") != null else "Wild-born"]
@@ -395,6 +579,8 @@ func _select_site(site: Dictionary, keep_buyer := false) -> void:
 	field.selected_animal = -1
 	board_focus = int(site.get("market",-1))
 	inspector_tabs.current_tab = 0
+	person_tabs.visible = false
+	detail.visible = true
 	last_inspector_ms = 0
 	_update_focus_target()
 	field.queue_redraw()
@@ -717,22 +903,21 @@ func _decode(data: PackedByteArray) -> void:
 		leaderboard.text = "Waiting for wealth data"
 	var info: Variant = state.get("selected")
 	var animal: Variant = state.get("selected_animal")
-	vitals.visible = site_selection.is_empty()
+	var person_mode := site_selection.is_empty() and info is Dictionary
+	person_tabs.visible = person_mode
+	detail.visible = not person_mode
+	vitals.visible = site_selection.is_empty() and (animal is Dictionary or info is Dictionary)
 	if not site_selection.is_empty():
 		detail.text = _buyer_link() + _site_text()
 	elif animal is Dictionary:
-		happiness_label.text = "Health / selected animal"
-		rest_label.text = "Food energy / selected animal"
-		happiness_bar.value = float(animal.health)
-		rested_bar.value = float(animal.energy)
+		_update_vitals(animal,"animal")
 		detail.text = _animal_text(animal)
-	elif info is Dictionary:
-		happiness_label.text = "Happiness / selected person"
-		rest_label.text = "Rested meter / selected person"
-		var person: Dictionary = info.get("person",{})
-		happiness_bar.value = float(person.get("happiness",50))
-		rested_bar.value = float(info.get("rested_meter",0.0))
-		detail.text = _buyer_link() + PersonInspector.describe(info,state)
+	elif person_mode:
+		_update_vitals(info,"person")
+		summary_label.text = _buyer_link() + PersonInspector.summary_text(info,state)
+		mind_label.text = PersonInspector.mind_text(info,state)
+		_relations_fill(info)
+		policy_label.text = PersonInspector.policy_text(info,state)
 	var grass: Dictionary = ecology.get("grass_account",{})
 	var lines := "[color=#a8cea0]WOODLAND WILDLIFE[/color]\nRabbits %s / deer %s / births %s / deaths %s\nGrass %s / eaten %s / berries eaten %s\n\n" % [int(ecology.get("rabbits",0)),int(ecology.get("deer",0)),int(ecology.get("births",0)),int(ecology.get("deaths",0)),int(grass.get("stock",0)),int(grass.get("eaten",0)),int(ecology.get("berries_eaten",0))]
 	if ecology.has("living_by_species"):

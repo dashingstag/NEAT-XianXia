@@ -96,14 +96,26 @@ func check_ui() -> void:
 		assert(int(ui.selected_input.value)==int(rows[0].id))
 		assert(ui.inspector_tabs.current_tab==0)
 	if world.selected is Dictionary:
+		assert(ui.person_tabs.visible and ui.person_tabs.get_tab_count() == 4)
+		assert(not ui.detail.visible)
+		assert(ui.summary_label.text.contains("INDIVIDUAL MIND"))
+		assert(ui.policy_label.text.contains("CURRENT POLICY PREVIEW"))
 		var relations: Array = world.selected.person.get("relationships",[])
 		assert(relations.size()<=50)
+		var rel_rows: Array = ui.relations_tree.get_root().get_children()
+		assert(rel_rows.size() == relations.size())
+		var names: Array = rel_rows.map(func(row): return row.get_text(0))
+		var scores := {}
+		var best_score := -999
 		for relationship in relations:
-			assert(ui.detail.text.contains(relationship.name))
+			assert(relationship.name in names)
 			assert(int(relationship.score)!=0 and absi(int(relationship.score))<=100)
+			scores[int(relationship.id)] = int(relationship.score)
+			best_score = maxi(best_score,int(relationship.score))
 		if not relations.is_empty():
-			ui.detail.meta_clicked.emit(str(int(relations[0].id)))
-			assert(int(ui.selected_input.value)==int(relations[0].id))
+			assert(scores.get(int(rel_rows[0].get_metadata(0)),-999) == best_score)
+			rel_rows[0].select(0)
+			assert(int(ui.selected_input.value) == int(rel_rows[0].get_metadata(0)))
 	# Overlay a synthetic receipt on the legacy fixture; its shop has since changed hands.
 	var buyer: Dictionary = world.selected.duplicate(true)
 	var original := int(buyer.id)
@@ -189,9 +201,46 @@ func check_ui() -> void:
 
 	var animal := {"id": 2, "species": "Fox", "gender": "Male", "age_days": 300, "adult": true,
 		"health": 100.0, "hunger": 20.0, "energy": 80.0, "forest": 0, "action": "Rest",
-		"generation": 0, "genome_nodes": 49, "genome_genes": 48}
+		"generation": 0, "genome_nodes": 49, "genome_genes": 48, "x": 100.0, "y": 200.0}
 	assert(ui._animal_text(animal).contains("Diet: prey and carcass meat."))
+	assert(ui._animal_text(animal).contains("At (100, 200)"))
 	animal.species = "Rabbit"
 	assert(ui._animal_text(animal).contains("Diet: grass or forest berries."))
+	animal.species = "Fox"
+
+	# Vitals bars and status chips mirror the inspected subject.
+	ui._update_vitals(animal,"animal")
+	assert(ui.vital_rows["health"].bar.value == 100.0)
+	assert(ui.vital_rows["hunger"].bar.value == 20.0)
+	assert(not ui.vital_rows["rested"].row.visible)
+	var animal_chips: Array = ui.chips_row.get_children().map(func(c): return c.text)
+	assert("PREDATOR" in animal_chips)
+
+	var probe: Dictionary = world.selected.duplicate(true)
+	probe.health = 40.0; probe.hunger = 88.0
+	probe.person["adult"] = false
+	probe.person["need_priorities"] = [{"need":"food","urgency":0.9,"critical":true}]
+	ui._update_vitals(probe,"person")
+	assert(ui.vital_rows["health"].bar.value == 40.0)
+	assert(ui.vital_rows["hunger"].bar.value == 88.0)
+	assert(ui.vital_rows["rested"].row.visible)
+	var chips: Array = ui.chips_row.get_children().map(func(c): return c.text)
+	assert("STARVING" in chips and "CHILD" in chips)
+	assert(ui.needs_box.get_child_count() == 1)
+
+	probe["action"] = "ForageMeal"; probe["action_label"] = "berries"
+	probe["x"] = 12.0; probe["y"] = 34.0; probe["home"] = 0
+	probe.person["father"] = 7
+	probe.person["carried_food"] = {"berries":3,"fish":1,"rice":0}
+	var text: String = ui.PersonInspector.describe(probe, world)
+	assert(text.contains("At (12, 34)"))
+	assert(text.contains("Home: %s" % world.markets[0].name))
+	assert(text.contains("Now: [b]ForageMeal[/b] · berries"))
+	assert(text.contains("Father: [url=7]#7[/url]"))
+	assert(text.contains("Pocket: 3 berries · 1 fish"))
+	assert(text.contains("/ child"))
+	if not probe.choices.is_empty():
+		probe.choices[0].action = "ForageMeal"
+		assert(ui.PersonInspector.describe(probe, world).contains("▶ ForageMeal"))
 	print(JSON.stringify({"urban_ui":"passed","buildings_inspected":checked,"zones":world.urban.zones.size(),"fidelity_levels":3,"connected_to_live_backend":false}))
 	quit()

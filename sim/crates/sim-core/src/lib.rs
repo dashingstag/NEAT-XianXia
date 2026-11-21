@@ -54,6 +54,12 @@ pub use travel::{Ship, TrafficState, WaterState};
 
 pub const DT: f32 = 0.1;
 pub const GOODS: usize = 13;
+/// Wire frame budget shared with the viewer (see
+/// contracts/README.md). The server refuses to emit an XNS1 frame
+/// larger than this and reports an explicit XNC1 error instead; the
+/// viewer treats a larger declared length as stream corruption and
+/// reconnects.
+pub const MAX_SNAPSHOT_FRAME: usize = 4 * 1024 * 1024;
 pub const CANDIDATES: usize = 64;
 pub const WEIGHTS: [u32; GOODS] = [1, 4, 3, 2, 5, 4, 3, 4, 1, 4, 5, 3, 4];
 pub const MINT_VALUES: [u64; GOODS] = [0, 0, 0, 0, 100, 10, 1, 0, 0, 0, 0, 0, 0];
@@ -4082,6 +4088,18 @@ mod tests {
         let animals = u32::from_le_bytes(bytes[28..32].try_into().unwrap()) as usize;
         assert_eq!(animals, w.wildlife.animals.len());
         assert_eq!(bytes.len(), 32 + jsonlen + (25 + animals) * 16);
+        assert!(bytes.len() <= MAX_SNAPSHOT_FRAME);
+        // A real mature world stays far under the frame budget today
+        // (~122 KiB on fixtures/bank-v12.snapshot); the shared constant
+        // exists so pathological growth fails loudly instead of looping
+        // the viewer on a reject.
+        let mature = World::load(Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/bank-v12.snapshot"
+        )))
+        .unwrap();
+        let frame = mature.viewer_snapshot(20_000, None, true, None, None);
+        assert!(frame.len() <= MAX_SNAPSHOT_FRAME);
     }
     #[test]
     fn each_agent_has_distinct_weights_and_valid_brain() {

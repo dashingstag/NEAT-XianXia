@@ -520,6 +520,7 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
     let mut selected_animal = None;
     let mut last = Instant::now();
     let mut next_snapshot = Instant::now();
+    let mut oversized = false;
     let mut accumulator = 0.0f32;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     if let Some(path) = env::var_os("XIANXIA_READY_FILE") {
@@ -711,13 +712,34 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         }
         let snapshot = if now >= next_snapshot && client.is_some() {
             next_snapshot = now + Duration::from_millis(100);
-            Some(world.viewer_snapshot(
+            let bytes = world.viewer_snapshot(
                 20_000,
                 selected,
                 paused,
                 selected_animal,
                 wealth.report(&world),
-            ))
+            );
+            if bytes.len() > sim_core::MAX_SNAPSHOT_FRAME {
+                // The viewer treats a frame this large as corruption and
+                // reconnects forever; surface one explicit error instead.
+                if !oversized {
+                    oversized = true;
+                    if let Some(c) = client.as_mut() {
+                        c.reply(
+                            &format!(
+                                "Snapshot {} bytes exceeds the {} MiB viewer frame budget",
+                                bytes.len(),
+                                sim_core::MAX_SNAPSHOT_FRAME / (1024 * 1024)
+                            ),
+                            false,
+                        );
+                    }
+                }
+                None
+            } else {
+                oversized = false;
+                Some(bytes)
+            }
         } else {
             None
         };

@@ -1,5 +1,9 @@
 extends Control
 const PersonInspector = preload("res://person_inspector.gd")
+# Must match sim_core::MAX_SNAPSHOT_FRAME (contracts/README.md): the
+# server refuses to send XNS1 frames beyond it, so any oversized
+# declared length here is stream corruption — reconnect.
+const MAX_SNAPSHOT_FRAME := 4 * 1024 * 1024
 var purchase_buyer := -1
 const Field = preload("res://field.gd")
 var tcp := StreamPeerTCP.new()
@@ -806,7 +810,7 @@ func _process(_delta: float) -> void:
 	var newest_snapshot := PackedByteArray()
 	while incoming.size() >= 4:
 		var length := int(incoming.decode_u32(0))
-		if length < 4 or length > 4194304:
+		if length < 4 or length > MAX_SNAPSHOT_FRAME:
 			notice.text = "Invalid native snapshot frame."
 			_connect()
 			return

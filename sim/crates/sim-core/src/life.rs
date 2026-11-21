@@ -1246,7 +1246,7 @@ impl World {
                 return false;
             }
             // A fish patch deeper than the 24-unit bank cast can never
-            // be worked — offering it strands foragers at the shore.
+            // be worked â€” offering it strands foragers at the shore.
             if self.map.spec.size != MapSize::Classic
                 && self.map.terrain_at(p.x, p.y) == Terrain::Water
             {
@@ -1341,7 +1341,7 @@ impl World {
         // bearer keeps pinning against the same unreachable shore, the
         // report queue fills with entries that can never land, and the
         // village never learns to build ports. Agents already queued at a
-        // dock stay � the ferry is their crossing.
+        // dock stay — the ferry is their crossing.
         if self
             .water
             .pending

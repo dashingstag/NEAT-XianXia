@@ -68,7 +68,8 @@ def check(stream):
     terrain, explored = layers["terrain"], layers["explored"]
     assert (terrain["cols"], terrain["rows"], terrain["cell"]) == (768, 480, 4.0)
     assert all(len(base64.b64decode(terrain[k])) == 768 * 480 for k in ("classes", "elevation", "qi"))
-    assert max(base64.b64decode(terrain["classes"])) <= 5
+    assert max(base64.b64decode(terrain["classes"])) <= 6
+    assert terrain.get("regions") is not None and isinstance(terrain.get("rivers"), list)
     known = base64.b64decode(explored["known"])
     assert (explored["cols"], explored["rows"], explored["chunk"]) == (8, 5, 384) and len(known) == 40
     assert 0 < sum(known) <= 40 and set(known) <= {0, 1}

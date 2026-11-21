@@ -84,6 +84,7 @@ impl From<LegacyWorld> for World {
             meat_trade: Default::default(),
             market_information: Default::default(),
             road_paths: Vec::new(),
+            water: WaterState::default(),
         }
     }
 }

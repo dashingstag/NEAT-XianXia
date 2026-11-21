@@ -17,7 +17,7 @@ Branch `frontier/m0-foundations`. All commits keep the user's uncommitted `viewe
 - M1 started on `frontier/m1-generated-world`: `worldmap` module with seeded, order-independent chunked generation (elevation/moisture/qi, terrain classes, MapSize Classic/x4/x25/x100, mundane homeland qi ring, persisted spec only — `0feb01a`). Still to land: generated placement of forests/patches/fertility for non-Classic sizes, scenario size option, viewer streaming/minimap, fog of war, spatial grid + bounds-literal cleanup.
 - M1 placement landed (`cfed6bf`): `World::new_with_size` sites markets inside the homeland on fertile/grass terrain, samples patches and mines from terrain classes, `MapSpec` owns the bounds helpers (classic constants preserved), `expand_map_and_food` skips legacy 3x scaling off-Classic, `sim-runner --map classic|x4|x25|x100` for bench/verify/soak. Generated X4 runs clean in soak; 125 tests pass.
 - M1 continued on `frontier/m1-scenario-and-fog`: scenario `map` option wired through `sim-runner --map` and `dev.py play --scenario` (opt-in frontier-x4/x25/x100 scenarios in `world/scenarios.toml`; Classic stays default), `reset` preserves map size, and per-settlement fog of war (`Exploration` — per-market visited-chunk sets, persisted, exposed as `explored_chunks` in snapshot metadata). Still open: viewer chunk streaming/minimap/fog rendering (Godot blocked), traded maps / guild use of exploration.
-- Wildlife hot loop de-quadratized on `frontier/m1-spatial-grid`: `ForestStats` buckets animals/grass/food/population per forest once per decision round (semantically identical � mating already required same forest), replacing per-animal full scans.
+- Wildlife hot loop de-quadratized on `frontier/m1-spatial-grid`: `ForestStats` buckets animals/grass/food/population per forest once per decision round (semantically identical — mating already required same forest), replacing per-animal full scans.
 
 ## Player-facing goals
 
@@ -71,3 +71,190 @@ M0 sequential, single owner. After M1, wilderness (M2-M3) and society (M4) split
 - "Discovery within a year of the first guild" and predator-prey coexistence are tuning targets, not scripts; budget soak-and-tune time in M2, M4 and M6.
 - Qi is conserved: veins have flow rates, spirit stones are consumed, cores drop from killed beasts.
 - Suspected camp cell-hash collision: confirm with a failing test in M0, then replace with the spatial grid.
+
+## M8 Water routes: stranded reports, ports and shipping
+
+Blocked movers become a demand signal that villages answer with
+infrastructure. Ordered phases; each ends with a replay-exact Classic
+suite and a generated-map scenario test.
+
+### P1 Stranded reporting
+
+- Transient stuck detection: `walk_toward` already returns nothing when
+  `steer` fails; track per-agent progress in a `#[serde(skip)]` map
+  (`index -> (x, y, tick)`). An agent with an active Travel/Gather/Rest
+  destination whose position has not moved >= 24 units in ~600 ticks is
+  stranded at water.
+- A stranded agent records a `WaterBlock { x, y, target_x, target_y,
+  tick, reports }` on their home market (deduped by 96u cells, capped
+  at 64 entries, persisted -> XXSAVE16). On their next arrival inside
+  the settlement radius the report is delivered (physical reporting);
+  agents then retry or fall back per existing action logic.
+- Exit test: seed a walker facing deep water; assert a block is
+  recorded and delivered on home arrival.
+
+### P2 Ports
+
+- `Port { id, market, x, y, pair, progress, ships: Vec<u32> }` persisted
+  on World (part of the same v16 bump).
+- Far-shore resolution: from the block position toward the blocked
+  target, sample `terrain_at` every 32u up to 4096u; first `buildable`
+  land is the landing site, nudged dry. No land => report expires
+  unreached (open ocean or unreachable island).
+- Village planning: a zoned market with a delivered block and no port
+  within 300u of the site posts two build jobs on the existing
+  `urban.jobs` board with a new kind (5 "Shipwright" -> reuses the
+  builder pipeline: wage escrow, timber+stone material delivery,
+  phases). Port build ~= 24 wood, 8 stone.
+- Far-side catch: the landing port cannot be built until the shore is
+  reachable. If the routing grid finds a land path, a work expedition
+  (convoy) is commissioned to walk there. Otherwise the far port job is
+  queued until the first ship exists (see P3) and then ferries 2
+  builders + materials across.
+- Ports render as dock sites in `map_layers` metadata + viewer glyph
+  (new `port.png` in the xianxia glyph set).
+
+### P3 Ships and assemblies
+
+- `Ship { id, port, members: Vec<u32> (cap 100), x, y, state }`
+  persisted; built by a "Build ship" carpenter job costing 40 timber
+  from market stock at the port.
+- Demand: an agent whose target market/site is unreachable over land
+  but reachable via a port pair joins the port assembly list; when >= 8
+  wait (or an expedition convoy commits), the ship departs with up to
+  100 aboard.
+- Movement: ship = convoy-on-water. Same member-pinning math, but its
+  `steer` variant refuses land cells instead of water. Speed 1.5x walk,
+  night slowdown applies.
+- Disembark: members scatter at the landing dock; the ship becomes a
+  persistent shuttle: it returns when >= 8 queue at the far port or
+  after an idle timeout (one ferry per pair initially).
+- Viewer: ship glyph (`ship.png`, junk-rigged sail) drawn from
+  snapshot `ships[]`; assembly shown as a crowd at the dock.
+- Exit tests: stuck NPC -> block -> jobs -> port pair -> ship built ->
+  passengers disembark on the far shore within a scenario run; Classic
+  untouched (no blocks, no ports).
+
+### P4 Animals respect water
+
+- `wildlife.rs` movement (single `a.x += dir*step` site) goes through a
+  `walk_animal` that refuses `Terrain::Water` with axis-slide steering;
+  rivers stay crossable (they already swim-read fine at reduced speed).
+- Flee targets and mate/wander goals are clamped dry via `dry_ground`
+  when they land in water.
+- Exit test: an animal driven toward open water never stands on Water
+  over a long chase; classic forests unchanged.
+
+### Ordering and dependencies
+
+- P1+P4 are independent (separate commits ok). P2 needs P1. P3 needs
+  P2. Save bump to XXSAVE16 lands once with P2 (ports + water_blocks).
+- Deliberately out: fares/tolls, ship combat, fishing from boats,
+  multi-ship fleets, ocean currents. Guild/quests later reuse ports as
+  quest waypoints (M4), and spirit islands arrive with the qi layer (M5).
+
+### P5 Routed detours for stalled movers (shipped)
+
+The shoreline steering ladder caps at +-165 degrees, so a walker pressed
+against a real lake oscillated in place until the 600-tick report path
+fired — crowds pooling at water edges were movers that never attempted
+to walk around the obstacle.
+
+- After 240 stalled ticks under the 24-unit progress probe,
+  compute_detour runs the road-router A* from the mover's position and
+  stores the waypoint path in water.detours (agent idx, or
+  0x8000_0000|slot for convoys). walk_toward and departed convoys steer
+  toward a pure-pursuit lookahead 16 units along the path.
+- Arclength progress is monotonic (Detour.progress): a mover shoved off
+  the corridor aims forward instead of flipping between adjacent segment
+  projections. Recompute retry is 480 ticks for live detours, 2400 for
+  unreachable markers.
+- Truly unreachable targets leave an empty-path backoff entry and fall
+  through to the pending-report / port / ferry chain unchanged — the
+  detour only replaces waiting where walking genuinely works.
+- Router fixes this exposed: the A* goal cell can no longer be
+  force-passed (it emitted flooded centres as waypoints) — it snaps to
+  the nearest passing cell with a clear final leg instead; the start
+  cell keeps force-pass since the mover stands there. clear_shot samples
+  at 4-unit mover-step resolution (16-unit strides straddled thin bands
+  steering still hit). steer gains a 180-degree candidate so pocketed
+  movers back out.
+
+Exit test: stalled_walkers_route_around_lakes — a pinned walker gets
+waypoints and arrives on the far shore; the e2e chain re-qualified its
+span against the surveyed endpoints.
+
+### Remaining water-edge gaps and their handling
+
+- Island destinations (no dry path at all) are intentionally slow: they
+  wait on the report -> port -> ferry chain, then queue at the dock.
+  Agents standing in a port queue are waiting for a ship by design.
+- Queue hygiene: a queued rider whose target becomes land-reachable, or
+  who starves/dies, should be dropped — currently only ship_step prunes
+  dead/unfit riders at board time. Add a periodic queue sweep inside
+  update_water_reports if crowding at piers shows up in play.
+- Animal detours are not implemented — animals get water bounds only
+  (P4). If wildlife piles at shores, reuse compute_detour with a
+  wildlife-namespaced key rather than duplicating the follower.
+- Ferry legs that fail mid-route (ship beached on a headland the water
+  A* missed) currently stall with riders aboard; a ship-side progress
+  probe mirroring track_stranded is the planned guard.
+
+### P6 Shoreline crowd root causes (fix batch)
+
+A 3000-agent diagnostic (diag_shore_stall, 4000 ticks) traced the
+visible shoreline pile to five compounding causes, each fixed:
+
+- post_farm validated only the fertility-region centre; the four +-25
+  unit grid cells could land in open water. One wet farm kept winning
+  best_farm as the nearest plot and drew hundreds of workers to pin at
+  its shore. Cells are now nudged dry and must pass farm_ground
+  themselves; best_farm also refuses non-buildable plots so legacy wet
+  farms stop attracting.
+- The 256-entry carried-report cap gated the whole stall probe: once it
+  saturated, no walker accumulated stall time, computed a detour, or
+  filed a report again. The cap now bounds only new pushes.
+- Carried reports never expired and bearers stayed pinned at the same
+  shore, so deliveries were ~0. Reports now expire after ~2 days, and a
+  carrier's personal_destination resolves to its home market until the
+  report lands — the crowd physically walks home instead of pooling.
+- ForageMeal and CareFamily required a 5-unit arrival even for fish
+  patches placed in open water; they now share Gather's 24-unit bank
+  reach for water destinations.
+- The stall probe measured displacement only: sliding 24 units along a
+  shore reset it forever. A probe point now resets only when the mover
+  is measurably closer to its target; same for convoy probes.
+- Orphaned detour entries (dead walkers, released convoy slots) were
+  never evicted; the 512-entry detour map filled and every new strander
+  silently failed compute_detour. update_water_reports now sweeps them.
+
+Diag result (X4 seed 7, 3000 agents): unmoved agents at tick 4000 fell
+579 -> 233 (remaining are resting/waiting/convoy-pinned), wet farms 1 ->
+0, wet-action targets 199 -> 0, delivered blocks ~0 -> 47.
+
+### P7 Spawn-on-water fix
+
+init_people scattered each agent at market +-35 units clamped only to
+map bounds, with no terrain check. Markets near a shoreline dropped part
+of the spawn circle into open water, and an agent born more than one
+steering step from dry land could never move at all. Diag counts
+(diag_wet_spawns): X4 seed 42 spawned 635 of 10,000 agents in water (426
+too deep to ever steer out); X25 seed 42 spawned 915 (720 deep). Seed 7
+happened to place all markets inland, which hid the defect in earlier
+shoreline diagnostics.
+
+- Generated-map spawns now resample up to 16 deterministic draws until
+  the point is buildable, then fall back to dry_ground and finally the
+  market position itself (guaranteed buildable). Classic keeps its
+  single fixed spawn point untouched.
+- Legacy saves can still hold agents standing in water, so walk_toward
+  gains a wade rule: a mover whose own position is water and whose
+  steering ladder finds no legal candidate steps straight toward
+  dry_ground instead of freezing. Legal movers never trigger it.
+- Births need no change: children spawn at the mother's position, which
+  is already legal.
+
+Regression tests: generated_spawns_never_stand_on_unbuildable_ground
+(replays the failing seeds) and walkers_standing_in_water_wade_to_dry_
+ground (deep-water walker reaches land). Post-fix diag: wet_spawns=0,
+deep_stuck=0 on all three seeds.

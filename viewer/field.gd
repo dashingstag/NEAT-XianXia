@@ -36,6 +36,7 @@ var kinds := PackedInt32Array()
 var healths := PackedInt32Array()
 var rested_flags := PackedByteArray()
 var sleeping_flags := PackedByteArray()
+var grouped_flags := PackedByteArray()
 var hidden_flags := PackedByteArray()
 var carrying_flags := PackedByteArray()
 var child_flags := PackedByteArray()
@@ -43,7 +44,7 @@ var draw_points := PackedVector2Array()
 var moving := PackedByteArray()
 var phases := PackedFloat32Array()
 var draw_indices := PackedInt32Array()
-var animation_time := 0.0
+var anim_redraw := 0.0
 var panning := false
 var pan_button := 0
 var pan_start := Vector2.ZERO
@@ -74,7 +75,10 @@ var palette := [Color("e5c985"), Color("90c99a"), Color("e2bb78"), Color("99c8d7
 const TEX_DIR := "res://assets/parked/"
 const TREE_GLYPHS := ["tree-generic","pine","bamboo","willow","plum"]
 const PATCH_GLYPHS := ["berries","timber","stone","fish"]
-const MINE_GLYPHS := ["mine-gold","mine-iron","mine-iron","mine-iron"]
+const MINE_GLYPHS := ["mine-gold","mine-silver","mine-copper","mine-iron"]
+const MINE_STATIC := ["site-glyphs-xianxia/mine-gold.png","lod/l2/mine-silver.png",
+	"lod/l2/mine-copper.png","site-glyphs-xianxia/mine-iron.png"]
+const ANIMAL_DOTS := ["rabbit", "deer", "fox", "", "pheasant"]
 var _tex_cache: Dictionary = {}
 
 func _tex(rel_path: String) -> Texture2D:
@@ -89,6 +93,37 @@ func _glyph(rel_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> 
 	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false,
 		Color(1,1,1,alpha))
 	return true
+
+# lod/anim strips are N x 64px cells stepped at 10fps on the world clock, so a
+# paused world freezes every animated asset at once.
+func _anim(id: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	var t := _tex("lod/anim/%s.png" % id)
+	if t == null:
+		return false
+	var frames := maxi(1, t.get_width() / 64)
+	var frame := int(shader_clock * 10.0) % frames
+	draw_texture_rect_region(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)),
+		Rect2(frame * 64, 0, 64, 64), Color(1,1,1,alpha))
+	return true
+
+# lod/dots are 24px source, drawn at `size` world units (callers pass x/zoom
+# to hold a fixed screen size at the overview fidelity).
+func _dot(id: String, at: Vector2, size: float, alpha := 1.0) -> bool:
+	return _glyph("lod/dots/%s.png" % id, at, size, size, alpha)
+
+# lod/l2 cells cover objects with no parked glyph (convoy, rally, groves,
+# terrain features, silver/copper mines).
+func _cell(id: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	return _glyph("lod/l2/%s.png" % id, at, w, h, alpha)
+
+# Object art ladder: animated strip at fidelity 3, else the parked glyph or
+# lod cell. False when nothing exists so procedural fallbacks still apply.
+func _asset(id: String, static_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	if fidelity == 3 and _anim(id, at, w, h, alpha):
+		return true
+	if static_path != "":
+		return _glyph(static_path, at, w, h, alpha)
+	return _cell(id, at, w, h, alpha)
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(650, 480)
@@ -157,6 +192,7 @@ func receive(meta: Dictionary, records: PackedByteArray, count: int) -> void:
 	healths.resize(count)
 	rested_flags.resize(count)
 	sleeping_flags.resize(count)
+	grouped_flags.resize(count)
 	hidden_flags.resize(count)
 	carrying_flags.resize(count)
 	child_flags.resize(count)
@@ -180,6 +216,7 @@ func receive(meta: Dictionary, records: PackedByteArray, count: int) -> void:
 		carrying_flags[i] = 1 if (records[at+13] & 32) != 0 else 0
 		rested_flags[i] = 1 if (records[at+12] & 64) != 0 else 0
 		sleeping_flags[i] = 1 if (records[at+13] & 128) != 0 else 0
+		grouped_flags[i] = 1 if (records[at+12] & 128) != 0 else 0
 		healths[i] = records[at+14] & 127
 		child_flags[i] = 1 if (records[at+14] & 128) != 0 else 0
 		if id == selected:
@@ -198,7 +235,7 @@ func _refresh_overview() -> void:
 	buffer.resize(count*12)
 	for i in range(count):
 		var at := i*12
-		var grouped: bool = (record_cache[i*16+12] & 128) != 0
+		var grouped := grouped_flags[i] > 0
 		var color: Color = palette[mini(actions[i],palette.size()-1)] if healths[i] > 0 else Color("686a60")
 		if sleeping_flags[i] > 0:
 			color = Color("b5cce3")
@@ -298,7 +335,7 @@ func _select_at(position: Vector2) -> void:
 	if pick_mode not in ["Auto","People"]:
 		return
 
-	for convoy in world.get("convoys",[]) if fidelity == 1 else []:
+	for convoy in world.get("convoys",[]):
 		if p.distance_to(Vector2(convoy.x,convoy.y)) < 12.0:
 			selected = int(convoy.leader)
 			agent_selected.emit(selected)
@@ -307,7 +344,7 @@ func _select_at(position: Vector2) -> void:
 	var best := -1
 	var limit := 20.0 / maxf(1.0,magnification * 0.5)
 	for i in range(points.size()):
-		if hidden_flags[i] > 0:
+		if hidden_flags[i] > 0 or grouped_flags[i] > 0:
 			continue
 		var d: float = p.distance_to(points[i])
 		if d < limit:
@@ -402,7 +439,10 @@ func _classic_terrain() -> bool:
 
 func _house_position(center: Vector2, index: int) -> Vector2:
 	var limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)
-	return (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
+	var p := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
+	if not _classic_terrain() and terrain != null:
+		p = terrain.dry_point(center, p)
+	return p
 
 
 func _update_label_hover(point: Vector2) -> void:
@@ -511,7 +551,7 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,at-Vector2(40,float(zone.radius)+5),["RESIDENTIAL","COMMERCIAL","INDUSTRIAL"][int(zone.kind)],HORIZONTAL_ALIGNMENT_LEFT,-1,12,color)
 	for bank in world.get("banks",[]):
 		var at := Vector2(bank.x,bank.y)
-		if not _glyph("site-glyphs-xianxia/bank.png",at,44,44,1.0 if bank.ready else 0.55):
+		if not _asset("bank","site-glyphs-xianxia/bank.png",at,44,44,1.0 if bank.ready else 0.55):
 			var bank_color := Color("cbd2ad") if bank.ready else Color("b0a782")
 			draw_rect(Rect2(at-Vector2(15,9),Vector2(30,20)),bank_color,bool(bank.ready),-1.0 if bank.ready else 2.0)
 			if bank.ready:
@@ -528,7 +568,7 @@ func _draw() -> void:
 			glyph_name = "shop-" + ["clothes","tools","furniture","butcher"][clampi(line,0,3)]
 		elif kind == 2:
 			glyph_name = "workshop-" + ["hunter","cobbler","blacksmith","carpenter"][clampi(line,0,3)]
-		if not _glyph("site-glyphs-xianxia/"+glyph_name+".png",at,34,34,1.0 if building.ready else 0.55):
+		if not _asset(glyph_name,"site-glyphs-xianxia/"+glyph_name+".png",at,34,34,1.0 if building.ready else 0.55):
 			var color: Color = [Color("92c4de"),Color("e0bd6d"),Color("b89aca")][int(building.kind)]
 			draw_rect(Rect2(at-Vector2(11,8),Vector2(22,16)),color,bool(building.ready),-1.0 if building.ready else 2.0)
 			if building.ready:
@@ -554,12 +594,21 @@ func _draw() -> void:
 			_draw_resource_marker(p, kind, fraction, colors[kind])
 			continue
 		var radius := (5.0 if kind != 1 else 9.0) * (0.45 + fraction * 0.55)
-		var glyph_path := ""
+		var side := 2.2*radius*(0.6+0.4*fraction)
+		var anim_id := ""
+		var static_path := ""
 		if kind < PATCH_GLYPHS.size():
-			glyph_path = "terrain-flora-xianxia/"+PATCH_GLYPHS[kind]+".png"
+			anim_id = "patch-" + PATCH_GLYPHS[kind]
+			static_path = "terrain-flora-xianxia/"+PATCH_GLYPHS[kind]+".png"
 		elif kind in [4,5,6,7]:
-			glyph_path = "site-glyphs-xianxia/"+MINE_GLYPHS[kind-4]+".png"
-		if glyph_path == "" or not _glyph(glyph_path,p,2.2*radius*(0.6+0.4*fraction),2.2*radius*(0.6+0.4*fraction)):
+			anim_id = MINE_GLYPHS[kind-4]
+			static_path = MINE_STATIC[kind-4]
+		var drawn := false
+		if fidelity == 1:
+			drawn = anim_id != "" and _dot(anim_id,p,15.0/zoom)
+		else:
+			drawn = anim_id != "" and _asset(anim_id,static_path,p,side,side)
+		if not drawn:
 			draw_circle(p+Vector2(2,3),radius,Color(0.1,0.2,0.1,0.18))
 			draw_circle(p,radius,colors[kind])
 			if kind in [4,5,6,7]:
@@ -572,27 +621,30 @@ func _draw() -> void:
 	for m in markets:
 		var p := Vector2(m.x,m.y)
 		if fidelity == 1:
-			var radius := 7.0 / zoom
-			match str(m.get("stage", "")):
-				"Town":
-					draw_rect(Rect2(p - Vector2.ONE * radius, Vector2.ONE * radius * 2), Color("293c32"))
-					draw_rect(Rect2(p - Vector2.ONE * radius * 0.65, Vector2.ONE * radius * 1.3), Color("eed198"))
-				"Village":
-					draw_circle(p, radius, Color("293c32"))
-					draw_circle(p, radius * 0.65, Color("dcb884"))
-				_:
-					draw_colored_polygon(PackedVector2Array([p + Vector2(0, -radius), p + Vector2(radius, radius), p + Vector2(-radius, radius)]), Color("634d37"))
+			var stage := str(m.get("stage", "")).to_lower()
+			if not _dot("settlement-"+stage,p,15.0/zoom):
+				var radius := 7.0 / zoom
+				match str(m.get("stage", "")):
+					"Town":
+						draw_rect(Rect2(p - Vector2.ONE * radius, Vector2.ONE * radius * 2), Color("293c32"))
+						draw_rect(Rect2(p - Vector2.ONE * radius * 0.65, Vector2.ONE * radius * 1.3), Color("eed198"))
+					"Village":
+						draw_circle(p, radius, Color("293c32"))
+						draw_circle(p, radius * 0.65, Color("dcb884"))
+					_:
+						draw_colored_polygon(PackedVector2Array([p + Vector2(0, -radius), p + Vector2(radius, radius), p + Vector2(-radius, radius)]), Color("634d37"))
 			continue
 		draw_circle(p,42,Color(0.95,0.87,0.62,0.24))
-		draw_rect(Rect2(p-Vector2(16,11),Vector2(32,22)),Color("d6c698"))
-		draw_rect(Rect2(p-Vector2(19,15),Vector2(38,13)),Color("a27254"))
+		if not _asset("market","site-glyphs-xianxia/market.png",p,46,46):
+			draw_rect(Rect2(p-Vector2(16,11),Vector2(32,22)),Color("d6c698"))
+			draw_rect(Rect2(p-Vector2(19,15),Vector2(38,13)),Color("a27254"))
 		var blocks := int(m.housing_blocks)
 		var view_rect := Rect2(-offset/zoom,size/zoom).grow(25.0)
 		for j in range(blocks):
 			var at := _house_position(p, j)
 			if not view_rect.has_point(at):
 				continue
-			if not _glyph("site-glyphs-xianxia/home.png",at+Vector2(10,8),26,26):
+			if not _asset("home","site-glyphs-xianxia/home.png",at+Vector2(10,8),26,26):
 				draw_rect(Rect2(at,Vector2(20,15)),Color("d1bf91"))
 				draw_rect(Rect2(at-Vector2(1,2),Vector2(22,5)),Color("a07153"))
 			if world.get("clock",{}).get("night",false):
@@ -601,7 +653,7 @@ func _draw() -> void:
 			draw_rect(Rect2(p+Vector2(-4,0),Vector2(7,5)),Color("ffda82"))
 	for school in world.get("schools",[]):
 		var p := Vector2(school.x,school.y)
-		if not _glyph("site-glyphs-xianxia/school.png",p,42,42,1.0 if school.ready else 0.55):
+		if not _asset("school","site-glyphs-xianxia/school.png",p,42,42,1.0 if school.ready else 0.55):
 			draw_rect(Rect2(p-Vector2(16,10),Vector2(32,20)),Color("d8d4b6") if school.ready else Color("85765b"))
 			draw_rect(Rect2(p-Vector2(19,15),Vector2(38,8)),Color("526e9b"))
 			draw_line(p+Vector2(-5,2),p+Vector2(0,4),Color("f4ecd0"),2)
@@ -610,7 +662,7 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-19,-22),"School" if school.ready else "Building school",HORIZONTAL_ALIGNMENT_LEFT,-1,11,Color("f4ecd0"))
 	for tavern in world.get("taverns",[]):
 		var p := Vector2(tavern.x,tavern.y)
-		if not _glyph("site-glyphs-xianxia/tavern.png",p,42,42,1.0 if tavern.ready else 0.55):
+		if not _asset("tavern","site-glyphs-xianxia/tavern.png",p,42,42,1.0 if tavern.ready else 0.55):
 			draw_rect(Rect2(p-Vector2(15,10),Vector2(30,20)),Color("d9bc87") if tavern.ready else Color("85765b"))
 			draw_rect(Rect2(p-Vector2(18,14),Vector2(36,8)),Color("913f39"))
 			draw_circle(p+Vector2(7,2),3,Color("ecc864"))
@@ -618,11 +670,14 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-18,-20),"Tavern %s/32" % int(tavern.visitors) if tavern.ready else "Building tavern",HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("f7e2b2"))
 	for region in world.get("fertility",[]):
 		var p := Vector2(region.x,region.y)
-		draw_rect(Rect2(p-Vector2(region.width,region.height)*0.5,Vector2(region.width,region.height)),Color(0.40,0.58,0.30,0.18))
+		var qi := 0.18
+		if fidelity == 3:
+			qi = 0.13 + 0.07 * sin(shader_clock * 1.4 + p.x * 0.011)
+		draw_rect(Rect2(p-Vector2(region.width,region.height)*0.5,Vector2(region.width,region.height)),Color(0.40,0.58,0.30,qi))
 	for farm in world.get("farms",[]):
 		var p := Vector2(farm.x,farm.y)
 		var color := Color("c8c15f") if farm.mature else Color("739550")
-		if not _glyph("site-glyphs-xianxia/farm.png",p,44,44):
+		if not _asset("farm","site-glyphs-xianxia/farm.png",p,44,44):
 			draw_rect(Rect2(p-Vector2(18,18),Vector2(36,36)),Color("5d8076"))
 			for row in range(6):
 				draw_line(p+Vector2(-15,-14+row*5),p+Vector2(15,-14+row*5),color,2)
@@ -630,7 +685,7 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p+Vector2(-18,-22),"Rice / %s days" % int(farm.days_until_mature),HORIZONTAL_ALIGNMENT_LEFT,-1,10,Color("eee5b4"))
 	for board in world.get("job_boards",[]):
 		var p := Vector2(board.x,board.y)
-		if not _glyph("site-glyphs-xianxia/jobboard.png",p,24,24):
+		if not _asset("jobboard","site-glyphs-xianxia/jobboard.png",p,24,24):
 			draw_rect(Rect2(p-Vector2(6,5),Vector2(12,9)),Color("634b34"))
 			draw_rect(Rect2(p-Vector2(4,3),Vector2(8,5)),Color("ead7a6"))
 			draw_line(p+Vector2(-4,3),p+Vector2(-4,9),Color("634b34"),2)
@@ -641,7 +696,7 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font,p+Vector2(7,12),"Jobs %s / %s c" % [int(board.vacancies),int(board.reward)],HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("f7e2b2"))
 	for graveyard in world.get("graveyards",[]):
 		var p := Vector2(graveyard.x,graveyard.y)
-		if not _glyph("site-glyphs-xianxia/graveyard.png",p,44,44,1.0 if graveyard.ready else 0.55):
+		if not _asset("graveyard","site-glyphs-xianxia/graveyard.png",p,44,44,1.0 if graveyard.ready else 0.55):
 			draw_rect(Rect2(p-Vector2(17,17),Vector2(38,38)),Color("858a70"))
 			draw_rect(Rect2(p-Vector2(18,18),Vector2(40,40)),Color("c2bca0"),false,1.5)
 			var graves := mini(int(graveyard.buried_count),64)
@@ -656,14 +711,19 @@ func _draw() -> void:
 			var p := Vector2(shelter.x,shelter.y)
 			if fidelity > 1:
 				draw_arc(p,13.0,0,TAU,24,Color("e8dcb4"),2.5)
-			if not _glyph("site-glyphs-xianxia/shelter.png",p,30,30):
+			var pitched := false
+			if fidelity == 1:
+				pitched = _dot("shelter",p,13.0/zoom)
+			else:
+				pitched = _asset("shelter","site-glyphs-xianxia/shelter.png",p,30,30)
+			if not pitched:
 				draw_colored_polygon(PackedVector2Array([p+Vector2(-9,6),p+Vector2(0,-9),p+Vector2(9,6)]),Color("c6a87c"))
 				draw_line(p+Vector2(0,-5),p+Vector2(0,6),Color("614e3a"),2.0)
 			if fidelity == 1:
 				draw_string(ThemeDB.fallback_font,p+Vector2(-15,16),"%s/%s beds" % [int(shelter.reserved),int(shelter.capacity)],HORIZONTAL_ALIGNMENT_LEFT,-1,9,Color("f6e6b9"))
 	var convoy_draw: Array = []
 	var rally_markers: Dictionary = {}
-	for convoy in world.get("convoys",[]) if fidelity == 1 else []:
+	for convoy in world.get("convoys",[]):
 		if convoy.departed:
 			convoy_draw.append(convoy)
 		else:
@@ -676,10 +736,17 @@ func _draw() -> void:
 				convoy_draw.append(marker)
 	for convoy in convoy_draw:
 		var p := Vector2(convoy.x,convoy.y)
+		var id := "convoy" if convoy.departed else "rally"
 		var color := Color("f4d88d") if convoy.departed else Color("e4e4be")
-		draw_rect(Rect2(p-Vector2(6,4),Vector2(12,8)),color,convoy.departed,-1.0 if convoy.departed else 1.5)
-		draw_circle(p+Vector2(-4,5),2,Color("443c30"))
-		draw_circle(p+Vector2(4,5),2,Color("443c30"))
+		var drawn := false
+		if fidelity == 1:
+			drawn = _dot(id,p,14.0/zoom)
+		else:
+			drawn = _asset(id,"lod/l2/%s.png" % id,p,30,30)
+		if not drawn:
+			draw_rect(Rect2(p-Vector2(6,4),Vector2(12,8)),color,convoy.departed,-1.0 if convoy.departed else 1.5)
+			draw_circle(p+Vector2(-4,5),2,Color("443c30"))
+			draw_circle(p+Vector2(4,5),2,Color("443c30"))
 		draw_string(ThemeDB.fallback_font,p+Vector2(8,-4),str(int(convoy.members)),HORIZONTAL_ALIGNMENT_LEFT,-1,10,color)
 	var marker_radius := 6.0 / zoom
 	var carcass_view := Rect2(-offset / zoom, size / zoom).grow(marker_radius)
@@ -699,10 +766,12 @@ func _draw() -> void:
 			continue
 		var species := clampi(int(animal.species), 0, WILDLIFE_COLORS.size() - 1)
 		if fidelity==1:
-			draw_circle(at,3.3 if species in [1, 3] else 2.2,WILDLIFE_COLORS[species])
+			var dot: String = ANIMAL_DOTS[species]
+			if dot.is_empty() or not _dot(dot,at,9.0/zoom):
+				draw_circle(at, 3.3 if species in [1, 3] else 2.2, WILDLIFE_COLORS[species])
 		else:
 			var scale_animal := 0.6 if animal.young else 1.0
-			var bob := sin(animation_time*10.0+float(animal.id))*0.5 if fidelity==3 and int(animal.action)!=3 else 0.0
+			var bob := sin(shader_clock*10.0+float(animal.id))*0.5 if fidelity==3 and int(animal.action)!=3 else 0.0
 			var species_col: int = WILDLIFE_ATLAS_COLUMNS[species]
 			var stance_row := 0
 			match int(animal.action):
@@ -710,7 +779,7 @@ func _draw() -> void:
 				2: stance_row = 4 # Fleeing
 				4, 5, 6, 8:
 					if fidelity == 3:
-						stance_row = 1 + int(animation_time*10.0 + float(animal.id)) % 2
+						stance_row = 1 + int(shader_clock*10.0 + float(animal.id)) % 2
 			var animal_tex := _tex("animal-table-xianxia/atlas.png")
 			draw_set_transform(offset+at*zoom,float(animal.heading),Vector2.ONE*zoom*scale_animal)
 			if animal_tex != null and species_col >= 0:
@@ -740,7 +809,7 @@ func _draw() -> void:
 			draw_arc(at,8.0,0,TAU,20,Color("ffedaa"),1.0)
 	if site_focus and has_focus_target:
 		draw_arc(focus_target,22.0,0,TAU,32,Color("ffedaa"),1.5)
-	if selected_index >= 0:
+	if selected_index >= 0 and grouped_flags[selected_index] == 0:
 		draw_arc(points[selected_index],4.5 if fidelity > 1 else 11.0,0,TAU,24,Color("ffedaa"),0.4 if fidelity > 1 else 2.0)
 	if fidelity == 1 and _classic_terrain():
 		draw_string(ThemeDB.fallback_font,Vector2(25,31),"WOODLAND GROVES",HORIZONTAL_ALIGNMENT_LEFT,-1,13,Color("deebc7"))
@@ -793,13 +862,14 @@ func _update_detail_indices() -> void:
 	var rect := Rect2(-offset/zoom,size/zoom).grow(12.0)
 	var low := Vector2i(floori(rect.position.x/CELL),floori(rect.position.y/CELL))
 	var high := Vector2i(floori(rect.end.x/CELL),floori(rect.end.y/CELL))
-	# Always retain the inspected person in crowded views.
-	if selected_index >= 0 and hidden_flags[selected_index] == 0 and rect.has_point(points[selected_index]):
+	# Always retain the inspected person in crowded views. Convoy members in
+	# transit stay hidden: the cart stands in for them at every fidelity.
+	if selected_index >= 0 and hidden_flags[selected_index] == 0 and grouped_flags[selected_index] == 0 and rect.has_point(points[selected_index]):
 		draw_indices.append(selected_index)
 	for y in range(maxi(0,low.y),mini(ceili(map_height/CELL),high.y)+1):
 		for x in range(maxi(0,low.x),mini(ceili(map_width/CELL),high.x)+1):
 			for i: int in spatial.get(Vector2i(x,y),[]):
-				if i != selected_index and hidden_flags[i] == 0 and rect.has_point(points[i]):
+				if i != selected_index and hidden_flags[i] == 0 and grouped_flags[i] == 0 and rect.has_point(points[i]):
 					draw_indices.append(i)
 					if draw_indices.size() >= 2500:
 						_refresh_details()
@@ -850,6 +920,12 @@ func _process(delta: float) -> void:
 	snapshot_age += delta
 	if not world.get("paused",true):
 		shader_clock += delta
+		# Canvas draw calls are recorded, not live: sites, trees and carts only
+		# step their anim frame when _draw re-runs, at the strip's 10fps rate.
+		anim_redraw += delta
+		if anim_redraw >= 0.1:
+			anim_redraw = 0.0
+			queue_redraw()
 	detail_material.set_shader_parameter("clock",shader_clock)
 	detail_material.set_shader_parameter("blend_amount",minf(snapshot_age/snapshot_interval,1.0))
 

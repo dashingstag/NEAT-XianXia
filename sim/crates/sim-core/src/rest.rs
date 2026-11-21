@@ -388,11 +388,11 @@ impl World {
         }
         if s.settlement.is_some() {
             // One stable house position per actual 32-bed block.
-            let (hx, hy) = house_origin(slot / 32);
+            let (hx, hy) = house_site(&self.map, s.x, s.y, slot / 32);
             let bed = slot % 32;
             (
-                (s.x + hx).clamp(5.0, 2670.0) + 2.0 + (bed % 8) as f32 * 1.9,
-                (s.y + hy).clamp(5.0, 1900.0) + 3.0 + (bed / 8) as f32 * 2.5,
+                hx + 2.0 + (bed % 8) as f32 * 1.9,
+                hy + 3.0 + (bed / 8) as f32 * 2.5,
             )
         } else {
             (
@@ -573,6 +573,17 @@ impl World {
     }
 }
 
+/// House block anchor around a settlement centre. Classic keeps the
+/// historical clamp; generated maps nudge ring positions off water and
+/// bare rock so beds and doorsteps stay on land.
+pub(super) fn house_site(map: &WorldMap, x: f32, y: f32, house: u32) -> (f32, f32) {
+    let (hx, hy) = house_origin(house);
+    if map.spec.size == MapSize::Classic {
+        ((x + hx).clamp(5.0, 2670.0), (y + hy).clamp(5.0, 1900.0))
+    } else {
+        map.dry_ground(x + hx, y + hy)
+    }
+}
 pub(super) fn house_origin(mut house: u32) -> (f32, f32) {
     let original = house;
     let mut ring = 0;

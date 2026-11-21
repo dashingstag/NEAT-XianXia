@@ -118,7 +118,7 @@ pub struct Urban {
     pub retail_sales: BTreeMap<(u32, u8), u64>,
 }
 impl World {
-    fn coffers(&self, m: usize) -> u64 {
+    pub(super) fn coffers(&self, m: usize) -> u64 {
         self.markets[m].coins + self.markets[m].quotes.iter().map(|q| q.escrow).sum::<u64>()
     }
     pub(super) fn sync_urban(&mut self) {
@@ -321,6 +321,9 @@ impl World {
         }
         if a.action[i] == Action::UrbanWork {
             let j = self.urban.jobs.get(target)?.as_ref()?;
+            if j.kind == 4 {
+                return Some((j.x, j.y));
+            }
             if j.kind == 1 || j.kind == 2 || j.kind == 3 {
                 if j.phase == 0 {
                     return Some((j.x, j.y));
@@ -345,7 +348,7 @@ impl World {
         };
         self.urban.buildings.get(id).map(|b| (b.x, b.y))
     }
-    fn post_urban_job(&mut self, j: Job) -> usize {
+    pub(super) fn post_urban_job(&mut self, j: Job) -> usize {
         let private = j.payer != NONE;
         if private {
             self.urban.posted_private += 1
@@ -360,7 +363,7 @@ impl World {
             self.urban.jobs.len() - 1
         }
     }
-    fn new_job(
+    pub(super) fn new_job(
         &self,
         m: usize,
         kind: u8,
@@ -390,11 +393,10 @@ impl World {
         }
     }
     fn has_job(&self, id: usize) -> bool {
-        self.urban
-            .jobs
-            .iter()
-            .flatten()
-            .any(|j| j.firm == id as u32 || j.target == id as u32 || j.source == id as u32)
+        self.urban.jobs.iter().flatten().any(|j| {
+            j.kind != 4
+                && (j.firm == id as u32 || j.target == id as u32 || j.source == id as u32)
+        })
     }
     pub(super) fn operator_vacancy_pressure(&self, m: usize) -> f32 {
         let premises = self
@@ -624,8 +626,15 @@ impl World {
             .map(|(id, _)| id)
     }
     pub(super) fn site_available(&self, x: f32, y: f32) -> bool {
-        if !(30.0..=2650.0).contains(&x)
-            || !(30.0..=1870.0).contains(&y)
+        let (min_x, max_x, min_y, max_y) = if self.map.spec.size == MapSize::Classic {
+            (30.0, 2650.0, 30.0, 1870.0)
+        } else {
+            let b = self.map.spec.field_bounds();
+            (b.0 + 25.0, b.1 - 25.0, b.2 + 25.0, b.3 - 25.0)
+        };
+        if !(min_x..=max_x).contains(&x)
+            || !(min_y..=max_y).contains(&y)
+            || !self.map.buildable(x, y)
             || self
                 .urban
                 .buildings
@@ -650,14 +659,8 @@ impl World {
         }
         for m in &self.markets {
             for house in 0..m.housing_blocks.max(m.population.div_ceil(32)) + 4 {
-                let (hx, hy) = rest::house_origin(house);
-                if dist(
-                    x,
-                    y,
-                    (m.x + hx).clamp(5.0, 2670.0) + 10.0,
-                    (m.y + hy).clamp(5.0, 1900.0) + 7.5,
-                ) < 27.0
-                {
+                let (hx, hy) = rest::house_site(&self.map, m.x, m.y, house);
+                if dist(x, y, hx + 10.0, hy + 7.5) < 27.0 {
                     return false;
                 }
             }
@@ -1887,7 +1890,7 @@ impl World {
         }
         "purchased"
     }
-    fn execute_urban_job(&mut self, i: usize) {
+    pub(super) fn execute_urban_job(&mut self, i: usize) {
         let id = self.agents.target[i] as usize;
         let Some(j) = self.urban.jobs.get(id).and_then(Option::as_ref) else {
             self.work_memory[work_memory::WorkKind::Urban as usize].cancel(i);
@@ -1936,6 +1939,38 @@ impl World {
                 b.shelter = self.shelters.len() as u32;
                 self.shelters
                     .push(Shelter::new(b.x, b.y, Some(b.market), 4));
+            }
+            self.finish_urban_job(i, id);
+            return;
+        }
+        if j.kind == 4 {
+            if j.progress < 16.0 {
+                return;
+            }
+            let port = j.target as usize;
+            if j.source == 2 {
+                // Shipwright crew finished a ferry: it launches moored a
+                // few units off the home dock, ready to board.
+                if let Some(p) = self.water.ports.get(port) {
+                    let d = dist(p.x, p.y, p.lx, p.ly).max(1.0);
+                    self.water.ships.push(Ship {
+                        port: port as u32,
+                        x: p.x + (p.lx - p.x) / d * 12.0,
+                        y: p.y + (p.ly - p.y) / d * 12.0,
+                        at_far: false,
+                        aboard: Vec::new(),
+                        departed: false,
+                        docked_since: self.tick,
+                        path: Vec::new(),
+                        leg: 0,
+                    });
+                }
+            } else if let Some(p) = self.water.ports.get_mut(port) {
+                if j.source == 0 {
+                    p.near_done = true;
+                } else {
+                    p.far_done = true;
+                }
             }
             self.finish_urban_job(i, id);
             return;
@@ -2026,7 +2061,7 @@ impl World {
         let Some(j) = self.urban.jobs[id].take() else {
             return;
         };
-        if j.kind != 0 {
+        if j.kind != 0 && j.kind != 4 {
             if j.target == NONE {
                 for k in 0..GOODS {
                     if j.raw[k] > 0 {
@@ -2321,7 +2356,7 @@ impl World {
     }
     pub(super) fn urban_summary(&self) -> serde_json::Value {
         let wares = self.ware_stocks();
-        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":500,"reserve_threshold":100,"zones":self.urban.zones,"buildings":self.urban.buildings.iter().enumerate().map(|(id,b)|serde_json::json!({"id":id,"market":b.market,"kind":b.kind,"line":b.line,"x":b.x,"y":b.y,"ready":b.ready,"needs_clear":b.needs_clear,"advertised":b.advertised,"owner":if b.owner==NONE{None}else{Some(b.owner)},"renter":if b.renter==NONE{None}else{Some(b.renter)},"price":b.price,"rent":b.rent,"arrears":b.arrears,"cash":b.cash,"raw":b.raw,"wares":b.wares,"made":b.made,"sold":b.sold,"shelter":if b.shelter==NONE{None}else{Some(b.shelter)}})).collect::<Vec<_>>(),"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal"][j.kind as usize]),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
+        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":500,"reserve_threshold":100,"zones":self.urban.zones,"buildings":self.urban.buildings.iter().enumerate().map(|(id,b)|serde_json::json!({"id":id,"market":b.market,"kind":b.kind,"line":b.line,"x":b.x,"y":b.y,"ready":b.ready,"needs_clear":b.needs_clear,"advertised":b.advertised,"owner":if b.owner==NONE{None}else{Some(b.owner)},"renter":if b.renter==NONE{None}else{Some(b.renter)},"price":b.price,"rent":b.rent,"arrears":b.arrears,"cash":b.cash,"raw":b.raw,"wares":b.wares,"made":b.made,"sold":b.sold,"shelter":if b.shelter==NONE{None}else{Some(b.shelter)}})).collect::<Vec<_>>(),"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal","Shipwright"][j.kind as usize]),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
     }
     pub(super) fn validate_urban(&self) -> Result<(), String> {
         if self.urban.assigned.len() != self.agents.len()

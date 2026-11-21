@@ -112,6 +112,55 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn foragers_take_fish_from_the_bank() {
+        // Worldgen puts fish patches (kind 3) in open water; a forager on
+        // the near bank can work them within the same 24-unit shore reach
+        // Gather already uses, instead of pinning at the water edge.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut bank = None;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            let limit = (r.cols - 4) as f32 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 2.0;
+                    continue;
+                }
+                // First wet sample after dry land: the shoreline lies just
+                // behind x, so a patch a little way out is in bank reach.
+                if x > 8.0 && w.map.terrain_at(x - 6.0, y) != Terrain::Water {
+                    bank = Some((x - 12.0, x + 9.0, y));
+                    break 'outer;
+                }
+                x += 2.0;
+            }
+        }
+        let Some((ax, px, py)) = bank else { return };
+        let id = w.patches.len() as u32;
+        w.patches.push(Patch {
+            id,
+            kind: 3,
+            x: px,
+            y: py,
+            stock: 40,
+            capacity: 40,
+            renewal: 0.06,
+            growth: 0.0,
+            age: 0.0,
+        });
+        w.agents.x[0] = ax;
+        w.agents.y[0] = py;
+        w.agents.hunger[0] = 80.0;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = id;
+        w.agents.timer[0] = 1.0;
+        w.execute_personal(0, Action::ForageMeal);
+        assert_eq!(w.patches[id as usize].stock, 39, "bank-side forage works");
+        assert!(w.agents.hunger[0] < 80.0, "forager ate the fish");
+    }
+    #[test]
     fn sixteen_day_family_and_crop_flow_survives_without_free_resources() {
         let mut w = World::new(64, 42).unwrap();
         w.prepare_family_demo().unwrap();
@@ -1191,6 +1240,24 @@ impl World {
     }
     pub(super) fn personal_destination(&self, i: usize) -> Option<(f32, f32)> {
         let a = &self.agents;
+        // An agent carrying an undelivered water-block report goes home to
+        // file it: that is what the report physically is. Otherwise the
+        // bearer keeps pinning against the same unreachable shore, the
+        // report queue fills with entries that can never land, and the
+        // village never learns to build ports. Agents already queued at a
+        // dock stay — the ferry is their crossing.
+        if self
+            .water
+            .pending
+            .iter()
+            .any(|p| p.agent == i as u32)
+            && !self.water.ports.iter().any(|p| {
+                p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
+            })
+        {
+            let home = a.home[i] as usize;
+            return self.markets.get(home).map(|m| (m.x, m.y));
+        }
         if self.is_urban_action(a.action[i]) {
             return self.urban_destination(i);
         }
@@ -1261,6 +1328,9 @@ impl World {
                     self.forage_memory.cancel(i);
                     return;
                 };
+                if dist(self.agents.x[i], self.agents.y[i], patch.x, patch.y) > reach {
+                    return;
+                }
                 let kind = patch.kind;
                 if patch.stock == 0 {
                     self.forage_memory

@@ -14,8 +14,13 @@ var raster_cell := 0.0
 var raster_cols := 0
 var raster_rows := 0
 var raster_classes := PackedByteArray()
-# Shore wave accents, bucketed by 256-unit regions so only visible strokes draw.
+var raster_regions := PackedByteArray()
+var region_labels: Array = []
+# Shore wave accents, river courses and region borders, each bucketed by
+# 256-unit regions so only visible strokes draw.
 var shore_buckets := {}
+var river_buckets := {}
+var border_buckets := {}
 
 # Smoothly filtered generated-map ground, drawn before the layer's own strokes.
 class Ground extends Node2D:
@@ -81,7 +86,11 @@ func set_map_layers(layers: Dictionary) -> void:
 		raster_rows = int(terrain.rows)
 		raster_cell = float(terrain.cell)
 		raster_classes = Marshalls.base64_to_raw(terrain.classes)
+		raster_regions = Marshalls.base64_to_raw(terrain.get("regions", ""))
+		region_labels = terrain.get("region_labels", [])
 		_build_shore()
+		_build_rivers(terrain.get("rivers", []))
+		_build_borders()
 		map_key = key
 		requested_key = ""
 	var explored: Dictionary = layers.get("explored", {})
@@ -90,6 +99,11 @@ func set_map_layers(layers: Dictionary) -> void:
 		explored_cells = Marshalls.base64_to_raw(explored.known)
 		fog_texture = ImageTexture.create_from_image(fog_image(explored))
 		fog_rect = Rect2(0, 0, int(explored.cols)*float(explored.chunk), int(explored.rows)*float(explored.chunk))
+	# Swapped textures free the old RIDs; every item with recorded draw
+	# commands against them must re-record this pass or it draws blank.
+	ground.queue_redraw()
+	fog.queue_redraw()
+	field.minimap.queue_redraw()
 	queue_redraw()
 
 func is_explored(point: Vector2) -> bool:
@@ -119,7 +133,7 @@ static func fog_image(explored: Dictionary) -> Image:
 		pixels[at*4+3] = 0 if known[at] else 222
 	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
 
-const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575")]
+const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575"), Color("4f8f9b")]
 
 # One pixel per generator cell: class colour, light from the north-west, sandy
 # shores and a faint jade cast where qi gathers.
@@ -138,7 +152,7 @@ static func terrain_image(terrain: Dictionary) -> Image:
 			var kind := mini(int(classes[at]), TERRAIN_COLORS.size()-1)
 			var e := elevation[at]/255.0
 			var color: Color = TERRAIN_COLORS[kind]
-			if kind == 0:
+			if kind == 0 or kind == 6:
 				color = color.lerp(Color("5d8c8f"), clampf(e/0.34, 0.0, 1.0)*0.8)
 			else:
 				var nw := elevation[maxi(j-1,0)*cols+maxi(i-1,0)]/255.0
@@ -179,6 +193,79 @@ func _build_shore() -> void:
 				shore_buckets[key].append_array([edge - n, edge + n])
 				break
 
+# River course strokes from the sim's traced watercourses. Each bucket
+# holds a parallel (points, widths) pair keyed by start cell.
+func _build_rivers(rivers: Array) -> void:
+	river_buckets.clear()
+	for river in rivers:
+		var pts: Array = river.get("p", [])
+		var w := float(river.get("w", 1.0)) * 2.0
+		for k in range(pts.size() - 1):
+			var a := Vector2(pts[k][0], pts[k][1])
+			var b := Vector2(pts[k + 1][0], pts[k + 1][1])
+			var key := Vector2i(a / 256.0)
+			if not river_buckets.has(key):
+				river_buckets[key] = [PackedVector2Array(), PackedFloat32Array()]
+			river_buckets[key][0].append_array([a, b])
+			river_buckets[key][1].append(w)
+
+# Region borders follow cell edges where neighbouring land cells belong to
+# different territories; only meaningful zoomed out.
+func _build_borders() -> void:
+	border_buckets.clear()
+	var n := raster_cols * raster_rows
+	if raster_regions.size() != n or n == 0:
+		return
+	for j in range(1, raster_rows - 1):
+		for i in range(1, raster_cols - 1):
+			var id := int(raster_regions[j*raster_cols+i])
+			if id == 255:
+				continue
+			var c := Vector2(i + 0.5, j + 0.5)*raster_cell
+			var right := int(raster_regions[j*raster_cols+i+1])
+			var down := int(raster_regions[(j+1)*raster_cols+i])
+			var edge := PackedVector2Array()
+			if right != 255 and right != id:
+				edge.append_array([c + Vector2(0.5, -0.45)*raster_cell, c + Vector2(0.5, 0.45)*raster_cell])
+			if down != 255 and down != id:
+				edge.append_array([c + Vector2(-0.45, 0.5)*raster_cell, c + Vector2(0.45, 0.5)*raster_cell])
+			if edge.is_empty():
+				continue
+			var key := Vector2i(c / 256.0)
+			if not border_buckets.has(key):
+				border_buckets[key] = PackedVector2Array()
+			border_buckets[key].append_array(edge)
+
+func _draw_strokes(buckets: Dictionary, view: Rect2, color: Color, width: float) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var lines: PackedVector2Array = buckets.get(Vector2i(bx, by), PackedVector2Array())
+			for s in range(0, lines.size(), 2):
+				draw_line(lines[s], lines[s + 1], color, width, true)
+
+func _draw_rivers(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var bucket: Array = river_buckets.get(Vector2i(bx, by), [])
+			if bucket.is_empty():
+				continue
+			var lines: PackedVector2Array = bucket[0]
+			var widths: PackedFloat32Array = bucket[1]
+			for s in range(0, lines.size(), 2):
+				draw_line(lines[s], lines[s + 1], Color("5d97a6"), widths[s/2], true)
+
+func _draw_region_labels(view: Rect2) -> void:
+	for label in region_labels:
+		var at := Vector2(label.x, label.y)
+		if not view.has_point(at):
+			continue
+		draw_string(ThemeDB.fallback_font, at + Vector2(-60, 0), str(label.n),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 40.0, Color(0.13, 0.19, 0.16, 0.55))
+
 func _draw_shore(view: Rect2) -> void:
 	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
 	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
@@ -188,12 +275,63 @@ func _draw_shore(view: Rect2) -> void:
 			for s in range(0, lines.size(), 2):
 				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, 0.38), 1.6, true)
 
-func _glyph(rel_path: String, at: Vector2, w: float, h: float) -> bool:
+# Fidelity-3 water motion: a pale bead creeps downstream along each river
+# stroke and the shore dashes breathe, both on the field's shader_clock so a
+# paused world holds the frame.
+func _draw_river_flow(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var bucket: Array = river_buckets.get(Vector2i(bx, by), [])
+			if bucket.is_empty():
+				continue
+			var lines: PackedVector2Array = bucket[0]
+			var widths: PackedFloat32Array = bucket[1]
+			for s in range(0, lines.size(), 2):
+				var t := fposmod(field.shader_clock * 0.30 + float(s / 2) * 0.19, 1.0)
+				var bead := lines[s].lerp(lines[s + 1], t)
+				draw_circle(bead, widths[s / 2] * 0.45 + 1.2, Color(0.82, 0.95, 0.93, 0.45))
+
+func _draw_shore_anim(view: Rect2) -> void:
+	var first := Vector2i(view.position / 256.0) - Vector2i.ONE
+	var last := Vector2i(view.end / 256.0) + Vector2i.ONE
+	for bx in range(first.x, last.x + 1):
+		for by in range(first.y, last.y + 1):
+			var lines: PackedVector2Array = shore_buckets.get(Vector2i(bx, by), PackedVector2Array())
+			for s in range(0, lines.size(), 2):
+				var pulse := 0.24 + 0.20 * sin(field.shader_clock * 2.1 + float(s) * 0.61)
+				draw_line(lines[s], lines[s + 1], Color(0.76, 0.88, 0.84, pulse), 1.8, true)
+
+func _glyph(rel_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
 	var t: Texture2D = field._tex(rel_path)
 	if t == null:
 		return false
-	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false)
+	draw_texture_rect(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)), false,
+		Color(1,1,1,alpha))
 	return true
+
+# Same ladders as field.gd, but drawing on this canvas item: draw calls must
+# be recorded by the node whose _draw is running.
+func _anim(id: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	var t: Texture2D = field._tex("lod/anim/%s.png" % id)
+	if t == null:
+		return false
+	var frames := maxi(1, t.get_width() / 64)
+	var frame := int(field.shader_clock * 10.0) % frames
+	draw_texture_rect_region(t, Rect2(at - Vector2(w,h)*0.5, Vector2(w,h)),
+		Rect2(frame * 64, 0, 64, 64), Color(1,1,1,alpha))
+	return true
+
+func _dot(id: String, at: Vector2, size: float, alpha := 1.0) -> bool:
+	return _glyph("lod/dots/%s.png" % id, at, size, size, alpha)
+
+func _asset(id: String, static_path: String, at: Vector2, w: float, h: float, alpha := 1.0) -> bool:
+	if field.fidelity == 3 and _anim(id, at, w, h, alpha):
+		return true
+	if static_path != "":
+		return _glyph(static_path, at, w, h, alpha)
+	return _glyph("lod/l2/%s.png" % id, at, w, h, alpha)
 
 func _draw() -> void:
 	ground.queue_redraw()
@@ -203,8 +341,17 @@ func _draw() -> void:
 	if field._classic_terrain():
 		_draw_coast_art(forest_view)
 		_draw_hill_art(forest_view)
-	elif field.fidelity == 1:
-		_draw_shore(forest_view)
+	else:
+		_draw_rivers(forest_view)
+		if field.fidelity == 3:
+			_draw_river_flow(forest_view)
+		if field.fidelity == 1:
+			_draw_shore(forest_view)
+		else:
+			_draw_strokes(border_buckets, forest_view, Color(0.20, 0.24, 0.18, 0.45), 2.5)
+			_draw_region_labels(forest_view)
+			if field.fidelity == 3:
+				_draw_shore_anim(forest_view)
 	var markets: Array = field.world.get("markets", [])
 	var forests: Array = field.world.get("wildlife", {}).get("forests", [])
 	# Paint the woodland floor before canopies so neighboring groves read together.
@@ -224,8 +371,11 @@ func _draw() -> void:
 		var trees: PackedVector2Array = field._tree_points(id,float(forest.radius))
 		for tree in range(0,trees.size(),3 if field.fidelity==1 else 1):
 			var at := centre+trees[tree]
-			var tree_glyph: String = "terrain-flora-xianxia/"+field.TREE_GLYPHS[(id*3+tree)%field.TREE_GLYPHS.size()]+".png"
-			if field.fidelity > 1 and _glyph(tree_glyph,at,22.0+float(tree%4)*2.0,22.0+float(tree%4)*2.0):
+			var side := 22.0+float(tree%4)*2.0
+			var tree_id: String = field.TREE_GLYPHS[(id*3+tree)%field.TREE_GLYPHS.size()]
+			if field.fidelity == 3 and _anim(tree_id,at,side,side):
+				continue
+			if field.fidelity > 1 and _glyph("terrain-flora-xianxia/"+tree_id+".png",at,side,side):
 				continue
 			var crown := 9.0 + float(tree % 5)
 			draw_circle(at + Vector2(4, 5), crown, Color(0.10, 0.22, 0.16, 0.22), true, -1.0, true)
@@ -236,9 +386,18 @@ func _draw() -> void:
 		draw_circle(Vector2(clearing[0],clearing[1]),float(clearing[2]),Color("93a575"))
 	for grass in field.world.get("wildlife",{}).get("grass",[]):
 		var fraction := float(grass.stock)/maxf(1.0,float(grass.capacity))
-		draw_circle(Vector2(grass.x,grass.y),7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
+		var gpos := Vector2(grass.x,grass.y)
+		var done := false
+		if field.fidelity == 1:
+			done = _dot("grass",gpos,9.0/field.zoom)
+		else:
+			done = _asset("grass","lod/l2/grass.png",gpos,18,18,1.0 if fraction>0.25 else 0.45)
+		if not done:
+			draw_circle(gpos,7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
+	_draw_ports()
+	_draw_ships()
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()
@@ -285,7 +444,10 @@ func _draw_coast_art(view: Rect2) -> void:
 	draw_polyline(waterline, Color("dacb9f"), 3.0, true)
 	for y in range(30, int(field.map_height), 78):
 		var x := 2720.0 + 10.0 * sin(float(y) / 100.0)
-		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, 0.19), 2.0, true)
+		var foam := 0.19
+		if field.fidelity == 3:
+			foam = 0.10 + 0.13 * sin(field.shader_clock * 1.9 + float(y) * 0.05)
+		draw_line(Vector2(x, y), Vector2(x + 30, y + 6), Color(0.76, 0.88, 0.84, foam), 2.0, true)
 
 func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
 	for market in markets:
@@ -306,6 +468,45 @@ func _draw_settlement_ground(markets: Array, view: Rect2) -> void:
 			draw_colored_polygon(_terrain_shape(center, bench, phase), Color("b7ac88"))
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.83), phase), Color(0.73, 0.68, 0.49, 0.54))
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 0.75, radius * 0.60), phase), Color(0.79, 0.73, 0.55, 0.48))
+		# Village ground must not paint over real water: repaint raster cells
+		# that the disc overlaps so shorelines stay honest at every size.
+		if raster_cols > 0 and not raster_classes.is_empty():
+			var reach := int(ceil((radius + 10.0) / raster_cell))
+			var ccx := int(center.x / raster_cell)
+			var ccy := int(center.y / raster_cell)
+			for dj in range(-reach, reach + 1):
+				for di in range(-reach, reach + 1):
+					var rx := ccx + di
+					var ry := ccy + dj
+					if rx < 0 or ry < 0 or rx >= raster_cols or ry >= raster_rows:
+						continue
+					var cls := int(raster_classes[ry * raster_cols + rx])
+					if cls != 0 and cls != 6:
+						continue
+					var cell_origin := Vector2(rx, ry) * raster_cell
+					if (cell_origin + Vector2.ONE * raster_cell * 0.5).distance_to(center) < radius + raster_cell:
+						var water_col := Color("7891c6") if cls == 0 else Color("8fa8d8")
+						draw_rect(Rect2(cell_origin - Vector2.ONE, Vector2.ONE * (raster_cell + 2.0)), water_col)
+
+# Raster class at a world position; -1 when no terrain grid is loaded.
+func class_at(p: Vector2) -> int:
+	if raster_cols <= 0 or raster_classes.is_empty():
+		return -1
+	var cx := clampi(int(p.x / raster_cell), 0, raster_cols - 1)
+	var cy := clampi(int(p.y / raster_cell), 0, raster_rows - 1)
+	return int(raster_classes[cy * raster_cols + cx])
+
+# Nudges a point toward `anchor` until it leaves water/rock. Used to keep
+# drawn houses on the same dry ground the sim guarantees for beds.
+func dry_point(anchor: Vector2, p: Vector2) -> Vector2:
+	var bad := [0, 1, 6]
+	if raster_classes.is_empty() or not (class_at(p) in bad):
+		return p
+	for _i in range(24):
+		p = p.move_toward(anchor, 16.0)
+		if not (class_at(p) in bad):
+			return p
+	return p
 
 # Keep the painted ruts inside the Rust simulation's 22-unit road corridor.
 func _road_shape(start: Vector2, end: Vector2, side: float) -> PackedVector2Array:
@@ -352,3 +553,52 @@ func _draw_roads(markets: Array) -> void:
 		if field.show_trade and traffic > 0:
 			var width: float = clampf(2.0 + log(float(traffic) + 1.0), 3.0, 10.0) / field.zoom
 			draw_polyline(points, Color(0.35, 0.90, 0.83, 0.70), width, true)
+
+func _draw_ports() -> void:
+	for port in field.world.get("ports", []):
+		var home := Vector2(port.x, port.y)
+		var landing := Vector2(port.lx, port.ly)
+		var near_done: bool = port.get("near_done", false)
+		var far_done: bool = port.get("far_done", false)
+		draw_dashed_line(home, landing, Color("7d94a8", 0.5), 2.0, 8.0, true)
+		_pier(home, landing, near_done)
+		_pier(landing, home, far_done)
+
+func _pier(at: Vector2, toward: Vector2, done: bool) -> void:
+	# A short dock plank pointing into the water toward its partner.
+	var dir := (toward - at).normalized()
+	var side := dir.orthogonal()
+	var timber := Color("8a6f4d") if done else Color("6b5a45")
+	var end := at + dir * 22.0
+	draw_line(at, end, timber, 7.0, true)
+	for t in [0.45, 0.8, 1.0]:
+		var post: Vector2 = at + dir * (22.0 * t)
+		draw_line(post - side * 4.5, post + side * 4.5, Color("4d3f2e"), 2.4, true)
+	if not done:
+		draw_circle(at - dir * 6.0, 4.0, Color("e0b64f", 0.85))
+
+func _draw_ships() -> void:
+	for ship in field.world.get("ships", []):
+		var pos := Vector2(ship.x, ship.y)
+		var ports: Array = field.world.get("ports", [])
+		var heading := Vector2(1, 0)
+		var pi := int(ship.get("port", -1))
+		if pi >= 0 and pi < ports.size():
+			var port = ports[pi]
+			var dock := Vector2(port.lx, port.ly) if not ship.get("at_far", false) else Vector2(port.x, port.y)
+			if pos.distance_to(dock) > 1.0:
+				heading = (dock - pos).normalized()
+		var side := heading.orthogonal()
+		# Flat-sailed river junk: hull, deckhouse and a battened lug sail.
+		var hull := PackedVector2Array([pos - heading * 14.0, pos - heading * 8.0 + side * 5.5, pos + heading * 8.0 + side * 5.5, pos + heading * 14.0, pos + heading * 8.0 - side * 5.5, pos - heading * 8.0 - side * 5.5])
+		draw_colored_polygon(hull, Color("7a5c38"))
+		var closed := PackedVector2Array(hull)
+		closed.append(hull[0])
+		draw_polyline(closed, Color("4d3a22"), 1.6, true)
+		draw_circle(pos + heading * 7.0, 3.2, Color("8a6f4d"))
+		var mast := pos - heading * 2.0
+		var sail := PackedVector2Array([mast + heading * 1.5, mast - heading * 7.0 + side * 6.5, mast + heading * 9.5 + side * 3.5])
+		draw_colored_polygon(sail, Color("d8c9a3") if ship.get("departed", false) else Color("b8ab8e"))
+		var riders := int(ship.get("aboard", []).size())
+		if riders > 0 and field.fidelity == 1:
+			draw_string(ThemeDB.fallback_font, pos + side * 10.0, str(riders), HORIZONTAL_ALIGNMENT_CENTER, -1, 9, Color("2e2618"))

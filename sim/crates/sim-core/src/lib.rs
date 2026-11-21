@@ -49,6 +49,7 @@ mod rest;
 use rest::Shelter;
 mod travel;
 use travel::Convoy;
+pub use travel::{Ship, WaterState};
 
 pub const DT: f32 = 0.1;
 pub const GOODS: usize = 13;
@@ -424,6 +425,10 @@ pub struct World {
     /// after loading instead of being serialized.
     #[serde(skip)]
     road_paths: Vec<Vec<(f32, f32)>>,
+    /// Stranded-at-water reports on their way to and held by villages.
+    /// Serialized as a checkpoint tail, not in the base struct.
+    #[serde(skip)]
+    pub water: WaterState,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -626,6 +631,7 @@ impl World {
             meat_trade: Default::default(),
             market_information: Default::default(),
             road_paths: Vec::new(),
+            water: WaterState::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -678,8 +684,29 @@ impl World {
             } else {
                 (w.map.spec.width() - 5.0, w.map.spec.height() - 5.0)
             };
-            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, bx));
-            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, by));
+            let mut sx = (m.x + w.rng.signed() * 35.0).clamp(5.0, bx);
+            let mut sy = (m.y + w.rng.signed() * 35.0).clamp(5.0, by);
+            // Shoreline market circles put part of the +-35 spawn range
+            // into water (635 of 10,000 on X4 seed 42): an agent born on
+            // unbuildable ground can never take a steering step, so
+            // redraw to land and only nudge dry when the edge is all wet.
+            if size != MapSize::Classic {
+                for _ in 0..16 {
+                    if w.map.buildable(sx, sy) {
+                        break;
+                    }
+                    sx = (m.x + w.rng.signed() * 35.0).clamp(5.0, bx);
+                    sy = (m.y + w.rng.signed() * 35.0).clamp(5.0, by);
+                }
+                if !w.map.buildable(sx, sy) {
+                    (sx, sy) = w.map.dry_ground(sx, sy);
+                }
+                if !w.map.buildable(sx, sy) {
+                    (sx, sy) = (m.x, m.y);
+                }
+            }
+            a.x.push(sx);
+            a.y.push(sy);
             a.health.push(100.0);
             a.hunger.push(w.rng.unit() * 12.0);
             a.energy.push(80.0 + w.rng.unit() * 20.0);
@@ -2068,6 +2095,9 @@ impl World {
         self.relationships_step();
         self.wildlife_step();
         self.update_explored();
+        self.update_water_reports();
+        self.plan_ports();
+        self.ship_step();
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2468,7 +2498,7 @@ impl World {
                 &self.market_information,
                 &self.meat_trade.demand,
             ),
-            (&self.governance, &self.camp_rumours),
+            (&self.governance, &self.camp_rumours, &self.water),
         ))
         .map_err(|e| e.to_string())
     }
@@ -2477,7 +2507,7 @@ impl World {
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE32".to_vec();
+        let mut data = b"XXSAVE33".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2508,6 +2538,7 @@ impl World {
                     | b"XXSAVE28"
                     | b"XXSAVE29"
                     | b"XXSAVE32"
+                    | b"XXSAVE33"
             ) && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
@@ -2551,7 +2582,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE32"
+                | b"XXSAVE33"
         ) {
             let (
                 (mut world, purchases, foraging, work, commitments, map, (explored, carcasses)),
@@ -2583,25 +2614,25 @@ impl World {
                     | b"XXSAVE27"
                     | b"XXSAVE28"
                     | b"XXSAVE29"
-                    | b"XXSAVE32"
+                    | b"XXSAVE33"
             ) {
                 let ((spawns, spears, bows, stats), remaining) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
                 if matches!(
                     &data[..8],
-                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE32"
+                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE33"
                 ) {
                     let (mut trade, rest): (meat::MeatTrade, _) =
                         postcard::take_from_bytes(remaining).map_err(|e| e.to_string())?;
-                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE32") {
+                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE33") {
                         let (information, trailing) =
                             postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
-                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE32") {
+                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE33") {
                             let (demand, rest) =
                                 postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                             trade.demand = demand;
-                            if &data[..8] == b"XXSAVE32" {
-                                (world.governance, world.camp_rumours) =
+                            if &data[..8] == b"XXSAVE33" {
+                                (world.governance, world.camp_rumours, world.water) =
                                     postcard::from_bytes(rest).map_err(|e| e.to_string())?;
                             } else if !rest.is_empty() {
                                 return Err("Unexpected meat demand checkpoint data".into());
@@ -2640,7 +2671,10 @@ impl World {
                 return Err("Unexpected checkpoint data".into());
             }
             world
-        } else if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31") {
+        } else if matches!(
+            &data[..8],
+            b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32"
+        ) {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
                     Self,
@@ -2653,16 +2687,30 @@ impl World {
                 ),
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
-            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31") {
-                let (governance, rest) =
+            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+                let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                world.governance = governance;
-                if &data[..8] == b"XXSAVE31" {
-                    world.camp_rumours = postcard::from_bytes(rest).map_err(|e| e.to_string())?;
-                } else if !rest.is_empty() {
+                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32") {
+                    let (rumours, rest) =
+                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                    world.camp_rumours = rumours;
+                    rest
+                } else {
+                    trailing
+                };
+                let trailing = if &data[..8] == b"XXSAVE32" {
+                    let (water, rest) =
+                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                    world.water = water;
+                    rest
+                } else {
+                    trailing
+                };
+                if !trailing.is_empty() {
                     return Err("Unexpected governance checkpoint data".into());
                 }
-                // The two release formats assigned variant indices 39–41
+                world.governance = governance;
+                // These release formats assigned variant indices 39–41
                 // before the development formats' action list was merged.
                 for action in &mut world.agents.action {
                     *action = match *action {
@@ -2813,6 +2861,7 @@ impl World {
                 | b"XXSAVE28"
                 | b"XXSAVE29"
                 | b"XXSAVE32"
+                | b"XXSAVE33"
         ) && &data[..8] != b"XXSAVE15"
         {
             world.map = WorldMap::classic(world.seed);
@@ -2846,6 +2895,7 @@ impl World {
                     | b"XXSAVE28"
                     | b"XXSAVE29"
                     | b"XXSAVE32"
+                    | b"XXSAVE33"
             )
         {
             world.init_wildlife();
@@ -2876,6 +2926,7 @@ impl World {
                     | b"XXSAVE28"
                     | b"XXSAVE29"
                     | b"XXSAVE32"
+                    | b"XXSAVE33"
             )
         {
             world.upgrade_landscape(false);
@@ -2907,6 +2958,7 @@ impl World {
                     | b"XXSAVE28"
                     | b"XXSAVE29"
                     | b"XXSAVE32"
+                    | b"XXSAVE33"
             )
         {
             world.relocate_fertile_land();
@@ -2922,7 +2974,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE32"
+                | b"XXSAVE33"
         ) {
             world.wildlife.spawns = Default::default();
         }
@@ -2936,7 +2988,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE32"
+                | b"XXSAVE33"
         ) {
             world.init_terrain_spawn_points();
         }
@@ -2947,7 +2999,10 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
-        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+        if !matches!(
+            &data[..8],
+            b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
+        ) {
             world.governance_step();
         }
         if !matches!(
@@ -2960,7 +3015,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE32"
+                | b"XXSAVE33"
         ) {
             world.sync_wildlife_spawn_habitats();
         }
@@ -3142,6 +3197,9 @@ impl World {
                 serde_json::json!(self.living_wildlife_by_species());
             result["wildlife"]["carcass_meat"] = self.carcasses.values().sum::<u64>().into();
         }
+        result["water_blocks"] = serde_json::json!(self.water.blocks);
+        result["ports"] = serde_json::json!(self.water.ports);
+        result["ships"] = serde_json::json!(self.water.ships);
         result["schools"] = self.school_summary();
         result["urban"] = self.urban_summary();
         result["banking"] = self.banking_summary();
@@ -3178,11 +3236,13 @@ impl World {
         animal: Option<usize>,
         leaderboard: Option<&serde_json::Value>,
     ) -> Vec<u8> {
+        // Only a departed convoy absorbs its members into the cart marker;
+        // rallying members still gather visibly around it.
         let visible_convoys: std::collections::BTreeSet<usize> = self
             .convoys
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.is_some())
+            .filter(|(_, c)| matches!(c, Some(c) if c.departed))
             .take(2000)
             .map(|(i, _)| i)
             .collect();
@@ -3300,6 +3360,186 @@ fn segment_distance(x: f32, y: f32, a: &Market, b: &Market) -> f32 {
 mod tests {
     use super::*;
     #[test]
+    fn generated_spawns_never_stand_on_unbuildable_ground() {
+        // Shoreline market circles put part of the +-35 spawn range into
+        // water: 635 of 10,000 spawned wet on X4 seed 42, 426 too deep to
+        // ever steer out — frozen crowds from birth.
+        for (agents, seed, size) in [
+            (3000usize, 7u64, MapSize::X4),
+            (10000, 42, MapSize::X4),
+            (10000, 42, MapSize::X25),
+        ] {
+            let w = World::new_with_size(agents, seed, Hill::default(), size).unwrap();
+            let wet = (0..w.agents.len())
+                .filter(|&i| !w.map.buildable(w.agents.x[i], w.agents.y[i]))
+                .count();
+            assert_eq!(
+                wet, 0,
+                "{size:?} seed {seed} spawned {wet} agents unbuildable"
+            );
+        }
+    }
+    #[test]
+    #[ignore]
+    fn diag_wet_spawns() {
+        for (agents, seed, size) in [
+            (3000usize, 7u64, MapSize::X4),
+            (10000, 42, MapSize::X4),
+            (10000, 42, MapSize::X25),
+        ] {
+            let w = World::new_with_size(agents, seed, Hill::default(), size).unwrap();
+            let mut wet = 0;
+            let mut deep = 0;
+            for i in 0..w.agents.len() {
+                let (x, y) = (w.agents.x[i], w.agents.y[i]);
+                if w.map.terrain_at(x, y) == Terrain::Water {
+                    wet += 1;
+                    // "deep" = every 6u probe around the spawn is still water,
+                    // so no steering step can ever reach dry land.
+                    let dry_near = [(6.0, 0.0), (-6.0, 0.0), (0.0, 6.0), (0.0, -6.0)]
+                        .iter()
+                        .any(|&(ox, oy)| w.map.terrain_at(x + ox, y + oy) != Terrain::Water);
+                    if !dry_near {
+                        deep += 1;
+                    }
+                }
+            }
+            eprintln!("{size:?} seed={seed} agents={agents}: wet_spawns={wet} deep_stuck={deep}");
+        }
+    }
+    #[test]
+    #[ignore]
+    fn diag_shore_stall() {
+        let mut w = World::new_with_size(3000, 42, Hill::default(), MapSize::X4).unwrap();
+        let mut prev: Vec<(f32, f32)> = (0..w.agents.len())
+            .map(|i| (w.agents.x[i], w.agents.y[i]))
+            .collect();
+        const NAMES: [&str; 39] = [
+            "Rest",
+            "Gather",
+            "Deliver",
+            "BuyFood",
+            "Build",
+            "Trade",
+            "Mint",
+            "Barter",
+            "WorkForFood",
+            "MakeCamp",
+            "Wait",
+            "BuildGraveyard",
+            "Gravedigger",
+            "Court",
+            "CareFamily",
+            "CraftTool",
+            "BuyTool",
+            "Farm",
+            "HarvestRice",
+            "EquipTool",
+            "ForageMeal",
+            "StoreCargo",
+            "Socialize",
+            "BuildTavern",
+            "BuildSchool",
+            "Teach",
+            "AttendSchool",
+            "UrbanWork",
+            "LeaseBusiness",
+            "OperateBusiness",
+            "OrderGoods",
+            "BuyHome",
+            "RentHome",
+            "ShopGoods",
+            "Hunt",
+            "CollectEstate",
+            "BuildBank",
+            "BorrowBusiness",
+            "RepayLoan",
+        ];
+        for t in 1..=4000u64 {
+            w.step(true);
+            if t % 1000 == 0 {
+                let wet_farms = w
+                    .farms
+                    .iter()
+                    .filter(|f| w.map.terrain_at(f.x, f.y) == Terrain::Water)
+                    .count();
+                eprintln!(
+                    "  farms={} wet={} detours={} pending={} blocks={} ports={} ships={} queues={}",
+                    w.farms.len(),
+                    wet_farms,
+                    w.water.detours.len(),
+                    w.water.pending.len(),
+                    w.water.blocks.len(),
+                    w.water.ports.len(),
+                    w.water.ships.len(),
+                    w.water
+                        .ports
+                        .iter()
+                        .map(|p| p.queue.len() + p.queue_far.len())
+                        .sum::<usize>()
+                );
+                let mut hist = [0usize; 70];
+                let (mut unmoved, mut alive, mut wet_t) = (0usize, 0usize, 0usize);
+                let mut stalls: Vec<String> = Vec::new();
+                for i in 0..w.agents.len() {
+                    if !w.agents.alive[i] {
+                        continue;
+                    }
+                    alive += 1;
+                    let a = w.agents.action[i] as usize;
+                    hist[if a < 70 { a } else { 69 }] += 1;
+                    if dist(w.agents.x[i], w.agents.y[i], prev[i].0, prev[i].1) < 4.0 {
+                        unmoved += 1;
+                        let kind = w.agents.cargo_kind[i] as usize;
+                        // Resolve the destination the same way execute does.
+                        let Some((dx, dy)) = w.personal_destination(i) else {
+                            prev[i] = (w.agents.x[i], w.agents.y[i]);
+                            continue;
+                        };
+                        let wet = w.map.terrain_at(dx, dy) == Terrain::Water;
+                        wet_t += wet as usize;
+                        let shore = w.map.terrain_at(w.agents.x[i] + 8.0, w.agents.y[i])
+                            == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i], w.agents.y[i] + 8.0)
+                                == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i] - 8.0, w.agents.y[i])
+                                == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i], w.agents.y[i] - 8.0)
+                                == Terrain::Water;
+                        let d = dist(w.agents.x[i], w.agents.y[i], dx, dy);
+                        if d > 8.0 && stalls.len() < 10 {
+                            stalls.push(format!(
+                                "a{i} act={}@{} d={:.0} wet_t={} shore={} convoy={} detour={}",
+                                NAMES
+                                    .get(w.agents.action[i] as usize)
+                                    .copied()
+                                    .unwrap_or("?"),
+                                kind,
+                                d,
+                                wet,
+                                shore,
+                                w.agents.convoy[i],
+                                w.water.detours.contains_key(&(i as u32))
+                            ));
+                        }
+                    }
+                    prev[i] = (w.agents.x[i], w.agents.y[i]);
+                }
+                let top: Vec<String> = hist
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| c > 0)
+                    .map(|(k, &c)| format!("{}:{}", NAMES.get(k).copied().unwrap_or("?"), c))
+                    .collect();
+                eprintln!(
+                    "tick {t}: alive={alive} unmoved={unmoved} wet_targets={wet_t}\n  {}\n  {}",
+                    top.join(" "),
+                    stalls.join("\n  ")
+                );
+            }
+        }
+    }
+    #[test]
     fn conservation_survives_parallel_competition() {
         let mut w = World::new(200, 42).unwrap();
         for _ in 0..500 {
@@ -3377,6 +3617,14 @@ mod tests {
                     Action::MigrateToCamp,
                 ][..],
             ),
+            (
+                b"XXSAVE32",
+                &[
+                    Action::NominateSelf,
+                    Action::DiscussCamp,
+                    Action::MigrateToCamp,
+                ][..],
+            ),
         ] {
             world.agents.action[1..3].copy_from_slice(if expected.len() == 1 {
                 &[Action::Wait, Action::Wait]
@@ -3394,8 +3642,11 @@ mod tests {
                 &world.governance,
             ))
             .unwrap();
-            if header == b"XXSAVE31" {
+            if matches!(header, b"XXSAVE31" | b"XXSAVE32") {
                 raw.extend(postcard::to_allocvec(&world.camp_rumours).unwrap());
+            }
+            if header == b"XXSAVE32" {
+                raw.extend(postcard::to_allocvec(&world.water).unwrap());
             }
             let mut data = header.to_vec();
             data.extend((raw.len() as u64).to_le_bytes());
@@ -3408,6 +3659,28 @@ mod tests {
             assert_eq!(reopened.agents.action, restored.agents.action);
         }
         std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn checkpoint_load_preserves_world_state_exactly() {
+        // A current-format checkpoint must deserialize without running the
+        // legacy init/migration fixups (init_wildlife, upgrade_landscape,
+        // relocate_fertile_land, governance_step, map reset). Version guards
+        // that miss the newest header re-run those fixups and corrupt fresh
+        // state — animals respawn, patches shift, replay diverges.
+        let mut w = World::new(64, 42).unwrap();
+        for _ in 0..40 {
+            w.step(false);
+        }
+        let path =
+            std::env::temp_dir().join(format!("xianxia-load-{}.snapshot", std::process::id()));
+        w.save(&path).unwrap();
+        let restored = World::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            postcard::to_allocvec(&w).unwrap(),
+            postcard::to_allocvec(&restored).unwrap(),
+            "load mutated world state"
+        );
     }
     #[test]
     fn snapshot_is_bounded_and_versioned() {

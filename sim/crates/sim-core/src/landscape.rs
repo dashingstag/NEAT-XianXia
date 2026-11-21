@@ -229,6 +229,7 @@ impl World {
         let (min_x, max_x, min_y, max_y) = self.map.spec.field_bounds();
         (min_x + r..=max_x - r).contains(&x)
             && (min_y + r..=max_y - r).contains(&y)
+            && self.map.buildable(x, y)
             && self.hill.clearance(x, y) > r
             && self
                 .patches
@@ -277,8 +278,12 @@ impl World {
                     .iter()
                     .filter(|f| f.market as usize == m)
                     .count();
-                self.farms[id].x = r.x + (rank % 2) as f32 * 50.0 - 25.0;
-                self.farms[id].y = r.y + (rank / 2) as f32 * 50.0 - 25.0;
+                let (fx, fy) = self.map.dry_ground(
+                    r.x + (rank % 2) as f32 * 50.0 - 25.0,
+                    r.y + (rank / 2) as f32 * 50.0 - 25.0,
+                );
+                self.farms[id].x = fx;
+                self.farms[id].y = fy;
             }
         }
     }
@@ -302,6 +307,12 @@ impl World {
         {
             return Err("Place resources on land inside the map".into());
         }
+        let ground = self.map.terrain_at(x, y);
+        if matches!(ground, Terrain::Water | Terrain::River)
+            || (kind == 0 && ground == Terrain::Rock)
+        {
+            return Err("Choose dry ground away from water".into());
+        }
         if kind >= 4
             && self
                 .wildlife
@@ -318,14 +329,8 @@ impl World {
         }
         for m in &self.markets {
             for house in 0..m.housing_blocks {
-                let (hx, hy) = rest::house_origin(house);
-                if dist(
-                    x,
-                    y,
-                    (m.x + hx).clamp(5.0, 2670.0) + 10.0,
-                    (m.y + hy).clamp(5.0, 1900.0) + 7.5,
-                ) < 25.0
-                {
+                let (hx, hy) = rest::house_site(&self.map, m.x, m.y, house);
+                if dist(x, y, hx + 10.0, hy + 7.5) < 25.0 {
                     return Err("Choose open ground away from houses".into());
                 }
             }

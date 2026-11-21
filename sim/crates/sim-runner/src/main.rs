@@ -393,9 +393,21 @@ fn map_layers(world: &mut World, terrain: bool) -> Value {
     });
     if terrain {
         let r = world.map.raster();
+        let rivers: Vec<Value> = world
+            .map
+            .rivers()
+            .iter()
+            .map(|river| json!({"w": river.width, "p": river.points}))
+            .collect();
+        let labels: Vec<Value> = r
+            .region_labels
+            .iter()
+            .map(|(n, x, y)| json!({"n": n, "x": x, "y": y}))
+            .collect();
         layers["terrain"] = json!({
             "cols": r.cols, "rows": r.rows, "cell": r.cell,
             "classes": base64(&r.terrain), "elevation": base64(&r.elevation), "qi": base64(&r.qi),
+            "regions": base64(&r.regions), "region_labels": labels, "rivers": rivers,
         });
     }
     layers

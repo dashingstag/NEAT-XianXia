@@ -32,7 +32,6 @@ pub struct SpeciesDef {
     pub litter: u32,
     /// Age assigned to founding population animals.
     pub founding_age: u32,
-    /// True for animals that hunt other animals (predators, M2).
     pub predator: bool,
 }
 pub const SPECIES: [SpeciesDef; 5] = [
@@ -1151,23 +1150,45 @@ impl World {
                     a.goal_y = y;
                 }
             }
-            let a = &mut self.wildlife.animals[i];
-            let d = dist(a.x, a.y, a.goal_x, a.goal_y);
-            if d > 5.0 {
-                let speed = SpeciesDef::of(a.species).speed
-                    * match (a.action, a.species) {
-                        (2, PHEASANT) => 1.9,
-                        (2, _) => 1.6,
-                        _ => 1.0,
-                    }
-                    * if a.adult(self.tick) { 1.0 } else { 0.6 };
-                let step = (speed * DT).min(d - 4.0);
-                a.heading = (a.goal_y - a.y).atan2(a.goal_x - a.x);
-                a.x += (a.goal_x - a.x) / d * step;
-                a.y += (a.goal_y - a.y) / d * step;
+            let (ax, ay, gx, gy, step) = {
+                let a = &self.wildlife.animals[i];
+                let d = dist(a.x, a.y, a.goal_x, a.goal_y);
+                if d <= 5.0 {
+                    (a.x, a.y, a.goal_x, a.goal_y, 0.0)
+                } else {
+                    let speed = SpeciesDef::of(a.species).speed
+                        * match (a.action, a.species) {
+                            (6, 2 | 3) => 1.35,
+                            (2, _) => 1.6,
+                            _ => 1.0,
+                        }
+                        * if a.adult(self.tick) { 1.0 } else { 0.6 };
+                    (a.x, a.y, a.goal_x, a.goal_y, (speed * DT).min(d - 4.0))
+                }
+            };
+            if step > 0.0 {
+                let d = dist(ax, ay, gx, gy);
+                let dx = (gx - ax) / d * step;
+                let dy = (gy - ay) / d * step;
+                // Animals refuse open water (rivers stay fordable). If the
+                // direct step is wet, slide along whichever shore axis is dry.
+                let (nx, ny) = if self.passable(ax + dx, ay + dy) {
+                    (ax + dx, ay + dy)
+                } else if self.passable(ax + dx, ay) {
+                    (ax + dx, ay)
+                } else if self.passable(ax, ay + dy) {
+                    (ax, ay + dy)
+                } else {
+                    (ax, ay)
+                };
+                let a = &mut self.wildlife.animals[i];
+                a.heading = (gy - a.y).atan2(gx - a.x);
+                a.x = nx;
+                a.y = ny;
                 a.energy = (a.energy - step * 0.002).max(0.0);
                 continue;
             }
+            let a = &mut self.wildlife.animals[i];
             a.timer += DT;
             let action = a.action;
             let target = a.target as usize;
@@ -1672,6 +1693,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn animals_do_not_enter_open_water() {
+        let mut w = World::new_with_size(8, 7, Hill::default(), MapSize::X4).unwrap();
+        if w.wildlife.animals.is_empty() {
+            return;
+        }
+        let r = w.map.raster();
+        let mut shore = None;
+        'outer: for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 1 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                for (di, dj) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let n = ((j as i32 + dj) * r.cols as i32 + i as i32 + di) as usize;
+                    if r.terrain[n] == Terrain::Water as u8 {
+                        shore = Some((
+                            (i as f32 + 0.5) * r.cell,
+                            (j as f32 + 0.5) * r.cell,
+                            ((i as f32 + 0.5) + di as f32 * 3.0) * r.cell,
+                            ((j as f32 + 0.5) + dj as f32 * 3.0) * r.cell,
+                        ));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((lx, ly, wx, wy)) = shore else { return };
+        w.wildlife.animals[0].x = lx;
+        w.wildlife.animals[0].y = ly;
+        for _ in 0..120 {
+            // Keep the goal pinned in the water; the animal may still be
+            // redirected by its own choices, but it must never stand wet.
+            w.wildlife.animals[0].goal_x = wx;
+            w.wildlife.animals[0].goal_y = wy;
+            w.step(false);
+            assert_ne!(
+                w.map.terrain_at(w.wildlife.animals[0].x, w.wildlife.animals[0].y),
+                Terrain::Water,
+                "animal entered water at ({},{})",
+                w.wildlife.animals[0].x,
+                w.wildlife.animals[0].y
+            );
+        }
+    }
     #[test]
     fn groves_are_small_and_each_animal_has_an_independent_brain() {
         let w = World::new(12, 42).unwrap();

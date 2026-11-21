@@ -1485,6 +1485,46 @@ mod tests {
         assert_eq!(w.agents.convoy, vec![NONE, NONE]);
     }
     #[test]
+    fn frontier_workers_can_found_east_of_the_classic_cutoff() {
+        let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X25).unwrap();
+        let home = &w.markets[0];
+        let (x, y) = w.map.find_terrain(
+            &[Terrain::Grass, Terrain::Forest, Terrain::Fertile],
+            home.x, home.y, 250.0, 315.0,
+        );
+        assert!(x > 2700.0 && w.map.buildable(x, y));
+        assert!(w.markets.iter().all(|m| dist(x, y, m.x, m.y) >= 120.0));
+        w.patches[0].x = x;
+        w.patches[0].y = y;
+        for i in 0..8 {
+            w.agents.x[i] = x;
+            w.agents.y[i] = y;
+            w.agents.cargo_kind[i] = 1;
+            w.agents.cargo[i] = 2;
+            w.agents.berries[i] = w.agents.berries[i].max(2);
+            w.agents.action[i] = Action::Gather;
+            w.agents.dwell_cell[i] = (x / 96.0) as u32 + 4096 * (y / 96.0) as u32;
+            w.agents.dwell_ticks[i] = 120;
+            w.agents.target[i] = 0;
+        }
+        w.ledger.initial = w.stocks();
+        w.tick = 10;
+        let invalid_x = w.map.spec.width() + 100.0;
+        w.patches[0].x = invalid_x;
+        w.agents.x.fill(invalid_x);
+        w.agents.dwell_cell.fill((invalid_x / 96.0) as u32 + 4096 * (y / 96.0) as u32);
+        w.settlement_step();
+        assert_eq!(w.stats.camps_founded, 0);
+        w.patches[0].x = x;
+        w.agents.x.fill(x);
+        w.agents.dwell_cell.fill((x / 96.0) as u32 + 4096 * (y / 96.0) as u32);
+        w.settlement_step();
+        assert_eq!(w.stats.camps_founded, 1);
+        assert!(dist(x, y, w.markets[3].x, w.markets[3].y) < 0.1);
+        w.check().unwrap();
+    }
+
+    #[test]
     fn passing_crowds_do_not_found_camps_but_local_workers_can() {
         let mut w = World::new(8, 42).unwrap();
         w.patches[0].x = 330.0;
@@ -3351,6 +3391,7 @@ impl World {
 
     pub(super) fn settlement_step(&mut self) {
         let mut groups: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+        let classic = self.map.spec.size == MapSize::Classic;
         for i in 0..self.agents.len() {
             if !self.agents.alive[i] {
                 continue;
@@ -3375,7 +3416,7 @@ impl World {
                 && a.action[i] == Action::Gather
                 && a.energy[i] > 20.0
                 && a.hunger[i] < 60.0
-                && a.x[i] < 2700.0
+                && (!classic || a.x[i] < 2700.0)
                 && self
                     .patches
                     .get(a.target[i] as usize)
@@ -3399,6 +3440,15 @@ impl World {
             }
             let x = ids.iter().map(|&i| self.agents.x[i]).sum::<f32>() / ids.len() as f32;
             let y = ids.iter().map(|&i| self.agents.y[i]).sum::<f32>() / ids.len() as f32;
+            if !classic {
+                let (min_x, max_x, min_y, max_y) = self.map.spec.land_bounds();
+                if !(min_x..=max_x).contains(&x)
+                    || !(min_y..=max_y).contains(&y)
+                    || !self.map.buildable(x, y)
+                {
+                    continue;
+                }
+            }
             if self.markets.iter().any(|m| dist(x, y, m.x, m.y) < 120.0) {
                 continue;
             }

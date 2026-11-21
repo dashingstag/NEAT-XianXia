@@ -43,7 +43,7 @@ use social::Tavern;
 mod rest;
 use rest::Shelter;
 mod travel;
-pub use travel::{Ship, WaterState};
+pub use travel::{Ship, TrafficState, WaterState};
 use travel::Convoy;
 
 pub const DT: f32 = 0.1;
@@ -302,6 +302,9 @@ pub struct Road {
     pub b: u32,
     pub built: bool,
     pub under_construction: bool,
+    /// Yesterday's daytime mover census on this corridor: agent
+    /// observations plus delivered goods, refreshed at each dawn
+    /// rollover. Gates the road project in `start_projects`.
     pub traffic: u64,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -407,6 +410,10 @@ pub struct World {
     /// Serialized as a checkpoint tail, not in the base struct.
     #[serde(skip)]
     pub water: WaterState,
+    /// Daytime mover counts per market corridor, folded into
+    /// `Road.traffic` at dawn. Serialized as a checkpoint tail.
+    #[serde(skip)]
+    pub traffic: TrafficState,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -607,6 +614,7 @@ impl World {
             camp_rumours: Default::default(),
             road_paths: Vec::new(),
             water: WaterState::default(),
+            traffic: TrafficState::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -1920,6 +1928,15 @@ impl World {
         self.update_water_reports();
         self.plan_ports();
         self.ship_step();
+        // Traffic census: daytime movers accrue corridor observations;
+        // the dawn rollover publishes them to Road.traffic so busy
+        // corridors get road projects while quiet ones go dormant.
+        if self.tick % rest::DAY_TICKS == 0 {
+            self.publish_traffic();
+        }
+        if self.tick % 120 == 0 && !self.is_night() {
+            self.sample_traffic();
+        }
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2086,13 +2103,8 @@ impl World {
                 } else {
                     m.imported_sales[kind] += q;
                     self.stats.shipments += 1;
-                    for r in &mut self.roads {
-                        if (r.a == m.id && r.b == a.origin[i])
-                            || (r.b == m.id && r.a == a.origin[i])
-                        {
-                            r.traffic += q;
-                        }
-                    }
+                    let pair = (m.id.min(a.origin[i]), m.id.max(a.origin[i]));
+                    *self.traffic.counts.entry(pair).or_default() += q;
                 }
                 self.stats.trades += 1;
                 self.people[i].trades += 1;
@@ -2232,13 +2244,16 @@ impl World {
             if self.markets[id].project.is_some() {
                 continue;
             }
+            // traffic is yesterday's daytime mover census (~16 samples
+            // per mover-day at the 120-tick interval): 48 is roughly a
+            // small caravan or three commuters on the corridor.
             let road = self
                 .roads
                 .iter()
                 .find(|r| {
                     !r.built
                         && !r.under_construction
-                        && r.traffic >= 12
+                        && r.traffic >= 48
                         && (r.a == id as u32 || r.b == id as u32)
                 })
                 .map(|r| if r.a == id as u32 { r.b } else { r.a });
@@ -2293,12 +2308,13 @@ impl World {
             &self.governance,
             &self.camp_rumours,
             &self.water,
+            &self.traffic,
         ))
         .map_err(|e| e.to_string())?;
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE32".to_vec();
+        let mut data = b"XXSAVE33".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2313,7 +2329,7 @@ impl World {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
         if data.len() < 16
-            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
+            || (!matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33")
                 && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
@@ -2345,7 +2361,7 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+        let mut world: Self = if matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
                     Self,
@@ -2358,10 +2374,10 @@ impl World {
                 ),
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
-            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
                 let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32") {
+                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
                     let (rumours, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.camp_rumours = rumours;
@@ -2369,10 +2385,18 @@ impl World {
                 } else {
                     trailing
                 };
-                let trailing = if &data[..8] == b"XXSAVE32" {
+                let trailing = if matches!(&data[..8], b"XXSAVE32" | b"XXSAVE33") {
                     let (water, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.water = water;
+                    rest
+                } else {
+                    trailing
+                };
+                let trailing = if &data[..8] == b"XXSAVE33" {
+                    let (traffic, rest) =
+                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                    world.traffic = traffic;
                     rest
                 } else {
                     trailing
@@ -2505,7 +2529,7 @@ impl World {
                 }
             }
         }
-        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
+        if !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33")
             && &data[..8] != b"XXSAVE15"
         {
             world.map = WorldMap::classic(world.seed);
@@ -2523,7 +2547,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33")
         {
             world.init_wildlife();
         }
@@ -2537,7 +2561,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33")
         {
             world.upgrade_landscape(false);
         } else if &data[..8] == b"XXSAVE09" {
@@ -2552,7 +2576,7 @@ impl World {
             && &data[..8] != b"XXSAVE16"
             && &data[..8] != b"XXSAVE17"
             && &data[..8] != b"XXSAVE18"
-            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32")
+            && !matches!(&data[..8], b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33")
         {
             world.relocate_fertile_land();
         }
@@ -2563,7 +2587,7 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
-        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+        if !matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
             world.governance_step();
         }
         for genome in &mut world.genomes {

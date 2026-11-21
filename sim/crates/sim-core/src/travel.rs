@@ -118,6 +118,63 @@ pub struct WaterState {
     pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
 }
 
+/// Daytime traffic census. Mover-observations accumulate per unordered
+/// market pair during the day; at the day rollover they are published to
+/// `Road.traffic` (yesterday's movers) and hot corridors without a road
+/// record get one so `start_projects` can put them up for construction.
+/// Persisted as a checkpoint tail — a mid-day save keeps its samples.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct TrafficState {
+    /// (min market id, max market id) -> mover-observations today.
+    pub counts: BTreeMap<(u32, u32), u64>,
+}
+
+/// Pure-pursuit lookahead over a corridor polyline: project (x, y) onto
+/// the nearest segment, then return the point `ahead` units of arclength
+/// further along. `rev` traverses the polyline from its last point to
+/// its first without copying it. The far endpoint is returned once the
+/// lookahead runs off the corridor.
+fn path_lookahead(
+    path: &[(f32, f32)],
+    rev: bool,
+    x: f32,
+    y: f32,
+    ahead: f32,
+) -> (f32, f32) {
+    let n = path.len();
+    let at = |i: usize| path[if rev { n - 1 - i } else { i }];
+    let (mut best, mut base, mut progress) = (f32::MAX, 0f32, 0f32);
+    for s in 0..n - 1 {
+        let (ax, ay) = at(s);
+        let (bx, by) = at(s + 1);
+        let (dx, dy) = (bx - ax, by - ay);
+        let l2 = dx * dx + dy * dy;
+        let tt = if l2 > 0.0 {
+            (((x - ax) * dx + (y - ay) * dy) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (px, py) = (ax + dx * tt, ay + dy * tt);
+        let d2 = (x - px) * (x - px) + (y - py) * (y - py);
+        if d2 < best {
+            best = d2;
+            progress = base + l2.sqrt() * tt;
+        }
+        base += l2.sqrt();
+    }
+    let mut rem = progress + ahead;
+    for s in 0..n - 1 {
+        let (ax, ay) = at(s);
+        let (bx, by) = at(s + 1);
+        let len = dist(ax, ay, bx, by);
+        if rem <= len && len > 0.0 {
+            let tt = rem / len;
+            return (ax + (bx - ax) * tt, ay + (by - ay) * tt);
+        }
+        rem -= len;
+    }
+    at(n - 1)
+}
 fn segment_distance_points(x: f32, y: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let l2 = dx * dx + dy * dy;
@@ -514,6 +571,117 @@ mod tests {
             w.map.terrain_at(w.agents.x[0], w.agents.y[0]) != Terrain::Water,
             "deep-water walker never reached dry ground"
         );
+    }
+    #[test]
+    fn daytime_traffic_samples_promote_road_records() {
+        // Movers bound for a foreign market credit their corridor on each
+        // census; a pair over the promotion bar gains a Road record so
+        // start_projects can put it up for construction.
+        let mut w = World::new(3, 42).unwrap();
+        w.roads.clear();
+        for i in 0..3 {
+            w.agents.action[i] = Action::Deliver;
+            w.agents.target[i] = 1;
+            w.agents.home[i] = 0;
+            w.agents.x[i] = 400.0;
+            w.agents.y[i] = 210.0;
+            w.agents.cargo[i] = 5;
+        }
+        for _ in 0..3 {
+            w.sample_traffic();
+        }
+        w.publish_traffic();
+        let r = w
+            .roads
+            .iter()
+            .find(|r| (r.a == 0 && r.b == 1) || (r.a == 1 && r.b == 0))
+            .expect("a hot corridor promotes to a road record");
+        assert_eq!(r.traffic, 9);
+    }
+    #[test]
+    fn published_traffic_posts_a_road_project() {
+        // 4 movers x 12 census ticks = 48, the busy-corridor bar; the
+        // market answers with a Road project agents can work on.
+        let mut w = World::new(4, 42).unwrap();
+        for i in 0..4 {
+            w.agents.action[i] = Action::Deliver;
+            w.agents.target[i] = 1;
+            w.agents.home[i] = 0;
+            w.agents.x[i] = 400.0;
+            w.agents.y[i] = 210.0;
+            w.agents.cargo[i] = 5;
+        }
+        for _ in 0..12 {
+            w.sample_traffic();
+        }
+        w.publish_traffic();
+        w.markets[0].add(1, 12, 0);
+        w.markets[0].add(2, 6, 0);
+        w.start_projects();
+        assert_eq!(w.markets[0].project.as_ref().unwrap().kind, "Road");
+        assert!(w.roads.iter().any(|r| r.under_construction));
+    }
+    #[test]
+    fn walkers_ride_the_built_road_corridor() {
+        // A built road's corridor is not the straight market-to-market
+        // line — it detours around water. A market-bound walker rides
+        // the corridor instead of tracing a parallel line beside it.
+        let mut w = World::new(3, 42).unwrap();
+        let a = (w.markets[0].x, w.markets[0].y);
+        let b = (w.markets[1].x, w.markets[1].y);
+        w.roads[0].built = true;
+        let corner = (400.0, 420.0);
+        w.road_paths = vec![vec![a, corner, b]];
+        w.agents.action[0] = Action::Deliver;
+        w.agents.target[0] = 1;
+        w.agents.home[0] = 0;
+        w.agents.x[0] = a.0;
+        w.agents.y[0] = a.1;
+        for _ in 0..40 {
+            w.tick += 1;
+            w.walk_toward(0, b.0, b.1, 4.0);
+        }
+        assert!(
+            segment_distance_points(w.agents.x[0], w.agents.y[0], a, b) > 40.0,
+            "walker hugged the straight line instead of the corridor"
+        );
+        assert!(dist(w.agents.x[0], w.agents.y[0], corner.0, corner.1) < 200.0);
+    }
+    #[test]
+    fn caravans_ride_the_built_road_corridor() {
+        let mut w = World::new(3, 42).unwrap();
+        let a = (w.markets[0].x, w.markets[0].y);
+        let b = (w.markets[1].x, w.markets[1].y);
+        w.roads[0].built = true;
+        let corner = (400.0, 420.0);
+        // road_paths must match roads.len() or travel_step's
+        // sync_road_paths rebuilds the real corridors.
+        w.road_paths = vec![vec![a, corner, b], vec![], vec![]];
+        w.convoys = vec![Some(Convoy {
+            members: vec![0, 1],
+            x: a.0,
+            y: a.1,
+            goal_x: b.0,
+            goal_y: b.1,
+            created: 0,
+            departed: true,
+        })];
+        for i in 0..2 {
+            w.agents.home[i] = 0;
+            w.agents.convoy[i] = 0;
+            w.agents.x[i] = a.0;
+            w.agents.y[i] = a.1;
+        }
+        for _ in 0..60 {
+            w.tick += 1;
+            w.travel_step();
+        }
+        let c = w.convoys[0].as_ref().unwrap();
+        assert!(
+            segment_distance_points(c.x, c.y, a, b) > 30.0,
+            "caravan hugged the straight line instead of the corridor"
+        );
+        assert!(dist(c.x, c.y, corner.0, corner.1) < 220.0);
     }
     #[test]
     fn zoned_village_plans_and_builds_port() {
@@ -1247,6 +1415,152 @@ impl World {
             .into_iter()
             .map(|(a, b)| self.route_around_water(a, b))
             .collect();
+    }
+    /// Daytime traffic census. Every SAMPLE ticks while the sun is up,
+    /// each traveler bound for a market that is not its home credits that
+    /// unordered market pair once — walkers, convoy members and traders
+    /// alike. Riders aboard a ship are water traffic, not road traffic.
+    /// Counts fold into `Road.traffic` at the next dawn rollover.
+    pub(super) fn sample_traffic(&mut self) {
+        for i in 0..self.agents.len() {
+            let a = &self.agents;
+            if !a.alive[i] {
+                continue;
+            }
+            let home = a.home[i];
+            let Some((dx, dy)) = self.destination(i) else {
+                continue;
+            };
+            // Standing at the destination already is not travel.
+            if dist(a.x[i], a.y[i], dx, dy) < 40.0 {
+                continue;
+            }
+            let Some(g) = self
+                .markets
+                .iter()
+                .filter(|m| dist(m.x, m.y, dx, dy) <= 96.0)
+                .min_by(|u, v| {
+                    dist(u.x, u.y, dx, dy).total_cmp(&dist(v.x, v.y, dx, dy))
+                })
+                .map(|m| m.id)
+            else {
+                continue;
+            };
+            if g == home {
+                continue;
+            }
+            if self
+                .water
+                .ships
+                .iter()
+                .any(|s| s.aboard.contains(&(i as u32)))
+            {
+                continue;
+            }
+            *self
+                .traffic
+                .counts
+                .entry((home.min(g), home.max(g)))
+                .or_default() += 1;
+        }
+    }
+    /// Day rollover: yesterday's mover counts become each corridor's
+    /// published traffic (roads go quiet again when nobody travels them),
+    /// and pairs crossing the promotion bar get a `Road` record so
+    /// `start_projects` can put the corridor up for construction.
+    pub(super) fn publish_traffic(&mut self) {
+        for r in &mut self.roads {
+            r.traffic = 0;
+        }
+        let counts = std::mem::take(&mut self.traffic.counts);
+        for ((a, b), count) in counts {
+            if let Some(r) = self.roads.iter_mut().find(|r| {
+                (r.a == a && r.b == b) || (r.a == b && r.b == a)
+            }) {
+                r.traffic = count;
+            } else if count >= 8 && self.roads.len() < 256 {
+                self.roads.push(Road {
+                    a,
+                    b,
+                    built: false,
+                    under_construction: false,
+                    traffic: count,
+                });
+            }
+        }
+    }
+    /// Lookahead point along a built road corridor serving `origin ->
+    /// goal-market`: pure pursuit 40 units ahead of the mover's closest
+    /// projection, so caravans ride the corridor instead of tracing a
+    /// parallel line beside it. `None` when the goal is not a market, no
+    /// built road links the pair, or the mover is close enough to arrive.
+    fn road_corridor_target(
+        &self,
+        origin: u32,
+        x: f32,
+        y: f32,
+        gx: f32,
+        gy: f32,
+    ) -> Option<(f32, f32)> {
+        if dist(x, y, gx, gy) < 40.0 {
+            return None;
+        }
+        let g = self
+            .markets
+            .iter()
+            .filter(|m| dist(m.x, m.y, gx, gy) <= 72.0)
+            .min_by(|u, v| {
+                dist(u.x, u.y, gx, gy).total_cmp(&dist(v.x, v.y, gx, gy))
+            })?
+            .id;
+        if g == origin {
+            return None;
+        }
+        let ri = self.roads.iter().position(|r| {
+            r.built && ((r.a == origin && r.b == g) || (r.b == origin && r.a == g))
+        })?;
+        let r = &self.roads[ri];
+        let ends = [
+            (self.markets[r.a as usize].x, self.markets[r.a as usize].y),
+            (self.markets[r.b as usize].x, self.markets[r.b as usize].y),
+        ];
+        let pts = self
+            .road_paths
+            .get(ri)
+            .filter(|p| p.len() >= 2)
+            .map(|p| p.as_slice())
+            .unwrap_or(&ends);
+        Some(path_lookahead(pts, r.a == g, x, y, 40.0))
+    }
+    /// Routed corridor for the road the mover should ride, if any. A live
+    /// water detour wins over the corridor; the corridor wins over the
+    /// raw goal. `origin` is the mover's home market (walkers) or the
+    /// convoy majority home (caravans).
+    fn corridor_or_goal(
+        &mut self,
+        key: u32,
+        origin: u32,
+        x: f32,
+        y: f32,
+        gx: f32,
+        gy: f32,
+    ) -> (f32, f32) {
+        if self.map.spec.size != MapSize::Classic
+            && self
+                .water
+                .detours
+                .get(&key)
+                .is_some_and(|d| !d.path.is_empty())
+        {
+            return self.detour_target(key, x, y, gx, gy);
+        }
+        if let Some(t) = self.road_corridor_target(origin, x, y, gx, gy) {
+            return t;
+        }
+        if self.map.spec.size != MapSize::Classic {
+            return self.detour_target(key, x, y, gx, gy);
+        }
+        (gx, gy)
     }
     /// A* over a coarse water-impassable grid between two markets, then a
     /// greedy line-of-sight smoothing pass. Falls back to the straight
@@ -1992,11 +2306,8 @@ impl World {
     /// on generated maps; on Classic this is the historical straight step.
     pub(super) fn walk_toward(&mut self, i: usize, tx: f32, ty: f32, step: f32) {
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
-        let (gx, gy) = if self.map.spec.size != MapSize::Classic {
-            self.detour_target(i as u32, x, y, tx, ty)
-        } else {
-            (tx, ty)
-        };
+        let (gx, gy) =
+            self.corridor_or_goal(i as u32, self.agents.home[i], x, y, tx, ty);
         if let Some((nx, ny)) = self.steer(x, y, gx, gy, step, i % 2 == 0) {
             // Rivers are forded at half speed: the mover still makes
             // absolute progress each tick, it just crosses more slowly.
@@ -2369,11 +2680,20 @@ impl World {
                     * DT)
                     .min(d);
                 let key = 0x8000_0000 | slot as u32;
-                let (gx, gy) = if self.map.spec.size != MapSize::Classic {
-                    self.detour_target(key, c.x, c.y, c.goal_x, c.goal_y)
-                } else {
-                    (c.goal_x, c.goal_y)
-                };
+                // The caravan rides a built road serving its home->goal
+                // pair instead of tracing a parallel line beside it;
+                // a live water detour still wins while active.
+                let mut votes: BTreeMap<u32, u32> = BTreeMap::new();
+                for &id in &c.members {
+                    *votes.entry(self.agents.home[id as usize]).or_default() += 1;
+                }
+                let home = votes
+                    .into_iter()
+                    .max_by_key(|(_, n)| *n)
+                    .map(|(h, _)| h)
+                    .unwrap_or(NONE);
+                let (gx, gy) =
+                    self.corridor_or_goal(key, home, c.x, c.y, c.goal_x, c.goal_y);
                 if let Some((nx, ny)) = self.steer(c.x, c.y, gx, gy, step, slot % 2 == 0)
                 {
                     c.x = nx;

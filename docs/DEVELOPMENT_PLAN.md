@@ -258,3 +258,39 @@ Regression tests: generated_spawns_never_stand_on_unbuildable_ground
 (replays the failing seeds) and walkers_standing_in_water_wade_to_dry_
 ground (deep-water walker reaches land). Post-fix diag: wet_spawns=0,
 deep_stuck=0 on all three seeds.
+
+## M9 Traffic-sampled roads
+
+Roads predated this change as three seeded market-pair records whose
+`traffic` only counted delivered import quantities — walkers, convoys
+and failed trips were invisible, and corridors never measured never got
+built. The census now observes actual daytime movement:
+
+- Every 120 ticks while the sun is up, `sample_traffic` credits each
+  traveler whose destination is a market other than home onto that
+  unordered corridor pair (walkers, convoy members and traders alike;
+  ship riders are water traffic). Deliveries credit their goods
+  quantity into the same daily counter.
+- The dawn rollover (`publish_traffic`) replaces each road's `traffic`
+  with yesterday's observations — quiet corridors go dormant — and
+  promotes pairs crossing the 8-observation bar to `Road` records so
+  `start_projects` can offer them. Records cap at 256.
+- `start_projects` posts a Road project (12 wood, 6 stone, Build jobs
+  for agents) once a corridor publishes >= 48 — roughly a small caravan
+  or three daily commuters.
+- Caravans and market-bound walkers ride built corridors: a pure-pursuit
+  lookahead 40 units along the routed road path (reversed for the
+  return leg) replaces raw-goal steering whenever a built road links
+  the mover's origin market to its goal market. A live water detour
+  still wins while active, and the corridor hands off to direct
+  steering inside 40 units of the goal.
+- The 54 vs 30 speed corridor (22 units either side of the routed path)
+  was already in place and now actually gets used.
+
+Persisted: `TrafficState.counts` as a checkpoint tail (XXSAVE33) so a
+mid-day save keeps its census; `Road` records themselves live in the
+base struct.
+
+Exit tests: daytime_traffic_samples_promote_road_records,
+published_traffic_posts_a_road_project, walkers_ride_the_built_road_
+corridor, caravans_ride_the_built_road_corridor.

@@ -315,6 +315,7 @@ impl From<LegacyWorld> for World {
             camp_rumours: Default::default(),
             road_paths: Vec::new(),
             water: WaterState::default(),
+            traffic: TrafficState::default(),
         }
     }
 }

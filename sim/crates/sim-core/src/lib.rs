@@ -135,6 +135,7 @@ pub enum Action {
     NominateSelf = 66,
     DiscussCamp = 67,
     MigrateToCamp = 68,
+    DeliverWaterReport = 69,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Agents {
@@ -1079,7 +1080,8 @@ impl World {
                     return (out, 1);
                 }
             }
-            let food = self.urgent_food_offers(i);
+            let mut food = self.urgent_food_offers(i);
+            food.extend(self.water_report_offer(i));
             if !food.is_empty() {
                 let count = food.len();
                 out[..count].copy_from_slice(&food);
@@ -1675,7 +1677,7 @@ impl World {
             );
         }
         if self.map.spec.size != MapSize::Classic {
-            for c in self.information_offers(i) {
+            for c in self.water_report_offer(i).into_iter().chain(self.information_offers(i)) {
                 add(
                     c.action,
                     c.target,
@@ -2268,6 +2270,15 @@ impl World {
             self.execute_job(i);
             return;
         }
+        if action == Action::DeliverWaterReport {
+            if self.water.pending.iter().any(|p| p.agent == i as u32) {
+                if let Some(market) = self.markets.get(self.agents.target[i] as usize) {
+                    let speed = self.actor_speed(i, self.agents.x[i], self.agents.y[i]);
+                    self.walk_toward(i, market.x, market.y, speed * DT);
+                }
+            }
+            return;
+        }
         if action == Action::Rest {
             self.execute_rest(i);
             return;
@@ -2501,6 +2512,7 @@ impl World {
             | Action::SellMeat
             | Action::BuyMeat
             | Action::BuyInformation
+            | Action::DeliverWaterReport
             | Action::SellInformation => {}
         }
     }
@@ -3416,7 +3428,7 @@ impl World {
                 Action::BuyInformation | Action::SellInformation | Action::DiscussCamp => {
                     Action::Socialize
                 }
-                Action::NominateSelf | Action::MigrateToCamp => Action::Wait,
+                Action::NominateSelf | Action::MigrateToCamp | Action::DeliverWaterReport => Action::Wait,
                 action => action,
             };
             out.push(

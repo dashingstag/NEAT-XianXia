@@ -1336,33 +1336,6 @@ impl World {
     }
     pub(super) fn personal_destination(&self, i: usize) -> Option<(f32, f32)> {
         let a = &self.agents;
-        // An agent carrying an undelivered water-block report goes home to
-        // file it: that is what the report physically is. Otherwise the
-        // bearer keeps pinning against the same unreachable shore, the
-        // report queue fills with entries that can never land, and the
-        // village never learns to build ports. Agents already queued at a
-        // dock stay — the ferry is their crossing.
-        if self
-            .water
-            .pending
-            .iter()
-            .any(|p| p.agent == i as u32)
-            && !self.water.ports.iter().any(|p| {
-                p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
-            })
-        {
-            // Head for the closest settlement, not necessarily home: a
-            // carrier cut off from its own village files the report at
-            // whatever market it can reach.
-            return self
-                .markets
-                .iter()
-                .min_by(|m1, m2| {
-                    dist(a.x[i], a.y[i], m1.x, m1.y)
-                        .total_cmp(&dist(a.x[i], a.y[i], m2.x, m2.y))
-                })
-                .map(|m| (m.x, m.y));
-        }
         if self.is_urban_action(a.action[i]) {
             return self.urban_destination(i);
         }

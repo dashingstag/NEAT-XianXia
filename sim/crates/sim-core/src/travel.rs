@@ -588,15 +588,13 @@ mod tests {
             ty: w.markets[home].y,
             tick: w.tick,
         });
-        // The report overrides the chosen destination until it is filed.
-        let (dx, dy) = w.personal_destination(0).unwrap();
-        assert_eq!(
-            (dx, dy),
-            (w.markets[home].x, w.markets[home].y),
-            "a carrier's destination is home, not the blocked target"
-        );
+        assert_eq!(w.personal_destination(0), Some((w.patches[0].x, w.patches[0].y)));
+        let report = w.water_report_offer(0).unwrap();
+        assert_eq!(report.action, Action::DeliverWaterReport);
+        w.agents.action[0] = report.action;
+        w.agents.target[0] = report.target;
         for _ in 0..200 {
-            w.execute_personal(0, Action::ForageMeal);
+            w.execute(0);
             w.update_water_reports();
             if w.water.pending.is_empty() {
                 break;
@@ -2731,7 +2729,7 @@ impl World {
             reroute_live = d.has_route() && d.matches_destination(tx, ty);
         }
         let routing_for_report = key & 0x8000_0000 == 0
-            && self.water.pending.iter().any(|report| report.agent == key);
+            && self.agents.action[key as usize] == Action::DeliverWaterReport;
         if starving_agent && !routing_for_report
             && self.target_unreachable(
                 key as usize,
@@ -2812,7 +2810,7 @@ impl World {
     /// each agent keeps at most the 8 freshest marks. The shore position
     /// is also shared so neighbours of the same bank skip the target
     /// without paying the stall cost themselves.
-    fn record_unreachable(&mut self, key: u32) {
+    fn remember_personal_block(&mut self, key: u32) -> (u8, u32) {
         let i = key as usize;
         let pair = (self.agents.action[i] as u8, self.agents.target[i]);
         let blocks = self.water.unreachable.entry(key).or_default();
@@ -2821,6 +2819,12 @@ impl World {
             blocks.remove(&oldest);
         }
         blocks.insert(pair, self.tick);
+        pair
+    }
+
+    fn record_unreachable(&mut self, key: u32) {
+        let pair = self.remember_personal_block(key);
+        let i = key as usize;
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
         let origins = self.water.shared_unreachable.entry(pair).or_default();
         origins.retain(|&(_, _, t)| self.tick.saturating_sub(t) < 2400);
@@ -2938,6 +2942,33 @@ impl World {
                 // lake, the probe resets, and no report is ever filed.
                 if stalled > 240 {
                     self.compute_detour(i as u32, x, y, tx, ty);
+                    // A cached lookup can outlast a hungry walker's entire
+                    // food trip. Remember a repeated stall for this walker.
+                    let key = i as u32;
+                    let action = self.agents.action[i];
+                    let target = self.agents.target[i];
+                    if stalled > 480
+                        && self.agents.hunger[i] >= 55.0
+                        && Self::is_food_trip(action)
+                        && self.water.detours.get(&key).is_some_and(|d| {
+                            !d.has_route() && d.matches_destination(tx, ty)
+                        })
+                        && !self.target_unreachable(i, action, target)
+                        && !self.clear_shot(x, y, tx, ty)
+                    {
+                        // The active food goal owns this outcome even while
+                        // the walker carries a report for later delivery.
+                        let kind = self.agents.cargo_kind[i] as usize;
+                        let memory = match action {
+                            Action::BuyFood => Some(&mut self.food_memory),
+                            Action::ForageMeal => Some(&mut self.forage_memory),
+                            _ => None,
+                        };
+                        if let Some(memory) = memory {
+                            memory.resolve(i, target, kind, self.tick, false);
+                        }
+                        self.remember_personal_block(key);
+                    }
                 }
                 // The pending cap bounds carried reports only — probes and
                 // detours must keep working while the report queue is full,

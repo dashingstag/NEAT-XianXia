@@ -364,6 +364,11 @@ pub struct Statistics {
     pub farm_shifts: u64,
     pub rice_harvested: u64,
 }
+/// Authoritative world state. Checkpoint schema: fields through
+/// `relationships` serialize inside the base postcard struct; anything added
+/// after them MUST be `#[serde(skip)]` and appended to `checkpoint_payload`'s
+/// tail tuples instead — adding a normal field here breaks deserialization
+/// of every save >= v19.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct World {
     pub format: u32,
@@ -532,6 +537,55 @@ pub struct TraceChoice {
     pub inputs: Vec<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_inputs: Option<[f32; 4]>,
+}
+
+/// A checkpoint's save version with its layout capabilities. `World::load`
+/// parses the header once into this and every parse branch and migration
+/// gate below reads from it — bumping the save format means extending this
+/// table, not eight hand-maintained header lists.
+struct SaveVersion(u8);
+impl SaveVersion {
+    const CURRENT: u8 = 34;
+    /// Parses the `XXSAVEnn` magic into a supported version number.
+    fn parse(data: &[u8]) -> Result<Self, String> {
+        let ok = data.len() >= 16
+            && &data[..6] == b"XXSAVE"
+            && data[6].is_ascii_digit()
+            && data[7].is_ascii_digit()
+            && (4..=Self::CURRENT).contains(&(10 * (data[6] - b'0') + (data[7] - b'0')));
+        if !ok {
+            return Err("Invalid checkpoint header".into());
+        }
+        Ok(Self(10 * (data[6] - b'0') + (data[7] - b'0')))
+    }
+    /// Development format: base tuple + version-appended tails (v20-29, v34).
+    fn dev_family(&self) -> bool {
+        matches!(self.0, 20..=29 | 34)
+    }
+    /// Release format: older tuple + action remap (v19, v30-33).
+    fn release_family(&self) -> bool {
+        self.0 == 19 || (30..=33).contains(&self.0)
+    }
+    /// Versions that don't carry a map and get the classic layout
+    /// regenerated (v4-14, 16-18; v15 and v19+ load their own).
+    fn needs_classic_map(&self) -> bool {
+        self.0 <= 14 || (16..=18).contains(&self.0)
+    }
+    /// Versions that stored wildlife spawns in a tail — don't reset them
+    /// (v21-29, v34). Release-family and earlier saves get a fresh spawn set.
+    fn has_tail_spawns(&self) -> bool {
+        matches!(self.0, 21..=29 | 34)
+    }
+    /// Versions that stored terrain spawn points/habitats in a tail
+    /// (v22-29, v34); everything else derives them on load.
+    fn has_tail_spawn_habitats(&self) -> bool {
+        matches!(self.0, 22..=29 | 34)
+    }
+    /// Versions that stored governance state (v30-34); older saves run one
+    /// governance step on load to establish councils.
+    fn has_governance(&self) -> bool {
+        self.0 >= 30
+    }
 }
 
 impl World {
@@ -2652,43 +2706,7 @@ impl World {
         {
             return Err("This save predates day/night, reserved beds and rested-aware brains. Start a new world; the original save is preserved.".into());
         }
-        if data.len() < 16
-            || (!matches!(
-                &data[..8],
-                b"XXSAVE19"
-                    | b"XXSAVE30"
-                    | b"XXSAVE31"
-                    | b"XXSAVE20"
-                    | b"XXSAVE21"
-                    | b"XXSAVE22"
-                    | b"XXSAVE23"
-                    | b"XXSAVE24"
-                    | b"XXSAVE25"
-                    | b"XXSAVE26"
-                    | b"XXSAVE27"
-                    | b"XXSAVE28"
-                    | b"XXSAVE29"
-                    | b"XXSAVE32"
-                    | b"XXSAVE33"
-                    | b"XXSAVE34"
-            ) && &data[..8] != b"XXSAVE18"
-                && &data[..8] != b"XXSAVE17"
-                && &data[..8] != b"XXSAVE16"
-                && &data[..8] != b"XXSAVE15"
-                && &data[..8] != b"XXSAVE14"
-                && &data[..8] != b"XXSAVE13"
-                && &data[..8] != b"XXSAVE12"
-                && &data[..8] != b"XXSAVE11"
-                && &data[..8] != b"XXSAVE10"
-                && &data[..8] != b"XXSAVE09"
-                && &data[..8] != b"XXSAVE08"
-                && &data[..8] != b"XXSAVE07"
-                && &data[..8] != b"XXSAVE06"
-                && &data[..8] != b"XXSAVE04"
-                && &data[..8] != b"XXSAVE05")
-        {
-            return Err("Invalid checkpoint header".into());
-        }
+        let version = SaveVersion::parse(&data)?;
         let expected = u64::from_le_bytes(data[8..16].try_into().unwrap());
         if expected > 8_000_000_000 {
             return Err("Checkpoint exceeds load budget".into());
@@ -2702,20 +2720,7 @@ impl World {
         if raw.len() as u64 != expected {
             return Err("Checkpoint length mismatch".into());
         }
-        let mut world: Self = if matches!(
-            &data[..8],
-            b"XXSAVE20"
-                | b"XXSAVE21"
-                | b"XXSAVE22"
-                | b"XXSAVE23"
-                | b"XXSAVE24"
-                | b"XXSAVE25"
-                | b"XXSAVE26"
-                | b"XXSAVE27"
-                | b"XXSAVE28"
-                | b"XXSAVE29"
-                | b"XXSAVE34"
-        ) {
+        let mut world: Self = if version.dev_family() {
             let (
                 (mut world, purchases, foraging, work, commitments, map, (explored, carcasses)),
                 tail,
@@ -2738,32 +2743,22 @@ impl World {
             world.map = map;
             world.explored = explored;
             world.carcasses = carcasses;
-            if matches!(
-                &data[..8],
-                b"XXSAVE24"
-                    | b"XXSAVE25"
-                    | b"XXSAVE26"
-                    | b"XXSAVE27"
-                    | b"XXSAVE28"
-                    | b"XXSAVE29"
-                    | b"XXSAVE34"
-            ) {
+            // Dev-family tails are appended version by version: each `>=`
+            // gate is the version that introduced that tail field.
+            if version.0 >= 24 {
                 let ((spawns, spears, bows, stats), remaining) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                if matches!(
-                    &data[..8],
-                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE34"
-                ) {
+                if version.0 >= 26 {
                     let (mut trade, rest): (meat::MeatTrade, _) =
                         postcard::take_from_bytes(remaining).map_err(|e| e.to_string())?;
-                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE34") {
+                    if version.0 >= 28 {
                         let (information, trailing) =
                             postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
-                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE34") {
+                        if version.0 >= 29 {
                             let (demand, rest) =
                                 postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                             trade.demand = demand;
-                            if &data[..8] == b"XXSAVE34" {
+                            if version.0 >= 34 {
                                 (
                                     world.governance,
                                     world.camp_rumours,
@@ -2777,7 +2772,7 @@ impl World {
                             return Err("Unexpected market report checkpoint data".into());
                         }
                         world.market_information = information;
-                    } else if &data[..8] == b"XXSAVE27" {
+                    } else if version.0 == 27 {
                         type OldReport = (u64, Vec<([Quote; GOODS], Quote)>);
                         let _: (Option<OldReport>, Option<OldReport>) =
                             postcard::from_bytes(rest).map_err(|e| e.to_string())?;
@@ -2792,13 +2787,13 @@ impl World {
                 world.wildlife.spears = spears;
                 world.wildlife.bows = bows;
                 world.wildlife.hunting_stats = stats;
-            } else if &data[..8] == b"XXSAVE23" {
+            } else if version.0 == 23 {
                 let (spawns, spears) = postcard::from_bytes(tail).map_err(|e| e.to_string())?;
                 world.wildlife.spawns = spawns;
                 world.wildlife.spears = spears;
-            } else if &data[..8] == b"XXSAVE22" {
+            } else if version.0 == 22 {
                 world.wildlife.spawns = postcard::from_bytes(tail).map_err(|e| e.to_string())?;
-            } else if &data[..8] == b"XXSAVE21" {
+            } else if version.0 == 21 {
                 world.wildlife.spawns =
                     postcard::from_bytes::<wildlife::LegacyWildlifeSpawns>(tail)
                         .map_err(|e| e.to_string())?
@@ -2807,10 +2802,7 @@ impl World {
                 return Err("Unexpected checkpoint data".into());
             }
             world
-        } else if matches!(
-            &data[..8],
-            b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
-        ) {
+        } else if version.release_family() {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
                     Self,
@@ -2823,13 +2815,10 @@ impl World {
                 ),
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
-            if matches!(
-                &data[..8],
-                b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
-            ) {
+            if version.0 >= 30 {
                 let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
+                let trailing = if version.0 >= 31 {
                     let (rumours, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.camp_rumours = rumours;
@@ -2837,7 +2826,7 @@ impl World {
                 } else {
                     trailing
                 };
-                let trailing = if matches!(&data[..8], b"XXSAVE32" | b"XXSAVE33") {
+                let trailing = if version.0 >= 32 {
                     let (water, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.water = water;
@@ -2845,7 +2834,7 @@ impl World {
                 } else {
                     trailing
                 };
-                let trailing = if &data[..8] == b"XXSAVE33" {
+                let trailing = if version.0 >= 33 {
                     let (traffic, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.traffic = traffic;
@@ -2878,7 +2867,7 @@ impl World {
             world.map = map;
             world.explored = explored;
             world
-        } else if &data[..8] == b"XXSAVE18" {
+        } else if version.0 == 18 {
             let (mut world, purchases, foraging, work, commitments): (
                 Self,
                 food_memory::FoodMemory,
@@ -2891,7 +2880,7 @@ impl World {
             world.work_memory = work;
             world.commitments = commitments;
             world
-        } else if &data[..8] == b"XXSAVE17" {
+        } else if version.0 == 17 {
             let (mut world, purchases, foraging, work): (
                 Self,
                 food_memory::FoodMemory,
@@ -2902,7 +2891,7 @@ impl World {
             world.forage_memory = foraging;
             world.work_memory = work;
             world
-        } else if &data[..8] == b"XXSAVE16" {
+        } else if version.0 == 16 {
             let (mut world, purchases, foraging): (
                 Self,
                 food_memory::FoodMemory,
@@ -2911,7 +2900,7 @@ impl World {
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world
-        } else if &data[..8] == b"XXSAVE15" {
+        } else if version.0 == 15 {
             let (mut world, memory) =
                 postcard::take_from_bytes::<Self>(&raw).map_err(|e| e.to_string())?;
             // Main used v15 for the widened genome. Early memory builds also used v15
@@ -2935,7 +2924,7 @@ impl World {
                 world.food_memory = postcard::from_bytes(memory).map_err(|e| e.to_string())?;
             }
             world
-        } else if &data[..8] == b"XXSAVE04" {
+        } else if version.0 == 4 {
             let old: legacy_v4::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             let mut w: World = old.into();
@@ -2945,45 +2934,46 @@ impl World {
                 }
             }
             w
-        } else if &data[..8] == b"XXSAVE05" {
+        } else if version.0 == 5 {
             let old: legacy_v5::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE06" {
+        } else if version.0 == 6 {
             let old: legacy_v6::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE07" {
+        } else if version.0 == 7 {
             let old: legacy_v7::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE08" || &data[..8] == b"XXSAVE09" {
+        } else if version.0 == 8 || version.0 == 9 {
             let old: legacy_v9::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE10" {
+        } else if version.0 == 10 {
             let old: legacy_v10::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE11" {
+        } else if version.0 == 11 {
             let old: legacy_v11::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE12" {
+        } else if version.0 == 12 {
             let old: legacy_v12::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
-        } else if &data[..8] == b"XXSAVE13" {
+        } else if version.0 == 13 {
             let old: legacy_v13::LegacyWorld =
                 postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
             old.into()
         } else {
+            // v14: bare serialized World, no memories or tails.
             postcard::from_bytes(&raw).map_err(|e| e.to_string())?
         };
-        if &data[..8] == b"XXSAVE04" || &data[..8] == b"XXSAVE05" {
+        if version.0 <= 5 {
             world.upgrade_content()?;
         }
-        if &data[..8] == b"XXSAVE04" || &data[..8] == b"XXSAVE05" || &data[..8] == b"XXSAVE06" {
+        if version.0 <= 6 {
             for i in 0..world.agents.len() {
                 let mut r = Rng(world.seed ^ (i as u64).wrapping_mul(0x9e3779b97f4a7c15));
                 if r.index(3) == 0 {
@@ -2992,155 +2982,26 @@ impl World {
                 }
             }
         }
-        if !matches!(
-            &data[..8],
-            b"XXSAVE19"
-                | b"XXSAVE30"
-                | b"XXSAVE31"
-                | b"XXSAVE20"
-                | b"XXSAVE21"
-                | b"XXSAVE22"
-                | b"XXSAVE23"
-                | b"XXSAVE24"
-                | b"XXSAVE25"
-                | b"XXSAVE26"
-                | b"XXSAVE27"
-                | b"XXSAVE28"
-                | b"XXSAVE29"
-                | b"XXSAVE32"
-                | b"XXSAVE33"
-                | b"XXSAVE34"
-        ) && &data[..8] != b"XXSAVE15"
-        {
+        if version.needs_classic_map() {
             world.map = WorldMap::classic(world.seed);
         }
         world.social.resize(world.agents.len(), 0.0);
         world.format = 15;
-        if &data[..8] != b"XXSAVE08"
-            && &data[..8] != b"XXSAVE09"
-            && &data[..8] != b"XXSAVE10"
-            && &data[..8] != b"XXSAVE11"
-            && &data[..8] != b"XXSAVE12"
-            && &data[..8] != b"XXSAVE13"
-            && &data[..8] != b"XXSAVE14"
-            && &data[..8] != b"XXSAVE15"
-            && &data[..8] != b"XXSAVE16"
-            && &data[..8] != b"XXSAVE17"
-            && &data[..8] != b"XXSAVE18"
-            && !matches!(
-                &data[..8],
-                b"XXSAVE19"
-                    | b"XXSAVE30"
-                    | b"XXSAVE31"
-                    | b"XXSAVE20"
-                    | b"XXSAVE21"
-                    | b"XXSAVE22"
-                    | b"XXSAVE23"
-                    | b"XXSAVE24"
-                    | b"XXSAVE25"
-                    | b"XXSAVE26"
-                    | b"XXSAVE27"
-                    | b"XXSAVE28"
-                    | b"XXSAVE29"
-                    | b"XXSAVE32"
-                    | b"XXSAVE33"
-                    | b"XXSAVE34"
-            )
-        {
+        if version.0 <= 7 {
             world.init_wildlife();
         }
-        if &data[..8] != b"XXSAVE09"
-            && &data[..8] != b"XXSAVE10"
-            && &data[..8] != b"XXSAVE11"
-            && &data[..8] != b"XXSAVE12"
-            && &data[..8] != b"XXSAVE13"
-            && &data[..8] != b"XXSAVE14"
-            && &data[..8] != b"XXSAVE15"
-            && &data[..8] != b"XXSAVE16"
-            && &data[..8] != b"XXSAVE17"
-            && &data[..8] != b"XXSAVE18"
-            && !matches!(
-                &data[..8],
-                b"XXSAVE19"
-                    | b"XXSAVE30"
-                    | b"XXSAVE31"
-                    | b"XXSAVE20"
-                    | b"XXSAVE21"
-                    | b"XXSAVE22"
-                    | b"XXSAVE23"
-                    | b"XXSAVE24"
-                    | b"XXSAVE25"
-                    | b"XXSAVE26"
-                    | b"XXSAVE27"
-                    | b"XXSAVE28"
-                    | b"XXSAVE29"
-                    | b"XXSAVE32"
-                    | b"XXSAVE33"
-                    | b"XXSAVE34"
-            )
-        {
+        if version.0 <= 8 {
             world.upgrade_landscape(false);
-        } else if &data[..8] == b"XXSAVE09" {
+        } else if version.0 == 9 {
             world.redistribute_forests();
         }
-        if &data[..8] != b"XXSAVE10"
-            && &data[..8] != b"XXSAVE11"
-            && &data[..8] != b"XXSAVE12"
-            && &data[..8] != b"XXSAVE13"
-            && &data[..8] != b"XXSAVE14"
-            && &data[..8] != b"XXSAVE15"
-            && &data[..8] != b"XXSAVE16"
-            && &data[..8] != b"XXSAVE17"
-            && &data[..8] != b"XXSAVE18"
-            && !matches!(
-                &data[..8],
-                b"XXSAVE19"
-                    | b"XXSAVE30"
-                    | b"XXSAVE31"
-                    | b"XXSAVE20"
-                    | b"XXSAVE21"
-                    | b"XXSAVE22"
-                    | b"XXSAVE23"
-                    | b"XXSAVE24"
-                    | b"XXSAVE25"
-                    | b"XXSAVE26"
-                    | b"XXSAVE27"
-                    | b"XXSAVE28"
-                    | b"XXSAVE29"
-                    | b"XXSAVE32"
-                    | b"XXSAVE33"
-                    | b"XXSAVE34"
-            )
-        {
+        if version.0 <= 9 {
             world.relocate_fertile_land();
         }
-        if !matches!(
-            &data[..8],
-            b"XXSAVE21"
-                | b"XXSAVE22"
-                | b"XXSAVE23"
-                | b"XXSAVE24"
-                | b"XXSAVE25"
-                | b"XXSAVE26"
-                | b"XXSAVE27"
-                | b"XXSAVE28"
-                | b"XXSAVE29"
-                | b"XXSAVE34"
-        ) {
+        if !version.has_tail_spawns() {
             world.wildlife.spawns = Default::default();
         }
-        if !matches!(
-            &data[..8],
-            b"XXSAVE22"
-                | b"XXSAVE23"
-                | b"XXSAVE24"
-                | b"XXSAVE25"
-                | b"XXSAVE26"
-                | b"XXSAVE27"
-                | b"XXSAVE28"
-                | b"XXSAVE29"
-                | b"XXSAVE34"
-        ) {
+        if !version.has_tail_spawn_habitats() {
             world.init_terrain_spawn_points();
         }
         world.migrate_brain_schemas();
@@ -3151,24 +3012,10 @@ impl World {
         world.sync_relationships();
         world.validate()?;
         world.init_landmarks();
-        if !matches!(
-            &data[..8],
-            b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33" | b"XXSAVE34"
-        ) {
+        if !version.has_governance() {
             world.governance_step();
         }
-        if !matches!(
-            &data[..8],
-            b"XXSAVE22"
-                | b"XXSAVE23"
-                | b"XXSAVE24"
-                | b"XXSAVE25"
-                | b"XXSAVE26"
-                | b"XXSAVE27"
-                | b"XXSAVE28"
-                | b"XXSAVE29"
-                | b"XXSAVE34"
-        ) {
+        if !version.has_tail_spawn_habitats() {
             world.sync_wildlife_spawn_habitats();
         }
         for genome in &mut world.genomes {
@@ -4013,6 +3860,35 @@ mod tests {
             assert_eq!(reopened.agents.action, restored.agents.action);
         }
         std::fs::remove_file(path).unwrap();
+    }
+    /// Pins the version→capability table edges: every migration gate reads
+    /// version.0 against these bounds, so a boundary regression flips a
+    /// fixup on the wrong save generation.
+    #[test]
+    fn save_version_capabilities_are_pinned() {
+        let v = |n: u8| SaveVersion(n);
+        assert!(v(20).dev_family() && !v(30).dev_family() && v(34).dev_family());
+        assert!(v(19).release_family() && v(30).release_family() && v(33).release_family());
+        assert!(!v(29).release_family() && !v(34).release_family());
+        // Classic-map reset: 4-14 and 16-18 get the classic layout; 15 and
+        // 19+ carry their own map.
+        assert!(v(4).needs_classic_map() && v(14).needs_classic_map());
+        assert!(v(16).needs_classic_map() && v(18).needs_classic_map());
+        assert!(!v(15).needs_classic_map() && !v(19).needs_classic_map() && !v(34).needs_classic_map());
+        // Wildlife spawn tails arrived at v21; terrain spawn points at v22.
+        assert!(!v(20).has_tail_spawns() && v(21).has_tail_spawns() && v(34).has_tail_spawns());
+        assert!(!v(30).has_tail_spawns());
+        assert!(!v(21).has_tail_spawn_habitats() && v(22).has_tail_spawn_habitats());
+        assert!(v(34).has_tail_spawn_habitats() && !v(33).has_tail_spawn_habitats());
+        // Governance state shipped in v30+; older saves run one step on load.
+        assert!(!v(29).has_governance() && v(30).has_governance() && v(34).has_governance());
+        // Header parse accepts exactly the supported window.
+        assert!(SaveVersion::parse(b"XXSAVE04................").is_ok());
+        assert!(SaveVersion::parse(b"XXSAVE34................").is_ok());
+        assert!(SaveVersion::parse(b"XXSAVE03................").is_err());
+        assert!(SaveVersion::parse(b"XXSAVE35................").is_err());
+        assert!(SaveVersion::parse(b"XXSAVE1x................").is_err());
+        assert!(SaveVersion::parse(b"XXSAVE04").is_err());
     }
     #[test]
     fn checkpoint_load_preserves_world_state_exactly() {

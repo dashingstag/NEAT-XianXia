@@ -219,6 +219,18 @@ impl World {
         offers
     }
 
+    pub(super) fn water_report_offer(&self, i: usize) -> Option<Candidate> {
+        let report = self.water.pending.iter().find(|p| p.agent == i as u32)?;
+        let a = &self.agents;
+        let distance = |m: &super::Market| dist(a.x[i], a.y[i], m.x, m.y);
+        let market = self.markets.iter().min_by(|a, b| distance(a).total_cmp(&distance(b)))?;
+        let mut offer = self.need_offer(i, Action::DeliverWaterReport, market.id, 0, distance(market), 0.0);
+        offer.inputs[0] = 1.0;
+        offer.inputs[2] = (self.tick.saturating_sub(report.tick) as f32 / 4800.0).min(1.0);
+        offer.score = self.score_action(i, offer.action, offer.target, &offer.inputs);
+        Some(offer)
+    }
+
     fn need_offer(
         &self,
         i: usize,
@@ -264,6 +276,15 @@ impl World {
         } else {
             0.0
         };
+        if food && self.map.spec.size != MapSize::Classic {
+            let seconds = self.seconds_to_food(i, action, travel);
+            let until_damage = (85.0 - hunger).max(0.0) / self.hunger_per_second(i).max(0.001);
+            inputs[6] = ((until_damage + a.health[i] / 0.8 - seconds) / 60.0).clamp(-1.0, 1.0);
+            if a.action[i] == action && a.target[i] == target {
+                inputs[5] = self.water.progress.get(i).copied().flatten()
+                    .map_or(0.25, |(_, _, tick)| 0.25 / (1.0 + self.tick.saturating_sub(tick) as f32 / 240.0));
+            }
+        }
         inputs[10] = a.energy[i] / 100.0;
         inputs[25] = if action == Action::Rest { 1.0 } else { 0.0 };
         inputs[neat_core::FOOD_READINESS_INPUT] = readiness;

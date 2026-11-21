@@ -1,7 +1,7 @@
 use super::{Action, World};
 use std::collections::BTreeMap;
 
-pub(super) const ACTIONS: usize = Action::MigrateToCamp as usize + 1;
+pub(super) const ACTIONS: usize = Action::DeliverWaterReport as usize + 1;
 type Key = (usize, u8, u32, usize);
 
 #[derive(Clone, Debug, Default)]

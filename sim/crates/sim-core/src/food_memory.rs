@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const TARGET_LIMIT: usize = 8;
+const LESSON_LIMIT: usize = 4;
+// Three recent failures exceed this evidence floor. Two fresh failures
+// reach only 0.5775, and older observations count for less.
+const FAILURE_EVIDENCE: f32 = 0.60;
 const SHORT_HALF_LIFE: f32 = 6_000.0;
 const LONG_HALF_LIFE: f32 = 63_000.0;
 
@@ -33,10 +37,16 @@ impl Estimate {
     }
 
     fn observe(&mut self, tick: u64, outcome: f32) {
-        for (horizon, gain) in [0.35, 0.07].into_iter().enumerate() {
-            let old = self.confidence(tick, horizon) * (1.0 - gain);
-            self.evidence[horizon] = old + gain;
-            self.mean[horizon] = (old * self.mean[horizon] + gain * outcome) / (old + gain);
+        let old = self.confidence(tick, 0) * 0.65;
+        self.evidence[0] = old + 0.35;
+        self.mean[0] = (old * self.mean[0] + 0.35 * outcome) / self.evidence[0];
+
+        self.evidence[1] = self.confidence(tick, 1);
+        if outcome > 0.0 {
+            self.evidence[1] = 0.0;
+        } else if -self.mean[0] * self.evidence[0] >= FAILURE_EVIDENCE {
+            self.mean[1] = -1.0;
+            self.evidence[1] = self.evidence[1].max(self.evidence[0]);
         }
         self.tick = tick;
     }
@@ -110,6 +120,16 @@ impl FoodMemory {
             .entry(target)
             .or_default()
             .observe(tick, outcome);
+        let mut lessons: Vec<_> = memory.targets.iter()
+            .filter(|(_, estimate)| estimate.confidence(tick, 1) > 0.001)
+            .map(|(&id, estimate)| (estimate.tick, id))
+            .collect();
+        if lessons.len() > LESSON_LIMIT {
+            lessons.sort_unstable();
+            for (_, id) in &lessons[..lessons.len() - LESSON_LIMIT] {
+                memory.targets.get_mut(id).unwrap().evidence[1] = 0.0;
+            }
+        }
     }
 
     pub(super) fn inputs(&self, person: usize, target: u32, tick: u64) -> [f32; 4] {
@@ -120,7 +140,11 @@ impl FoodMemory {
         let mut values = [0.0; 4];
         for (horizon, pair) in values.chunks_exact_mut(2).enumerate() {
             let local = specific.confidence(tick, horizon);
-            let general = (1.0 - local) * memory.general.confidence(tick, horizon) * 0.35;
+            let general = if horizon == 0 {
+                (1.0 - local) * memory.general.confidence(tick, 0) * 0.35
+            } else {
+                0.0
+            };
             let confidence = local + general;
             if confidence > 0.001 {
                 pair[0] = (local * specific.mean[horizon] + general * memory.general.mean[horizon])
@@ -259,6 +283,20 @@ mod tests {
             assert_eq!(branch.food_memory, learned);
         }
         assert_eq!(world.food_memory, replay.food_memory);
+    }
+
+    #[test]
+    fn repeated_failures_promote_and_success_clears_the_lesson() {
+        let mut memory = FoodMemory::default();
+        for tick in [10, 20, 30] {
+            memory.commit(0, 4, 0);
+            memory.resolve(0, 4, 0, tick, false);
+            assert_eq!(memory.inputs(0, 4, tick)[2], if tick == 30 { -1.0 } else { 0.0 });
+        }
+        assert_eq!(memory.inputs(0, 5, 30)[2..], [0.0; 2]);
+        memory.commit(0, 4, 0);
+        memory.resolve(0, 4, 0, 40, true);
+        assert_eq!(memory.inputs(0, 4, 40)[2..], [0.0; 2]);
     }
 
     #[test]

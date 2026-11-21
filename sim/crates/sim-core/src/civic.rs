@@ -148,21 +148,20 @@ mod tests {
     fn full_neural_job_flow_builds_retrieves_and_buries() {
         let mut w = scenario(60);
         let targets: Vec<_> = w.corpses.iter().map(|c| c.agent).collect();
-        for _ in 0..3600 {
+        let targets_buried = |w: &World| {
+            targets
+                .iter()
+                .all(|&i| w.corpses[w.agents.corpse[i as usize] as usize].status == 2)
+        };
+        for _ in 0..(2 * rest::DAY_TICKS) {
             w.step(true);
             w.check().unwrap();
-            if w.stats.burials >= targets.len() as u64 {
+            if targets_buried(&w) {
                 break;
             }
         }
         assert!(w.stats.graveyards_built > 0, "{}", w.summary());
-        assert!(
-            targets
-                .iter()
-                .all(|&i| w.corpses[w.agents.corpse[i as usize] as usize].status == 2),
-            "{}",
-            w.summary()
-        );
+        assert!(targets_buried(&w), "{}", w.summary());
         assert!(w.stats.jobs_completed >= 6);
         w.validate_jobs().unwrap();
     }

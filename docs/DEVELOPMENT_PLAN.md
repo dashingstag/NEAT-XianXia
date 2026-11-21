@@ -152,3 +152,50 @@ suite and a generated-map scenario test.
 - Deliberately out: fares/tolls, ship combat, fishing from boats,
   multi-ship fleets, ocean currents. Guild/quests later reuse ports as
   quest waypoints (M4), and spirit islands arrive with the qi layer (M5).
+
+### P5 Routed detours for stalled movers (shipped)
+
+The shoreline steering ladder caps at +-165 degrees, so a walker pressed
+against a real lake oscillated in place until the 600-tick report path
+fired — crowds pooling at water edges were movers that never attempted
+to walk around the obstacle.
+
+- After 240 stalled ticks under the 24-unit progress probe,
+  compute_detour runs the road-router A* from the mover's position and
+  stores the waypoint path in water.detours (agent idx, or
+  0x8000_0000|slot for convoys). walk_toward and departed convoys steer
+  toward a pure-pursuit lookahead 16 units along the path.
+- Arclength progress is monotonic (Detour.progress): a mover shoved off
+  the corridor aims forward instead of flipping between adjacent segment
+  projections. Recompute retry is 480 ticks for live detours, 2400 for
+  unreachable markers.
+- Truly unreachable targets leave an empty-path backoff entry and fall
+  through to the pending-report / port / ferry chain unchanged — the
+  detour only replaces waiting where walking genuinely works.
+- Router fixes this exposed: the A* goal cell can no longer be
+  force-passed (it emitted flooded centres as waypoints) — it snaps to
+  the nearest passing cell with a clear final leg instead; the start
+  cell keeps force-pass since the mover stands there. clear_shot samples
+  at 4-unit mover-step resolution (16-unit strides straddled thin bands
+  steering still hit). steer gains a 180-degree candidate so pocketed
+  movers back out.
+
+Exit test: stalled_walkers_route_around_lakes — a pinned walker gets
+waypoints and arrives on the far shore; the e2e chain re-qualified its
+span against the surveyed endpoints.
+
+### Remaining water-edge gaps and their handling
+
+- Island destinations (no dry path at all) are intentionally slow: they
+  wait on the report -> port -> ferry chain, then queue at the dock.
+  Agents standing in a port queue are waiting for a ship by design.
+- Queue hygiene: a queued rider whose target becomes land-reachable, or
+  who starves/dies, should be dropped — currently only ship_step prunes
+  dead/unfit riders at board time. Add a periodic queue sweep inside
+  update_water_reports if crowding at piers shows up in play.
+- Animal detours are not implemented — animals get water bounds only
+  (P4). If wildlife piles at shores, reuse compute_detour with a
+  wildlife-namespaced key rather than duplicating the follower.
+- Ferry legs that fail mid-route (ship beached on a headland the water
+  A* missed) currently stall with riders aboard; a ship-side progress
+  probe mirroring track_stranded is the planned guard.

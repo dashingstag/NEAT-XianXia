@@ -3336,7 +3336,30 @@ impl World {
     }
 
     fn snapshot_metadata(&self) -> serde_json::Value {
-        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"markets":self.markets.iter().map(|m|{serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"stable_residents":m.stable_residents,"stage":self.settlement_stage(m.id as usize),"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})}).collect::<Vec<_>>(),"patches":self.patches,"roads":self.roads.iter().enumerate().map(|(i,r)|{let mut v=serde_json::to_value(r).unwrap();if let Some(p)=self.road_paths.get(i).filter(|p|p.len()>=2){v["path"]=serde_json::json!(p);}v}).collect::<Vec<_>>()});
+        // Sim-computed house anchors so the viewer reads positions
+        // instead of mirroring house_origin's ring layout.
+        let houses: Vec<Vec<[f32; 2]>> = self
+            .markets
+            .iter()
+            .map(|m| {
+                (0..m.housing_blocks)
+                    .map(|h| {
+                        let p = rest::house_site(&self.map, m.x, m.y, h);
+                        [p.0, p.1]
+                    })
+                    .collect()
+            })
+            .collect();
+        let markets: Vec<serde_json::Value> = self
+            .markets
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                serde_json::json!({"id":m.id,"name":m.name,"x":m.x,"y":m.y,"population":m.population,"housing_blocks":m.housing_blocks,"house_positions":houses[i],"stable_residents":m.stable_residents,"stage":self.settlement_stage(m.id as usize),"coins":m.coins,"stock":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),"quotes":m.quotes,"sales":m.sales,"local_sales":m.local_sales,"imported_sales":m.imported_sales,"profile":self.observed_market_profile(m.id as usize),"project":m.project})
+            })
+            .collect();
+        let mut result = serde_json::json!({"seed":self.seed,"tick":self.tick,"clock":self.clock_summary(),"shelters":self.shelter_summary(),"map_width":self.map.spec.width(),"map_height":self.map.spec.height(),"fertility":self.fertility,"farms":self.farm_summary(),"population_life":self.life_summary(),"taverns":self.taverns,"job_boards":self.job_boards(),"graveyards":self.graveyard_summary(),"seconds":self.tick as f32*DT,"allocated_agents":self.agents.len(),"living_agents":self.living(),"stats":self.stats,"convoy_count":self.convoys.iter().flatten().count(),"convoys":self.convoys.iter().enumerate().filter_map(|(slot,c)|c.as_ref().map(|c|serde_json::json!({"slot":slot,"x":c.x,"y":c.y,"members":c.members.len(),"leader":c.members.first(),"departed":c.departed}))).take(2000).collect::<Vec<_>>(),"accounts":self.accounts(),"products":PRODUCTS,"item_weights":WEIGHTS,"sensors":neat_core::SENSORS.as_slice(),"coins":{"initial":self.ledger.initial_coins,"minted":self.ledger.minted_coins,"current":self.coins()},"patches":self.patches,"roads":self.roads.iter().enumerate().map(|(i,r)|{let mut v=serde_json::to_value(r).unwrap();if let Some(p)=self.road_paths.get(i).filter(|p|p.len()>=2){v["path"]=serde_json::json!(p);}v}).collect::<Vec<_>>()});
+        result["markets"] = serde_json::json!(markets);
         result["governance"] = self.governance_summary();
         result["camp_rumours"] = self.camp_rumour_summary();
         result["hill"] = serde_json::json!(self.hill);

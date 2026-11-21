@@ -390,7 +390,7 @@ func _pick_site(p: Vector2) -> Dictionary:
 			if p.distance_to(centre)<22.0:
 				return {"kind":"markets","id":int(town.id),"market":int(town.id)}
 			for house in range(int(town.housing_blocks)):
-				var at := _house_position(centre, house)
+				var at := _house_position(town, house)
 				if Rect2(at-Vector2(2,3),Vector2(24,20)).has_point(p):
 					return {"kind":"house","id":house,"market":int(town.id)}
 		for shelter in world.get("shelters",[]):
@@ -444,12 +444,17 @@ func hill_footprint() -> Rect2:
 func _classic_terrain() -> bool:
 	return str(world.get("map", {}).get("size", "Classic")) == "Classic"
 
-func _house_position(center: Vector2, index: int) -> Vector2:
+func _house_position(town: Dictionary, index: int) -> Vector2:
+	var positions: Array = town.get("house_positions", [])
+	if index >= 0 and index < positions.size():
+		var p: Array = positions[index]
+		return Vector2(p[0], p[1])
+	var center := Vector2(town.x, town.y)
 	var limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)
-	var p := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
+	var q := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
 	if not _classic_terrain() and terrain != null:
-		p = terrain.dry_point(center, p)
-	return p
+		q = terrain.dry_point(center, q)
+	return q
 
 
 func _update_label_hover(point: Vector2) -> void:
@@ -648,7 +653,7 @@ func _draw() -> void:
 		var blocks := int(m.housing_blocks)
 		var view_rect := Rect2(-offset/zoom,size/zoom).grow(25.0)
 		for j in range(blocks):
-			var at := _house_position(p, j)
+			var at := _house_position(m, j)
 			if not view_rect.has_point(at):
 				continue
 			if not _asset("home","site-glyphs-xianxia/home.png",at+Vector2(10,8),26,26):

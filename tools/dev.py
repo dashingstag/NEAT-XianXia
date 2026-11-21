@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -216,6 +217,35 @@ def player_lock(folder):
         yield
 
 
+def build_info():
+    packaged = ROOT / "viewer/build-info.json"
+    if packaged.is_file():
+        return json.loads(packaged.read_text(encoding="utf-8"))
+
+    def git(*args):
+        try:
+            return subprocess.check_output(
+                ["git", *args], cwd=ROOT, stderr=subprocess.DEVNULL,
+                encoding="utf-8", errors="replace", creationflags=FLAGS,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return ""
+
+    revision = git("rev-parse", "--verify", "HEAD")
+    if not revision:
+        return {}
+    pr = re.fullmatch(r"refs/pull/(\d+)/(?:merge|head)", os.getenv("GITHUB_REF", ""))
+    if not pr or os.getenv("GITHUB_SHA") != revision:
+        subject = git("log", "--first-parent", "-1", "--format=%s", "--extended-regexp",
+                      r"--grep=^(Merge pull request #[0-9]+|.* \(#[0-9]+\)$)")
+        pr = re.search(r"^Merge pull request #(\d+)\b|\(#(\d+)\)$", subject)
+    return {
+        "commit": revision[:8],
+        "pr": next((number for number in pr.groups() if number), "") if pr else "",
+        "dirty": bool(git("status", "--porcelain", "--untracked-files=normal")),
+    }
+
+
 def play(run, scenario="founders", fresh=False):
     folder = run / "player" if fresh else Path(
         os.getenv("XIANXIA_PLAYER_DIR", Path.home() / ".xianxia-handoff")
@@ -227,7 +257,8 @@ def play(run, scenario="founders", fresh=False):
         binary = Path(shutil.copy2(backend(), run))
         with server(binary, run, folder / "world.snapshot", scenario) as port:
             subprocess.run([godot(), "--path", ROOT / "viewer", "--log-file", run / "viewer.log"],
-                           env={**os.environ, "XIANXIA_PORT": str(port)}, check=True)
+                           env={**os.environ, "XIANXIA_PORT": str(port),
+                                "XIANXIA_BUILD_INFO": json.dumps(build_info())}, check=True)
 
 
 def package(run):
@@ -239,8 +270,10 @@ def package(run):
     for name in ["project.toml", "README.md", "LICENSE"]:
         shutil.copy2(ROOT / name, stage)
     shutil.copy2(ROOT / "docs/PLAY.md", stage / "PLAY.md")
+    build = build_info()
+    record(stage / "viewer/build-info.json", build)
     record(stage / "release.json", {"contracts": CONTRACT, "toolchain": CONFIG["toolchain"],
-           "platform": platform.platform(), "backend_sha256": digest(next((stage / "bin").iterdir()))})
+           "platform": platform.platform(), "build": build, "backend_sha256": digest(next((stage / "bin").iterdir()))})
     print(shutil.make_archive(str(run / "xianxia"), "zip", run, "xianxia"))
 
 

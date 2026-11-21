@@ -47,6 +47,20 @@ func button(text: String, callback: Callable) -> Button:
 	b.pressed.connect(callback)
 	return b
 
+func _build_version() -> String:
+	var raw := OS.get_environment("XIANXIA_BUILD_INFO")
+	var source := "res://build-info.json"
+	if raw.is_empty() and FileAccess.file_exists(source):
+		raw = FileAccess.get_file_as_string(source)
+	var info: Variant = JSON.parse_string(raw) if not raw.is_empty() else null
+	if not info is Dictionary or str(info.get("commit", "")).is_empty():
+		return "Build unknown"
+	var pr := str(info.get("pr", ""))
+	var version := "PR #%s · %s" % [pr, info.commit] if not pr.is_empty() else "Commit %s" % info.commit
+	if info.get("dirty", false):
+		version += " · local changes"
+	return version
+
 func _ready() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -63,7 +77,9 @@ func _ready() -> void:
 	header.add_child(title)
 	status = label("Connecting to local simulation",13)
 	header.add_child(status)
-	layout.add_child(label("Rust + Rayon  /  Individual compiled NEAT brains  /  Godot instanced viewer",13))
+	var version := _build_version()
+	layout.add_child(label(version, 13))
+	get_window().title = "NEAT Xianxia · " + version
 	var controls := HBoxContainer.new()
 	controls.add_theme_constant_override("separation",8)
 	layout.add_child(controls)

@@ -54,6 +54,58 @@ pub enum Aspiration {
 mod tests {
     use super::*;
     #[test]
+    fn hungry_frontier_villager_prefers_food_with_a_dry_approach() {
+        let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
+        let raster = w.map.raster();
+        let water = Terrain::Water as u8;
+        let mut points = None;
+        'rows: for row in 0..raster.rows {
+            let line = &raster.terrain[row * raster.cols..(row + 1) * raster.cols];
+            for end in 8..line.len() - 2 {
+                if line[end - 1] != water || line[end] == water {
+                    continue;
+                }
+                let wet = line[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|&&cell| cell == water)
+                    .count();
+                if !(2..=12).contains(&wet) || end < 2 * wet + 4 {
+                    continue;
+                }
+                let start = end - wet - 1;
+                let beyond = start - wet - 2;
+                if line[beyond..=start].contains(&water) {
+                    continue;
+                }
+                let x = |column| (column as f32 + 0.5) * raster.cell;
+                let y = (row as f32 + 0.5) * raster.cell;
+                if w.clear_shot(x(start), y, x(beyond), y) && !w.clear_shot(x(start), y, x(end), y)
+                {
+                    points = Some((x(start), x(end), x(beyond), y));
+                    break 'rows;
+                }
+            }
+        }
+        let (origin, blocked, dry, y) = points.expect("seed has a short water crossing");
+        for p in &mut w.patches {
+            p.stock = 0;
+        }
+        for (i, x) in [blocked, dry].into_iter().enumerate() {
+            w.patches[i].x = x;
+            w.patches[i].y = y;
+            w.patches[i].kind = 0;
+            w.patches[i].stock = 10;
+        }
+        w.agents.x[0] = origin;
+        w.agents.y[0] = y;
+        w.agents.hunger[0] = 0.0;
+        assert_eq!(w.closest_food_patch(0), Some(0));
+        w.agents.hunger[0] = 40.0;
+        assert_eq!(w.closest_food_patch(0), Some(1));
+    }
+
+    #[test]
     fn hungry_villager_can_forage_fish_from_dry_shore() {
         let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
         let raster = w.map.raster();
@@ -1189,24 +1241,21 @@ impl World {
         speed
     }
     pub(super) fn closest_food_patch(&self, i: usize) -> Option<usize> {
-        self.patches
-            .iter()
-            .enumerate()
-            .filter(|(id, p)| {
-                if ![0, 3].contains(&p.kind) || p.stock == 0 {
+        let candidates = self.patches.iter().enumerate().filter(|(id, p)| {
+            if ![0, 3].contains(&p.kind) || p.stock == 0 {
+                return false;
+            }
+            // A fish patch deeper than the 24-unit bank cast can never
+            // be worked — offering it strands foragers at the shore.
+            if self.map.spec.size != MapSize::Classic
+                && self.map.terrain_at(p.x, p.y) == Terrain::Water
+            {
+                let (dx, dy) = self.map.dry_ground(p.x, p.y);
+                if dist(dx, dy, p.x, p.y) > 24.0 {
                     return false;
                 }
-                // A fish patch deeper than the 24-unit bank cast can never
-                // be worked — offering it strands foragers at the shore.
-                if self.map.spec.size != MapSize::Classic
-                    && self.map.terrain_at(p.x, p.y) == Terrain::Water
-                {
-                    let (dx, dy) = self.map.dry_ground(p.x, p.y);
-                    if dist(dx, dy, p.x, p.y) > 24.0 {
-                        return false;
-                    }
-                }
-                !self.target_unreachable(i, Action::ForageMeal, *id as u32)
+            }
+            !self.target_unreachable(i, Action::ForageMeal, *id as u32)
                     // A patch proven blocked also suppresses its cell
                     // neighbours: the same channel cuts them off, and a
                     // starving mover cannot afford a 240-tick stall to
@@ -1221,15 +1270,33 @@ impl World {
                                 })
                         })
                     })
-            })
-            .min_by(|(_, a), (_, b)| {
-                dist(a.x, a.y, self.agents.x[i], self.agents.y[i]).total_cmp(&dist(
-                    b.x,
-                    b.y,
-                    self.agents.x[i],
-                    self.agents.y[i],
-                ))
-            })
+        });
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        let distance = |p: &Patch| dist(p.x, p.y, x, y);
+        let nearest =
+            |a: &(usize, &Patch), b: &(usize, &Patch)| distance(a.1).total_cmp(&distance(b.1));
+        let best = candidates.clone().min_by(nearest)?;
+        if self.map.spec.size == MapSize::Classic || self.agents.hunger[i] < 25.0 {
+            return Some(best.0);
+        }
+        let direct = |p: &Patch| {
+            if p.kind == 3 && self.map.terrain_at(p.x, p.y) == Terrain::Water {
+                let range = distance(p);
+                let proportion = (range - 23.0).max(0.0) / range.max(0.01);
+                self.clear_shot(x, y, x + (p.x - x) * proportion, y + (p.y - y) * proportion)
+            } else {
+                self.clear_shot(x, y, p.x, p.y)
+            }
+        };
+        if direct(best.1) {
+            return Some(best.0);
+        }
+        // When hungry, prefer a visible dry approach to a nominally
+        // closer patch that would first require a shoreline detour.
+        candidates
+            .filter(|(_, p)| direct(p))
+            .min_by(nearest)
+            .or(Some(best))
             .map(|(id, _)| id)
     }
     pub(super) fn urgent_family_care(&self, i: usize) -> bool {
@@ -1274,7 +1341,7 @@ impl World {
         // bearer keeps pinning against the same unreachable shore, the
         // report queue fills with entries that can never land, and the
         // village never learns to build ports. Agents already queued at a
-        // dock stay — the ferry is their crossing.
+        // dock stay � the ferry is their crossing.
         if self
             .water
             .pending

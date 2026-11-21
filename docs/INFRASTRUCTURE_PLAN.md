@@ -6,7 +6,7 @@ The design borrows three ideas from GitHub's guide. Give a skill one repeatable 
 
 ## 1. Establish the boundary
 
-The existing launcher uses port 4176, a shared release executable and a shared runs directory. Its default backend launch starts a new simulation. The generic protocol test resets the server it connects to. Meanwhile a viewer snapshot currently carries moving people, map data, inspection details and population-wide reports together. These facts determine the order of work. Isolate execution first, then separate the data contracts, then distribute feature work. [Launcher](native-prototype/run-prototype.ps1) · [Protocol exercise](native-prototype/experiments/check_protocol.py) · [Architecture findings](native-prototype/ARCHITECTURE_REVIEW.md)
+At the proposal's 19 November review, the prototype launcher used port 4176, a shared release executable and runs directory, and the protocol test reset its connected server. The current [source runner](../tools/dev.py) gives the protocol suite a run-owned backend, and terrain and fog layers are requested separately; a general slow-report channel remains proposed. These dated findings explain the original order of work. See the [protocol check](../tools/experiments/check_protocol.py) and [architecture review](ARCHITECTURE_REVIEW.md).
 
 Proposed source layout, reached incrementally after the initial source import:
 

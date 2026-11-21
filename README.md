@@ -18,6 +18,8 @@ The launcher opens a paused world or resumes the last explicitly saved world. Us
 
 On Windows, double-click [launch-frontier.bat](launch-frontier.bat) for a fresh Frontier X4 game or [launch-new-game.bat](launch-new-game.bat) for a fresh Classic game. The launcher prints its profile path under the run's evidence folder. Each launch can run alongside other instances and has its own save. Set `XIANXIA_PYTHON` to a Python 3.11+ executable if you need a specific interpreter.
 
+The viewer shows the latest merged PR and the running commit in its header and window title. Builds made from a modified checkout also show “local changes”.
+
 ## Find your area
 
 | Directory | Responsibility |

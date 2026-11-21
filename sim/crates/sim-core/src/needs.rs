@@ -292,9 +292,22 @@ impl World {
     }
 
     pub(super) fn execute_play(&mut self, i: usize) {
+        let mut joy = 8.0;
+        if let Some(site) = self.landmarks.get(self.agents.target[i] as usize) {
+            let (x, y) = (self.agents.x[i], self.agents.y[i]);
+            let (tx, ty) = (site.x, site.y);
+            let distance = dist(x, y, tx, ty);
+            if distance > 6.0 {
+                let step = (self.actor_speed(i, x, y) * DT).min(distance);
+                self.walk_toward(i, tx, ty, step);
+                self.agents.drain_energy(i, DT * 0.07);
+                return;
+            }
+            joy = 12.0;
+        }
         self.agents.timer[i] += DT;
         if self.agents.timer[i] >= 3.0 {
-            self.people[i].happiness = (self.people[i].happiness + 8.0).min(100.0);
+            self.people[i].happiness = (self.people[i].happiness + joy).min(100.0);
             self.agents.timer[i] = 0.0;
         }
     }

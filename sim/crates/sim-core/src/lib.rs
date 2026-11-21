@@ -36,6 +36,7 @@ mod legacy_v7;
 mod wildlife;
 mod worldmap;
 use wildlife::Wildlife;
+mod landmarks;
 mod life;
 mod market_information;
 mod meat;
@@ -436,6 +437,8 @@ pub struct World {
     /// `Road.traffic` at dawn. Serialized as a checkpoint tail.
     #[serde(skip)]
     pub traffic: TrafficState,
+    #[serde(skip)]
+    landmarks: Vec<landmarks::Landmark>,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -640,6 +643,7 @@ impl World {
             road_paths: Vec::new(),
             water: WaterState::default(),
             traffic: TrafficState::default(),
+            landmarks: Vec::new(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -859,6 +863,7 @@ impl World {
         w.sync_wildlife_spawn_habitats();
         w.relocate_fertile_land();
         w.sync_education();
+        w.init_landmarks();
         w.ledger.initial = w.stocks();
         w.ledger.initial_coins = w.coins();
         w.sync_councils();
@@ -1592,6 +1597,26 @@ impl World {
         }
         if self.people[i].happiness < 65.0 {
             add(Action::Play, NONE, 0, 0.0, 0.15, 0.0, 0.0, 0.0, 0.0);
+            if let Some((id, distance)) = self
+                .landmarks
+                .iter()
+                .enumerate()
+                .map(|(id, site)| (id, dist(a.x[i], a.y[i], site.x, site.y)))
+                .filter(|&(_, distance)| distance <= 155.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+            {
+                add(
+                    Action::Play,
+                    id as u32,
+                    0,
+                    0.0,
+                    0.33,
+                    0.0,
+                    distance,
+                    0.0,
+                    0.0,
+                );
+            }
         }
         if let Some(t) = self.best_tavern(i, true) {
             let site = &self.taverns[t];
@@ -1834,7 +1859,13 @@ impl World {
                     Action::CollectMeat | Action::SellMeat | Action::BuyMeat
                 ) {
                     "meat".into()
-                } else if matches!(c.action, Action::Recover | Action::Play | Action::Socialize) {
+                } else if c.action == Action::Play {
+                    self.landmarks
+                        .get(c.target as usize)
+                        .map(|site| site.name)
+                        .unwrap_or("")
+                        .into()
+                } else if matches!(c.action, Action::Recover | Action::Socialize) {
                     String::new()
                 } else if matches!(c.action, Action::BuyInformation | Action::SellInformation) {
                     self.markets
@@ -3039,6 +3070,7 @@ impl World {
         world.sync_urban();
         world.sync_relationships();
         world.validate()?;
+        world.init_landmarks();
         if !matches!(
             &data[..8],
             b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33" | b"XXSAVE34"
@@ -3227,6 +3259,7 @@ impl World {
             result["chunk_size"] = serde_json::json!(CHUNK_SIZE);
         }
         result["wildlife"] = self.wildlife_summary();
+        result["landmarks"] = serde_json::json!(self.landmarks);
         result["meat_trade"] = self.meat_trade.summary(&self.markets, self.tick);
         result["information_trade"] = self.information_summary();
         if !self.carcasses.is_empty() {

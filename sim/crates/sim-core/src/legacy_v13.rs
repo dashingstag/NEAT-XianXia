@@ -343,6 +343,7 @@ impl From<LegacyWorld> for World {
             road_paths: Vec::new(),
             water: WaterState::default(),
             traffic: TrafficState::default(),
+            landmarks: Vec::new(),
         }
     }
 }

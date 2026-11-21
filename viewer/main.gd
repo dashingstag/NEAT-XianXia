@@ -440,6 +440,9 @@ func _site_text() -> String:
 	var title := "Site"
 	var body := ""
 	match kind:
+		"landmarks":
+			title = str(d.name)
+			body = "A scenic place to take a break. Nearby villagers may come here for recreation and recover more happiness than they would playing in place."
 		"carcasses":
 			title = "%s carcass" % str(d.species)
 			body = "[b]%d meat portion%s remaining[/b]\n" % [int(d.portions), "" if int(d.portions) == 1 else "s"]

@@ -435,10 +435,40 @@ func _draw() -> void:
 			done = _asset("grass","lod/l2/grass.png",gpos,18,18,1.0 if fraction>0.25 else 0.45)
 		if not done:
 			draw_circle(gpos,7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
+	_draw_landmarks(forest_view)
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
 	_draw_ports()
 	_draw_ships()
+
+func _draw_landmarks(view: Rect2) -> void:
+	var visible := view.grow(35.0)
+	for site in field.world.get("landmarks", []):
+		var at := Vector2(site.x, site.y)
+		if not visible.has_point(at) or not is_explored(at):
+			continue
+		draw_circle(at + Vector2(1, 4), 18.0, Color("384738"))
+		draw_circle(at, 16.0, Color("bdad79"))
+		match str(site.kind):
+			"pavilion":
+				draw_rect(Rect2(at + Vector2(-10, -2), Vector2(20, 11)), Color("8b583f"))
+				draw_colored_polygon(PackedVector2Array([at + Vector2(-16, -2), at + Vector2(0, -15), at + Vector2(16, -2)]), Color("456f73"))
+				draw_line(at + Vector2(-13, -2), at + Vector2(13, -2), Color("d0aa76"), 2.0)
+				draw_rect(Rect2(at + Vector2(-3, 1), Vector2(6, 8)), Color("dfb66b"))
+			"grove":
+				for crown in [Vector2(-7, 2), Vector2(7, 2), Vector2(0, -7)]:
+					draw_circle(at + crown + Vector2(1, 1), 7.0, Color("355b48"))
+					draw_circle(at + crown, 5.5, Color("6c9a68"))
+				draw_circle(at + Vector2(1, -8), 2.0, Color("e6bd9a"))
+			_:
+				for stone in [Vector2(-9, 5), Vector2(9, 5), Vector2(0, -3)]:
+					draw_rect(Rect2(at + stone - Vector2(3, 6), Vector2(6, 11)), Color("5c665e"))
+					draw_line(at + stone - Vector2(2, 5), at + stone + Vector2(-2, 3), Color("c1c5a9"), 1.5)
+		if field.zoom >= 0.85:
+			var name_text := str(site.name)
+			var font := ThemeDB.fallback_font
+			var width := font.get_string_size(name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			draw_string(font, at + Vector2(-width * 0.5, 30), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("243322"))
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()

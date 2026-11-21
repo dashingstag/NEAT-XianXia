@@ -2871,6 +2871,101 @@ fn segment_distance(x: f32, y: f32, a: &Market, b: &Market) -> f32 {
 mod tests {
     use super::*;
     #[test]
+    #[ignore]
+    fn diag_shore_stall() {
+        let mut w = World::new_with_size(3000, 42, Hill::default(), MapSize::X4).unwrap();
+        let mut prev: Vec<(f32, f32)> =
+            (0..w.agents.len()).map(|i| (w.agents.x[i], w.agents.y[i])).collect();
+        const NAMES: [&str; 39] = [
+            "Rest","Gather","Deliver","BuyFood","Build","Trade","Mint","Barter","WorkForFood",
+            "MakeCamp","Wait","BuildGraveyard","Gravedigger","Court","CareFamily","CraftTool",
+            "BuyTool","Farm","HarvestRice","EquipTool","ForageMeal","StoreCargo","Socialize",
+            "BuildTavern","BuildSchool","Teach","AttendSchool","UrbanWork","LeaseBusiness",
+            "OperateBusiness","OrderGoods","BuyHome","RentHome","ShopGoods","Hunt",
+            "CollectEstate","BuildBank","BorrowBusiness","RepayLoan",
+        ];
+        for t in 1..=4000u64 {
+            w.step(true);
+            if t % 1000 == 0 {
+                let wet_farms = w
+                    .farms
+                    .iter()
+                    .filter(|f| w.map.terrain_at(f.x, f.y) == Terrain::Water)
+                    .count();
+                eprintln!(
+                    "  farms={} wet={} detours={} pending={} blocks={} ports={} ships={} queues={}",
+                    w.farms.len(),
+                    wet_farms,
+                    w.water.detours.len(),
+                    w.water.pending.len(),
+                    w.water.blocks.len(),
+                    w.water.ports.len(),
+                    w.water.ships.len(),
+                    w.water.ports.iter().map(|p| p.queue.len() + p.queue_far.len()).sum::<usize>()
+                );
+                let mut hist = [0usize; 70];
+                let (mut unmoved, mut alive, mut wet_t) = (0usize, 0usize, 0usize);
+                let mut stalls: Vec<String> = Vec::new();
+                for i in 0..w.agents.len() {
+                    if !w.agents.alive[i] {
+                        continue;
+                    }
+                    alive += 1;
+                    let a = w.agents.action[i] as usize;
+                    hist[if a < 70 { a } else { 69 }] += 1;
+                    if dist(w.agents.x[i], w.agents.y[i], prev[i].0, prev[i].1) < 4.0 {
+                        unmoved += 1;
+                        let kind = w.agents.cargo_kind[i] as usize;
+                        // Resolve the destination the same way execute does.
+                        let Some((dx, dy)) = w.personal_destination(i) else {
+                            prev[i] = (w.agents.x[i], w.agents.y[i]);
+                            continue;
+                        };
+                        let wet = w.map.terrain_at(dx, dy) == Terrain::Water;
+                        wet_t += wet as usize;
+                        let shore = w.map.terrain_at(
+                            w.agents.x[i] + 8.0,
+                            w.agents.y[i],
+                        ) == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i], w.agents.y[i] + 8.0)
+                                == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i] - 8.0, w.agents.y[i])
+                                == Terrain::Water
+                            || w.map.terrain_at(w.agents.x[i], w.agents.y[i] - 8.0)
+                                == Terrain::Water;
+                        let d = dist(w.agents.x[i], w.agents.y[i], dx, dy);
+                        if d > 8.0 && stalls.len() < 10 {
+                            stalls.push(format!(
+                                "a{i} act={}@{} d={:.0} wet_t={} shore={} convoy={} detour={}",
+                                NAMES.get(w.agents.action[i] as usize).copied().unwrap_or("?"),
+                                kind,
+                                d,
+                                wet,
+                                shore,
+                                w.agents.convoy[i],
+                                w.water.detours.contains_key(&(i as u32))
+                            ));
+                        }
+                    }
+                    prev[i] = (w.agents.x[i], w.agents.y[i]);
+                }
+                let top: Vec<String> = hist
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, &c)| c > 0)
+                    .map(|(k, &c)| {
+                        format!("{}:{}", NAMES.get(k).copied().unwrap_or("?"), c)
+                    })
+                    .collect();
+                eprintln!(
+                    "tick {t}: alive={alive} unmoved={unmoved} wet_targets={wet_t}\n  {}\n  {}",
+                    top.join(" "),
+                    stalls.join("\n  ")
+                );
+            }
+        }
+    }
+    #[test]
     fn conservation_survives_parallel_competition() {
         let mut w = World::new(200, 42).unwrap();
         for _ in 0..500 {

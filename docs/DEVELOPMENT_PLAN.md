@@ -17,7 +17,7 @@ Branch `frontier/m0-foundations`. All commits keep the user's uncommitted `viewe
 - M1 started on `frontier/m1-generated-world`: `worldmap` module with seeded, order-independent chunked generation (elevation/moisture/qi, terrain classes, MapSize Classic/x4/x25/x100, mundane homeland qi ring, persisted spec only — `0feb01a`). Still to land: generated placement of forests/patches/fertility for non-Classic sizes, scenario size option, viewer streaming/minimap, fog of war, spatial grid + bounds-literal cleanup.
 - M1 placement landed (`cfed6bf`): `World::new_with_size` sites markets inside the homeland on fertile/grass terrain, samples patches and mines from terrain classes, `MapSpec` owns the bounds helpers (classic constants preserved), `expand_map_and_food` skips legacy 3x scaling off-Classic, `sim-runner --map classic|x4|x25|x100` for bench/verify/soak. Generated X4 runs clean in soak; 125 tests pass.
 - M1 continued on `frontier/m1-scenario-and-fog`: scenario `map` option wired through `sim-runner --map` and `dev.py play --scenario` (opt-in frontier-x4/x25/x100 scenarios in `world/scenarios.toml`; Classic stays default), `reset` preserves map size, and per-settlement fog of war (`Exploration` — per-market visited-chunk sets, persisted, exposed as `explored_chunks` in snapshot metadata). Still open: viewer chunk streaming/minimap/fog rendering (Godot blocked), traded maps / guild use of exploration.
-- Wildlife hot loop de-quadratized on `frontier/m1-spatial-grid`: `ForestStats` buckets animals/grass/food/population per forest once per decision round (semantically identical � mating already required same forest), replacing per-animal full scans.
+- Wildlife hot loop de-quadratized on `frontier/m1-spatial-grid`: `ForestStats` buckets animals/grass/food/population per forest once per decision round (semantically identical — mating already required same forest), replacing per-animal full scans.
 
 ## Player-facing goals
 
@@ -199,3 +199,35 @@ span against the surveyed endpoints.
 - Ferry legs that fail mid-route (ship beached on a headland the water
   A* missed) currently stall with riders aboard; a ship-side progress
   probe mirroring track_stranded is the planned guard.
+
+### P6 Shoreline crowd root causes (fix batch)
+
+A 3000-agent diagnostic (diag_shore_stall, 4000 ticks) traced the
+visible shoreline pile to five compounding causes, each fixed:
+
+- post_farm validated only the fertility-region centre; the four +-25
+  unit grid cells could land in open water. One wet farm kept winning
+  best_farm as the nearest plot and drew hundreds of workers to pin at
+  its shore. Cells are now nudged dry and must pass farm_ground
+  themselves; best_farm also refuses non-buildable plots so legacy wet
+  farms stop attracting.
+- The 256-entry carried-report cap gated the whole stall probe: once it
+  saturated, no walker accumulated stall time, computed a detour, or
+  filed a report again. The cap now bounds only new pushes.
+- Carried reports never expired and bearers stayed pinned at the same
+  shore, so deliveries were ~0. Reports now expire after ~2 days, and a
+  carrier's personal_destination resolves to its home market until the
+  report lands — the crowd physically walks home instead of pooling.
+- ForageMeal and CareFamily required a 5-unit arrival even for fish
+  patches placed in open water; they now share Gather's 24-unit bank
+  reach for water destinations.
+- The stall probe measured displacement only: sliding 24 units along a
+  shore reset it forever. A probe point now resets only when the mover
+  is measurably closer to its target; same for convoy probes.
+- Orphaned detour entries (dead walkers, released convoy slots) were
+  never evicted; the 512-entry detour map filled and every new strander
+  silently failed compute_detour. update_water_reports now sweeps them.
+
+Diag result (X4 seed 7, 3000 agents): unmoved agents at tick 4000 fell
+579 -> 233 (remaining are resting/waiting/convoy-pinned), wet farms 1 ->
+0, wet-action targets 199 -> 0, delivered blocks ~0 -> 47.

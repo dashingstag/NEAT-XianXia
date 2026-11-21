@@ -43,6 +43,56 @@ mod tests {
         w.check().unwrap();
     }
     #[test]
+    fn farms_on_unbuildable_ground_are_never_offered() {
+        // A farm placed into water (pre water-aware cell checks, or an old
+        // save) used to keep winning best_farm as the "nearest" plot and
+        // pile hundreds of workers up at the shore.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut wet = None;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            let limit = (r.cols - 4) as f32 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) == Terrain::Water {
+                    wet = Some((x, y));
+                    break 'outer;
+                }
+                x += 4.0;
+            }
+        }
+        let Some((wx, wy)) = wet else { return };
+        let farm = |x: f32, y: f32, market: u32| Farm {
+            market,
+            x,
+            y,
+            fertility: 0.9,
+            moisture: 0.8,
+            planted: 0,
+            tended_days: 0,
+            last_tended: u64::MAX,
+            mature: false,
+            harvest_remaining: 0,
+            yield_per_crop: 256,
+            escrow: 2,
+        };
+        let (dx, dy) = w.map.dry_ground(wx, wy);
+        let dry = w.map.find_terrain(&[Terrain::Grass, Terrain::Fertile], dx, dy, 30.0, 400.0);
+        w.farms.push(farm(wx, wy, 0));
+        w.farms.push(farm(dry.0, dry.1, 0));
+        // The worker stands right at the wet farm's bank: without the
+        // buildable check it is strictly the "closest" plot.
+        w.agents.x[0] = dx;
+        w.agents.y[0] = dy;
+        w.agents.cargo[0] = 0;
+        assert_eq!(
+            w.best_farm(0, false),
+            Some(1),
+            "the dry farm must be offered, never the flooded one"
+        );
+    }
+    #[test]
     fn mature_crop_refunds_unused_wages_and_reseeds_existing_plot() {
         let mut w = planted();
         let money = w.coins();
@@ -230,9 +280,30 @@ impl World {
         else {
             return;
         };
-        let index = self.farms.iter().filter(|f| f.market as usize == m).count();
-        let x = region.x + (index % 2) as f32 * 50.0 - 25.0;
-        let y = region.y + (index / 2) as f32 * 50.0 - 25.0;
+        // The region centre passes farm_ground but the four grid cells
+        // around it are not validated individually: a shore-side region can
+        // drop a farm into open water, where workers then pile up unable
+        // to reach it. Nudge each candidate dry and check it for real.
+        let mut cell = None;
+        for o in 0..4usize {
+            let (cx, cy) = self.map.dry_ground(
+                region.x + (o % 2) as f32 * 50.0 - 25.0,
+                region.y + (o / 2) as f32 * 50.0 - 25.0,
+            );
+            if !self.farm_ground(cx, cy, 26.0)
+                || self
+                    .farms
+                    .iter()
+                    .any(|f| f.market as usize == m && dist(f.x, f.y, cx, cy) < 20.0)
+            {
+                continue;
+            }
+            cell = Some((cx, cy));
+            break;
+        }
+        let Some((x, y)) = cell else {
+            return;
+        };
         let scale = self
             .patches
             .iter()
@@ -270,6 +341,12 @@ impl World {
             .iter()
             .enumerate()
             .filter(|(_, f)| {
+                // A farm on non-buildable ground (e.g. placed before the
+                // water-aware cell check, in an old save) can never be
+                // reached: offering it piles workers up at the shore.
+                if !self.map.buildable(f.x, f.y) {
+                    return false;
+                }
                 if harvest {
                     f.mature
                         && f.harvest_remaining > 0

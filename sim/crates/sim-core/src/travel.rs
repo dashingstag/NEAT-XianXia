@@ -347,6 +347,133 @@ mod tests {
         );
     }
     #[test]
+    fn full_report_queue_still_detours_stranders() {
+        // Regression: the 256-entry cap on carried reports used to gate
+        // the whole probe, so once the queue saturated no walker ever
+        // stalled, filed, or received a detour again.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        for n in 0..256u32 {
+            w.water.pending.push(PendingBlock {
+                agent: 1000 + n,
+                x: 0.0,
+                y: 0.0,
+                tx: 0.0,
+                ty: 0.0,
+                tick: w.tick,
+            });
+        }
+        let r = w.map.raster();
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if matches!(w.route_between(ax, y, bx, y), Some(p) if p.len() >= 3) {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        for _ in 0..24 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        w.tick += 241;
+        for _ in 0..8 {
+            w.walk_toward(0, tx, ty, 4.0);
+        }
+        assert!(
+            matches!(w.water.detours.get(&0), Some(d) if !d.path.is_empty()),
+            "a saturated report queue must not disable stall probes or detours"
+        );
+    }
+    #[test]
+    fn stale_carried_reports_expire() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        // Agent 0 stands far from home carrying a report it can never
+        // deliver (it is stranded itself): the entry must not hold a
+        // report-queue slot forever.
+        let home = w.agents.home[0] as usize;
+        w.agents.x[0] = w.markets[home].x + 2000.0;
+        w.agents.y[0] = w.markets[home].y;
+        w.water.pending.push(PendingBlock {
+            agent: 0,
+            x: w.agents.x[0],
+            y: w.agents.y[0],
+            tx: 1.0,
+            ty: 1.0,
+            tick: w.tick,
+        });
+        w.tick += 4801;
+        w.update_water_reports();
+        assert!(w.water.pending.is_empty(), "stale report should expire");
+        assert!(w.water.blocks.is_empty(), "expired reports do not deliver");
+        // A fresh report from the same spot is still carried.
+        w.water.pending.push(PendingBlock {
+            agent: 0,
+            x: w.agents.x[0],
+            y: w.agents.y[0],
+            tx: 1.0,
+            ty: 1.0,
+            tick: w.tick,
+        });
+        w.update_water_reports();
+        assert_eq!(w.water.pending.len(), 1);
+    }
+    #[test]
+    fn report_carriers_walk_home_to_deliver() {
+        // A stranded walker carrying a report must physically bring it
+        // home: without the redirect it kept pinning against the same
+        // unreachable shore, so the report queue filled with entries that
+        // could never land and the village never learned of the block.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let home = w.agents.home[0] as usize;
+        let r = rest::settlement_radius(w.markets[home].housing_blocks).max(160.0);
+        // Just outside home ground, aiming at a patch far in the distance.
+        w.agents.x[0] = w.markets[home].x + r + 40.0;
+        w.agents.y[0] = w.markets[home].y;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = 0;
+        w.water.pending.push(PendingBlock {
+            agent: 0,
+            x: w.agents.x[0],
+            y: w.agents.y[0],
+            tx: w.markets[home].x + 900.0,
+            ty: w.markets[home].y,
+            tick: w.tick,
+        });
+        // The report overrides the chosen destination until it is filed.
+        let (dx, dy) = w.personal_destination(0).unwrap();
+        assert_eq!(
+            (dx, dy),
+            (w.markets[home].x, w.markets[home].y),
+            "a carrier's destination is home, not the blocked target"
+        );
+        for _ in 0..200 {
+            w.execute_personal(0, Action::ForageMeal);
+            w.update_water_reports();
+            if w.water.pending.is_empty() {
+                break;
+            }
+        }
+        assert!(w.water.pending.is_empty(), "carrier delivered the report");
+        assert_eq!(w.water.blocks.len(), 1, "the village recorded the block");
+    }
+    #[test]
     fn zoned_village_plans_and_builds_port() {
         let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
         let r = w.map.raster();
@@ -1847,7 +1974,7 @@ impl World {
     /// for ~600 ticks is stranded at water and starts carrying a report
     /// home (delivered by `update_water_reports` on arrival).
     fn track_stranded(&mut self, i: usize, tx: f32, ty: f32) {
-        if !self.agents.alive[i] || self.water.pending.len() >= 256 {
+        if !self.agents.alive[i] {
             return;
         }
         if self.water.progress.len() <= i {
@@ -1855,7 +1982,19 @@ impl World {
         }
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
         match self.water.progress[i] {
-            Some((px, py, since)) if dist(x, y, px, py) < 24.0 => {
+            Some((px, py, since)) if dist(x, y, px, py) >= 24.0 => {
+                // The mover covered ground — but sliding along a shore is
+                // not progress: keep the stall clock running unless it is
+                // measurably closer to the target than the last probe
+                // point was. (tx, ty) stands in for the distance measured
+                // then, so the serialized probe needs no new field.)
+                if dist(x, y, tx, ty) < dist(px, py, tx, ty) - 24.0 {
+                    self.water.progress[i] = Some((x, y, self.tick));
+                } else {
+                    self.water.progress[i] = Some((x, y, since));
+                }
+            }
+            Some((_, _, since)) => {
                 let stalled = self.tick.saturating_sub(since);
                 // A shore-hugging oscillation resolves nothing on its own:
                 // after ~240 stalled ticks route the mover along dry
@@ -1864,17 +2003,22 @@ impl World {
                 if stalled > 240 {
                     self.compute_detour(i as u32, x, y, tx, ty);
                 }
+                // The pending cap bounds carried reports only — probes and
+                // detours must keep working while the report queue is full,
+                // or every later strander loses its routed escape.
                 if stalled > 600
                     && !self.water.pending.iter().any(|p| p.agent == i as u32)
                 {
-                    self.water.pending.push(PendingBlock {
-                        agent: i as u32,
-                        x,
-                        y,
-                        tx,
-                        ty,
-                        tick: self.tick,
-                    });
+                    if self.water.pending.len() < 256 {
+                        self.water.pending.push(PendingBlock {
+                            agent: i as u32,
+                            x,
+                            y,
+                            tx,
+                            ty,
+                            tick: self.tick,
+                        });
+                    }
                     // A working ferry nearby beats walking the report home:
                     // queue at the dock and let the ship do the crossing.
                     self.try_board(i, tx, ty);
@@ -1885,24 +2029,46 @@ impl World {
     }
     /// Deliver carried reports once their bearer reaches home ground.
     pub(super) fn update_water_reports(&mut self) {
-        if self.map.spec.size == MapSize::Classic || self.water.pending.is_empty() {
+        if self.map.spec.size == MapSize::Classic {
+            return;
+        }
+        // Evict detours whose mover is gone: a dead walker or a released
+        // convoy slot never consumes its route, and the 512-entry cap on
+        // the map would otherwise fill with orphans — after which every
+        // new strander silently fails compute_detour.
+        self.water.detours.retain(|&key, _| {
+            if key & 0x8000_0000 != 0 {
+                self.convoys
+                    .get((key & 0x7fff_ffff) as usize)
+                    .is_some_and(|c| c.is_some())
+            } else {
+                self.agents.alive.get(key as usize).copied().unwrap_or(false)
+            }
+        });
+        if self.water.pending.is_empty() {
             return;
         }
         let mut arrived: Vec<PendingBlock> = Vec::new();
         self.water.pending.retain(|p| {
             let i = p.agent as usize;
             let home = self.agents.home[i] as usize;
-            let keep = self.agents.alive[i]
+            let at_home = self.agents.alive[i]
                 && home < self.markets.len()
                 && {
                     let m = &self.markets[home];
                     let r = rest::settlement_radius(m.housing_blocks).max(160.0);
-                    dist(self.agents.x[i], self.agents.y[i], m.x, m.y) >= r
+                    dist(self.agents.x[i], self.agents.y[i], m.x, m.y) < r
                 };
-            if !keep {
+            // A carried report goes stale after ~2 days: the bearer may be
+            // stranded on the wrong side itself, and keeping it forever
+            // would hold a report-queue slot for a delivery that can never
+            // happen. Expired reports drop silently; reaching home still
+            // delivers.
+            let expired = self.tick.saturating_sub(p.tick) > 4800;
+            if at_home {
                 arrived.push(*p);
             }
-            keep
+            !at_home && !expired && self.agents.alive[i] && home < self.markets.len()
         });
         for p in arrived {
             if !self.agents.alive[p.agent as usize] {
@@ -2159,13 +2325,28 @@ impl World {
                 }
                 if self.map.spec.size != MapSize::Classic {
                     match self.water.convoy_probe.get(&(slot as u32)).copied() {
-                        Some((px, py, since))
-                            if dist(c.x, c.y, px, py) < 24.0
-                                && self.tick.saturating_sub(since) > 240 =>
+                        Some((px, py, since)) if dist(c.x, c.y, px, py) >= 24.0 => {
+                            // Sliding along a shore is not progress — only
+                            // a probe point measurably closer to the goal
+                            // resets the stall clock.
+                            if dist(c.x, c.y, c.goal_x, c.goal_y)
+                                < dist(px, py, c.goal_x, c.goal_y) - 24.0
+                            {
+                                self.water
+                                    .convoy_probe
+                                    .insert(slot as u32, (c.x, c.y, self.tick));
+                            } else {
+                                self.water
+                                    .convoy_probe
+                                    .insert(slot as u32, (c.x, c.y, since));
+                            }
+                        }
+                        Some((_, _, since))
+                            if self.tick.saturating_sub(since) > 240 =>
                         {
                             self.compute_detour(key, c.x, c.y, c.goal_x, c.goal_y);
                         }
-                        Some((px, py, _)) if dist(c.x, c.y, px, py) < 24.0 => {}
+                        Some(_) => {}
                         _ => {
                             self.water
                                 .convoy_probe

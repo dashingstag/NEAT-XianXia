@@ -231,3 +231,30 @@ visible shoreline pile to five compounding causes, each fixed:
 Diag result (X4 seed 7, 3000 agents): unmoved agents at tick 4000 fell
 579 -> 233 (remaining are resting/waiting/convoy-pinned), wet farms 1 ->
 0, wet-action targets 199 -> 0, delivered blocks ~0 -> 47.
+
+### P7 Spawn-on-water fix
+
+init_people scattered each agent at market +-35 units clamped only to
+map bounds, with no terrain check. Markets near a shoreline dropped part
+of the spawn circle into open water, and an agent born more than one
+steering step from dry land could never move at all. Diag counts
+(diag_wet_spawns): X4 seed 42 spawned 635 of 10,000 agents in water (426
+too deep to ever steer out); X25 seed 42 spawned 915 (720 deep). Seed 7
+happened to place all markets inland, which hid the defect in earlier
+shoreline diagnostics.
+
+- Generated-map spawns now resample up to 16 deterministic draws until
+  the point is buildable, then fall back to dry_ground and finally the
+  market position itself (guaranteed buildable). Classic keeps its
+  single fixed spawn point untouched.
+- Legacy saves can still hold agents standing in water, so walk_toward
+  gains a wade rule: a mover whose own position is water and whose
+  steering ladder finds no legal candidate steps straight toward
+  dry_ground instead of freezing. Legal movers never trigger it.
+- Births need no change: children spawn at the mother's position, which
+  is already legal.
+
+Regression tests: generated_spawns_never_stand_on_unbuildable_ground
+(replays the failing seeds) and walkers_standing_in_water_wade_to_dry_
+ground (deep-water walker reaches land). Post-fix diag: wet_spawns=0,
+deep_stuck=0 on all three seeds.

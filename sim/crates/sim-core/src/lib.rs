@@ -659,8 +659,29 @@ impl World {
             } else {
                 (w.map.spec.width() - 5.0, w.map.spec.height() - 5.0)
             };
-            a.x.push((m.x + w.rng.signed() * 35.0).clamp(5.0, bx));
-            a.y.push((m.y + w.rng.signed() * 35.0).clamp(5.0, by));
+            let mut sx = (m.x + w.rng.signed() * 35.0).clamp(5.0, bx);
+            let mut sy = (m.y + w.rng.signed() * 35.0).clamp(5.0, by);
+            // Shoreline market circles put part of the +-35 spawn range
+            // into water (635 of 10,000 on X4 seed 42): an agent born on
+            // unbuildable ground can never take a steering step, so
+            // redraw to land and only nudge dry when the edge is all wet.
+            if size != MapSize::Classic {
+                for _ in 0..16 {
+                    if w.map.buildable(sx, sy) {
+                        break;
+                    }
+                    sx = (m.x + w.rng.signed() * 35.0).clamp(5.0, bx);
+                    sy = (m.y + w.rng.signed() * 35.0).clamp(5.0, by);
+                }
+                if !w.map.buildable(sx, sy) {
+                    (sx, sy) = w.map.dry_ground(sx, sy);
+                }
+                if !w.map.buildable(sx, sy) {
+                    (sx, sy) = (m.x, m.y);
+                }
+            }
+            a.x.push(sx);
+            a.y.push(sy);
             a.health.push(100.0);
             a.hunger.push(w.rng.unit() * 12.0);
             a.energy.push(80.0 + w.rng.unit() * 20.0);
@@ -2870,6 +2891,55 @@ fn segment_distance(x: f32, y: f32, a: &Market, b: &Market) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn generated_spawns_never_stand_on_unbuildable_ground() {
+        // Shoreline market circles put part of the +-35 spawn range into
+        // water: 635 of 10,000 spawned wet on X4 seed 42, 426 too deep to
+        // ever steer out — frozen crowds from birth.
+        for (agents, seed, size) in [
+            (3000usize, 7u64, MapSize::X4),
+            (10000, 42, MapSize::X4),
+            (10000, 42, MapSize::X25),
+        ] {
+            let w = World::new_with_size(agents, seed, Hill::default(), size).unwrap();
+            let wet = (0..w.agents.len())
+                .filter(|&i| !w.map.buildable(w.agents.x[i], w.agents.y[i]))
+                .count();
+            assert_eq!(wet, 0, "{size:?} seed {seed} spawned {wet} agents unbuildable");
+        }
+    }
+    #[test]
+    #[ignore]
+    fn diag_wet_spawns() {
+        for (agents, seed, size) in [
+            (3000usize, 7u64, MapSize::X4),
+            (10000, 42, MapSize::X4),
+            (10000, 42, MapSize::X25),
+        ] {
+            let w = World::new_with_size(agents, seed, Hill::default(), size).unwrap();
+            let mut wet = 0;
+            let mut deep = 0;
+            for i in 0..w.agents.len() {
+                let (x, y) = (w.agents.x[i], w.agents.y[i]);
+                if w.map.terrain_at(x, y) == Terrain::Water {
+                    wet += 1;
+                    // "deep" = every 6u probe around the spawn is still water,
+                    // so no steering step can ever reach dry land.
+                    let dry_near = [(6.0, 0.0), (-6.0, 0.0), (0.0, 6.0), (0.0, -6.0)]
+                        .iter()
+                        .any(|&(ox, oy)| {
+                            w.map.terrain_at(x + ox, y + oy) != Terrain::Water
+                        });
+                    if !dry_near {
+                        deep += 1;
+                    }
+                }
+            }
+            eprintln!(
+                "{size:?} seed={seed} agents={agents}: wet_spawns={wet} deep_stuck={deep}"
+            );
+        }
+    }
     #[test]
     #[ignore]
     fn diag_shore_stall() {

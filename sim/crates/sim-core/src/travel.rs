@@ -474,6 +474,48 @@ mod tests {
         assert_eq!(w.water.blocks.len(), 1, "the village recorded the block");
     }
     #[test]
+    fn walkers_standing_in_water_wade_to_dry_ground() {
+        // Legacy saves can hold agents born in water (635/10k on X4 seed
+        // 42): too deep for any steering step, so they froze in place.
+        // They now wade toward the nearest dry point.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut deep = None;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            let limit = (r.cols - 4) as f32 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) == Terrain::Water
+                    && [(8.0, 0.0), (-8.0, 0.0), (0.0, 8.0), (0.0, -8.0)]
+                        .iter()
+                        .all(|&(ox, oy)| {
+                            w.map.terrain_at(x + ox, y + oy) == Terrain::Water
+                        })
+                {
+                    deep = Some((x, y));
+                    break 'outer;
+                }
+                x += 4.0;
+            }
+        }
+        let Some((wx, wy)) = deep else { return };
+        w.agents.x[0] = wx;
+        w.agents.y[0] = wy;
+        let (dx, dy) = w.map.dry_ground(wx, wy);
+        for _ in 0..2000 {
+            w.tick += 1;
+            w.walk_toward(0, dx, dy, 4.0);
+            if w.map.terrain_at(w.agents.x[0], w.agents.y[0]) != Terrain::Water {
+                break;
+            }
+        }
+        assert!(
+            w.map.terrain_at(w.agents.x[0], w.agents.y[0]) != Terrain::Water,
+            "deep-water walker never reached dry ground"
+        );
+    }
+    #[test]
     fn zoned_village_plans_and_builds_port() {
         let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
         let r = w.map.raster();
@@ -1965,6 +2007,20 @@ impl World {
             };
             self.agents.x[i] = x + (nx - x) * f;
             self.agents.y[i] = y + (ny - y) * f;
+        } else if self.map.spec.size != MapSize::Classic
+            && self.map.terrain_at(x, y) == Terrain::Water
+        {
+            // A mover already standing in open water (legacy spawn, a
+            // displacement bug) has no legal candidate at all: let it
+            // wade straight toward the nearest dry point instead of
+            // freezing in place forever.
+            let (dx, dy) = self.map.dry_ground(x, y);
+            let dd = dist(x, y, dx, dy);
+            if dd > 0.5 {
+                let s = step.min(dd - 0.5);
+                self.agents.x[i] = x + (dx - x) / dd * s;
+                self.agents.y[i] = y + (dy - y) / dd * s;
+            }
         }
         if self.map.spec.size != MapSize::Classic {
             self.track_stranded(i, tx, ty);

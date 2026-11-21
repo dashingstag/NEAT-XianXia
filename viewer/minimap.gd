@@ -3,9 +3,10 @@ extends Control
 # the camera's view. Click or drag to move the camera.
 const WIDTH := 220.0
 var field: Control
+var dragging := false
 
 func _ready() -> void:
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_filter = Control.MOUSE_FILTER_PASS
 	clip_contents = true
 	z_index = 1
 
@@ -32,12 +33,24 @@ func _draw() -> void:
 	draw_rect(map, Color(0.06, 0.12, 0.09, 0.95), false, 2.0)
 
 func _gui_input(event: InputEvent) -> void:
-	var press: bool = event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed
-	var drag: bool = event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
-	if not (press or drag):
+	# Left presses and drags that begin on the minimap move the camera.
+	# Everything else falls through to the field so pan, zoom and select
+	# keep working over this corner.
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if not event.pressed:
+			accept_event()
+			if not dragging:
+				return
+		dragging = event.pressed
+	elif event is InputEventMouseMotion:
+		# A release outside the window never reaches us; clear stale drags.
+		dragging = dragging and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
+		if not dragging:
+			return
+	else:
 		return
-	var target: Vector2 = event.position/size*Vector2(field.map_width, field.map_height)
-	field.camera_center = target.clamp(Vector2.ZERO, Vector2(field.map_width, field.map_height))
+	var target: Vector2 = event.position.clamp(Vector2.ZERO, size)/size*Vector2(field.map_width, field.map_height)
+	field.camera_center = target
 	if field.follow_selection:
 		field.follow_selection = false
 		field.follow_cancelled.emit()

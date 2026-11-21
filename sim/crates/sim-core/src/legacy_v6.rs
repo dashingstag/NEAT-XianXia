@@ -80,6 +80,7 @@ impl From<LegacyWorld> for World {
             market_information: Default::default(),
             road_paths: Vec::new(),
             water: WaterState::default(),
+            traffic: TrafficState::default(),
         }
     }
 }

@@ -1602,7 +1602,7 @@ mod tests {
 
     #[test]
     fn generated_spawn_anchors_match_rock_and_water_edges() {
-        let mut world = World::new_with_size(32, 42, Hill::default(), MapSize::X4).unwrap();
+        let world = World::new_with_size(32, 42, Hill::default(), MapSize::X4).unwrap();
         let mut mountain = false;
         let mut shore = false;
         for point in &world.wildlife.spawns.points {

@@ -49,7 +49,7 @@ mod rest;
 use rest::Shelter;
 mod travel;
 use travel::Convoy;
-pub use travel::{Ship, WaterState};
+pub use travel::{Ship, TrafficState, WaterState};
 
 pub const DT: f32 = 0.1;
 pub const GOODS: usize = 13;
@@ -318,6 +318,9 @@ pub struct Road {
     pub b: u32,
     pub built: bool,
     pub under_construction: bool,
+    /// Yesterday's daytime mover census on this corridor: agent
+    /// observations plus delivered goods, refreshed at each dawn
+    /// rollover. Gates the road project in `start_projects`.
     pub traffic: u64,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -429,6 +432,10 @@ pub struct World {
     /// Serialized as a checkpoint tail, not in the base struct.
     #[serde(skip)]
     pub water: WaterState,
+    /// Daytime mover counts per market corridor, folded into
+    /// `Road.traffic` at dawn. Serialized as a checkpoint tail.
+    #[serde(skip)]
+    pub traffic: TrafficState,
 }
 fn default_checkpoint_map() -> WorldMap {
     WorldMap::classic(0)
@@ -632,6 +639,7 @@ impl World {
             market_information: Default::default(),
             road_paths: Vec::new(),
             water: WaterState::default(),
+            traffic: TrafficState::default(),
         };
         let market_sites: Vec<(f32, f32)> = if size == MapSize::Classic {
             vec![(180.0, 230.0), (780.0, 190.0), (510.0, 490.0)]
@@ -2098,6 +2106,15 @@ impl World {
         self.update_water_reports();
         self.plan_ports();
         self.ship_step();
+        // Traffic census: daytime movers accrue corridor observations;
+        // the dawn rollover publishes them to Road.traffic so busy
+        // corridors get road projects while quiet ones go dormant.
+        if self.tick % rest::DAY_TICKS == 0 {
+            self.publish_traffic();
+        }
+        if self.tick % 120 == 0 && !self.is_night() {
+            self.sample_traffic();
+        }
         if self.tick % 10 == 0 {
             self.refresh();
         }
@@ -2273,13 +2290,8 @@ impl World {
                 } else {
                     m.imported_sales[kind] += q;
                     self.stats.shipments += 1;
-                    for r in &mut self.roads {
-                        if (r.a == m.id && r.b == a.origin[i])
-                            || (r.b == m.id && r.a == a.origin[i])
-                        {
-                            r.traffic += q;
-                        }
-                    }
+                    let pair = (m.id.min(a.origin[i]), m.id.max(a.origin[i]));
+                    *self.traffic.counts.entry(pair).or_default() += q;
                 }
                 self.stats.trades += 1;
                 self.people[i].trades += 1;
@@ -2430,13 +2442,16 @@ impl World {
             if self.markets[id].project.is_some() {
                 continue;
             }
+            // traffic is yesterday's daytime mover census (~16 samples
+            // per mover-day at the 120-tick interval): 48 is roughly a
+            // small caravan or three commuters on the corridor.
             let road = self
                 .roads
                 .iter()
                 .find(|r| {
                     !r.built
                         && !r.under_construction
-                        && r.traffic >= 12
+                        && r.traffic >= 48
                         && (r.a == id as u32 || r.b == id as u32)
                 })
                 .map(|r| if r.a == id as u32 { r.b } else { r.a });
@@ -2498,7 +2513,12 @@ impl World {
                 &self.market_information,
                 &self.meat_trade.demand,
             ),
-            (&self.governance, &self.camp_rumours, &self.water),
+            (
+                &self.governance,
+                &self.camp_rumours,
+                &self.water,
+                &self.traffic,
+            ),
         ))
         .map_err(|e| e.to_string())
     }
@@ -2507,7 +2527,7 @@ impl World {
         let compressed =
             zstd::stream::encode_all(payload.as_slice(), 3).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("tmp");
-        let mut data = b"XXSAVE33".to_vec();
+        let mut data = b"XXSAVE34".to_vec();
         data.extend((payload.len() as u64).to_le_bytes());
         data.extend(compressed);
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
@@ -2539,6 +2559,7 @@ impl World {
                     | b"XXSAVE29"
                     | b"XXSAVE32"
                     | b"XXSAVE33"
+                    | b"XXSAVE34"
             ) && &data[..8] != b"XXSAVE18"
                 && &data[..8] != b"XXSAVE17"
                 && &data[..8] != b"XXSAVE16"
@@ -2582,7 +2603,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE33"
+                | b"XXSAVE34"
         ) {
             let (
                 (mut world, purchases, foraging, work, commitments, map, (explored, carcasses)),
@@ -2614,26 +2635,30 @@ impl World {
                     | b"XXSAVE27"
                     | b"XXSAVE28"
                     | b"XXSAVE29"
-                    | b"XXSAVE33"
+                    | b"XXSAVE34"
             ) {
                 let ((spawns, spears, bows, stats), remaining) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
                 if matches!(
                     &data[..8],
-                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE33"
+                    b"XXSAVE26" | b"XXSAVE27" | b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE34"
                 ) {
                     let (mut trade, rest): (meat::MeatTrade, _) =
                         postcard::take_from_bytes(remaining).map_err(|e| e.to_string())?;
-                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE33") {
+                    if matches!(&data[..8], b"XXSAVE28" | b"XXSAVE29" | b"XXSAVE34") {
                         let (information, trailing) =
                             postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
-                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE33") {
+                        if matches!(&data[..8], b"XXSAVE29" | b"XXSAVE34") {
                             let (demand, rest) =
                                 postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                             trade.demand = demand;
-                            if &data[..8] == b"XXSAVE33" {
-                                (world.governance, world.camp_rumours, world.water) =
-                                    postcard::from_bytes(rest).map_err(|e| e.to_string())?;
+                            if &data[..8] == b"XXSAVE34" {
+                                (
+                                    world.governance,
+                                    world.camp_rumours,
+                                    world.water,
+                                    world.traffic,
+                                ) = postcard::from_bytes(rest).map_err(|e| e.to_string())?;
                             } else if !rest.is_empty() {
                                 return Err("Unexpected meat demand checkpoint data".into());
                             }
@@ -2673,7 +2698,7 @@ impl World {
             world
         } else if matches!(
             &data[..8],
-            b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32"
+            b"XXSAVE19" | b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
         ) {
             let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
                 (
@@ -2687,10 +2712,13 @@ impl World {
                 ),
                 &[u8],
             ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
-            if matches!(&data[..8], b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32") {
+            if matches!(
+                &data[..8],
+                b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
+            ) {
                 let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
-                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32") {
+                let trailing = if matches!(&data[..8], b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
                     let (rumours, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.camp_rumours = rumours;
@@ -2698,10 +2726,18 @@ impl World {
                 } else {
                     trailing
                 };
-                let trailing = if &data[..8] == b"XXSAVE32" {
+                let trailing = if matches!(&data[..8], b"XXSAVE32" | b"XXSAVE33") {
                     let (water, rest) =
                         postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
                     world.water = water;
+                    rest
+                } else {
+                    trailing
+                };
+                let trailing = if &data[..8] == b"XXSAVE33" {
+                    let (traffic, rest) =
+                        postcard::take_from_bytes(trailing).map_err(|e| e.to_string())?;
+                    world.traffic = traffic;
                     rest
                 } else {
                     trailing
@@ -2862,6 +2898,7 @@ impl World {
                 | b"XXSAVE29"
                 | b"XXSAVE32"
                 | b"XXSAVE33"
+                | b"XXSAVE34"
         ) && &data[..8] != b"XXSAVE15"
         {
             world.map = WorldMap::classic(world.seed);
@@ -2896,6 +2933,7 @@ impl World {
                     | b"XXSAVE29"
                     | b"XXSAVE32"
                     | b"XXSAVE33"
+                    | b"XXSAVE34"
             )
         {
             world.init_wildlife();
@@ -2927,6 +2965,7 @@ impl World {
                     | b"XXSAVE29"
                     | b"XXSAVE32"
                     | b"XXSAVE33"
+                    | b"XXSAVE34"
             )
         {
             world.upgrade_landscape(false);
@@ -2959,6 +2998,7 @@ impl World {
                     | b"XXSAVE29"
                     | b"XXSAVE32"
                     | b"XXSAVE33"
+                    | b"XXSAVE34"
             )
         {
             world.relocate_fertile_land();
@@ -2974,7 +3014,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE33"
+                | b"XXSAVE34"
         ) {
             world.wildlife.spawns = Default::default();
         }
@@ -2988,7 +3028,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE33"
+                | b"XXSAVE34"
         ) {
             world.init_terrain_spawn_points();
         }
@@ -3001,7 +3041,7 @@ impl World {
         world.validate()?;
         if !matches!(
             &data[..8],
-            b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33"
+            b"XXSAVE30" | b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33" | b"XXSAVE34"
         ) {
             world.governance_step();
         }
@@ -3015,7 +3055,7 @@ impl World {
                 | b"XXSAVE27"
                 | b"XXSAVE28"
                 | b"XXSAVE29"
-                | b"XXSAVE33"
+                | b"XXSAVE34"
         ) {
             world.sync_wildlife_spawn_habitats();
         }
@@ -3625,6 +3665,14 @@ mod tests {
                     Action::MigrateToCamp,
                 ][..],
             ),
+            (
+                b"XXSAVE33",
+                &[
+                    Action::NominateSelf,
+                    Action::DiscussCamp,
+                    Action::MigrateToCamp,
+                ][..],
+            ),
         ] {
             world.agents.action[1..3].copy_from_slice(if expected.len() == 1 {
                 &[Action::Wait, Action::Wait]
@@ -3642,11 +3690,14 @@ mod tests {
                 &world.governance,
             ))
             .unwrap();
-            if matches!(header, b"XXSAVE31" | b"XXSAVE32") {
+            if matches!(header, b"XXSAVE31" | b"XXSAVE32" | b"XXSAVE33") {
                 raw.extend(postcard::to_allocvec(&world.camp_rumours).unwrap());
             }
-            if header == b"XXSAVE32" {
+            if matches!(header, b"XXSAVE32" | b"XXSAVE33") {
                 raw.extend(postcard::to_allocvec(&world.water).unwrap());
+            }
+            if header == b"XXSAVE33" {
+                raw.extend(postcard::to_allocvec(&world.traffic).unwrap());
             }
             let mut data = header.to_vec();
             data.extend((raw.len() as u64).to_le_bytes());

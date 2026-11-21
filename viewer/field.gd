@@ -368,6 +368,13 @@ func _pick_carcass(p: Vector2) -> int:
 	return best
 
 func _pick_site(p: Vector2) -> Dictionary:
+	if pick_mode in ["Auto", "Buildings"]:
+		var landmarks: Array = world.get("landmarks", [])
+		for id in range(landmarks.size()):
+			var site: Dictionary = landmarks[id]
+			var at := Vector2(site.x, site.y)
+			if p.distance_to(at) < 19.0 and terrain.is_explored(at):
+				return {"kind":"landmarks", "id":id, "market":-1}
 	if pick_mode in ["Auto","Buildings"]:
 		for building in world.get("urban",{}).get("buildings",[]):
 			if p.distance_to(Vector2(building.x,building.y))<18.0:

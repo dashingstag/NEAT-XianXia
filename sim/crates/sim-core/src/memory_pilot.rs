@@ -110,6 +110,10 @@ struct Observable {
 
 impl World {
     /// Run a transient live-world pilot. Uses score adjustments and observable progress proxies.
+    /// NOT replay-safe: trial state lives in `#[serde(skip)]` watch state, so a
+    /// checkpoint taken mid-trial drops the scorer while the genomes it shaped
+    /// keep evolving after load. A resumed world has no trial — coverage reads
+    /// return null and decisions revert to the unadjusted scorer.
     pub fn enable_memory_pilot(&mut self, readouts: usize) {
         assert!(matches!(readouts, 0 | 1 | 3));
         self.watch.memory_trial = Some(Trial {
@@ -118,16 +122,14 @@ impl World {
         });
     }
 
+    /// Trial coverage so far, or null when no trial is active — including
+    /// after a checkpoint load dropped a live trial.
     pub fn memory_pilot_coverage(&self) -> serde_json::Value {
-        serde_json::to_value(
-            &self
-                .watch
-                .memory_trial
-                .as_ref()
-                .expect("enabled memory pilot")
-                .coverage,
-        )
-        .unwrap()
+        self.watch
+            .memory_trial
+            .as_ref()
+            .map(|trial| serde_json::to_value(&trial.coverage).unwrap())
+            .unwrap_or(serde_json::Value::Null)
     }
 
     fn observe_memory_progress(&self, i: usize) -> Observable {

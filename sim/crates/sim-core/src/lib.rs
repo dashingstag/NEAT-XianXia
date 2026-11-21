@@ -400,6 +400,10 @@ pub struct World {
     pub urban: Urban,
     pub banking: Banking,
     pub relationships: Relationships,
+    /// Observation-only state: person watch, retail counters and the
+    /// memory-pilot trial. Deliberately unsaved — a checkpoint taken
+    /// mid-pilot drops the trial scorer while genomes it shaped keep
+    /// evolving after load. The pilot is not replay-safe.
     #[serde(skip)]
     watch: Watch,
     pub hill: Hill,
@@ -4025,6 +4029,31 @@ mod tests {
             assert_eq!(reopened.agents.action, restored.agents.action);
         }
         std::fs::remove_file(path).unwrap();
+    }
+    /// The memory pilot's trial lives in #[serde(skip)] watch state, so a
+    /// checkpoint silently drops it while pilot-shaped genomes persist —
+    /// documented as not replay-safe on enable_memory_pilot. This pins that
+    /// contract: the resumed world has no trial, coverage reads null instead
+    /// of panicking, and stepping reverts to the unadjusted scorer.
+    #[test]
+    fn memory_pilot_trial_does_not_survive_checkpoint() {
+        let mut w = World::new(24, 9).unwrap();
+        w.enable_memory_pilot(1);
+        assert!(w.watch.memory_trial.is_some());
+        for _ in 0..40 {
+            w.step(false);
+        }
+        let path =
+            std::env::temp_dir().join(format!("xianxia-pilot-{}.snapshot", std::process::id()));
+        w.save(&path).unwrap();
+        let mut restored = World::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(restored.watch.memory_trial.is_none());
+        assert!(restored.memory_pilot_coverage().is_null());
+        for _ in 0..10 {
+            restored.step(false);
+        }
+        restored.check().unwrap();
     }
     #[test]
     fn checkpoint_load_preserves_world_state_exactly() {

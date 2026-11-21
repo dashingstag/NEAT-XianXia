@@ -653,7 +653,7 @@ func _site_data() -> Dictionary:
 		if market<0 or market>=towns.size() or id>=int(towns[market].housing_blocks):
 			return {}
 		var town: Dictionary = towns[market]
-		var at: Vector2 = (Vector2(town.x,town.y)+field._house_origin(id)).clamp(Vector2(5,5),Vector2(2670,1900))
+		var at: Vector2 = field._house_position(town, id)
 		return {"x":at.x+10,"y":at.y+7.5,"town":town.name,"capacity":32}
 	var rows: Array = state.get("wildlife",{}).get("forests",[]) if kind=="forests" else state.get("urban",{}).get("buildings",[]) if kind=="urban_buildings" else state.get(kind,[])
 	if id<0 or id>=rows.size():

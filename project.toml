@@ -12,6 +12,6 @@ node_major = 24
 
 [contracts]
 wire = 2
-save = 31
+save = 34
 old_save = "fixtures/bank-v12.snapshot"
 town_frame = "fixtures/town-shop.json"

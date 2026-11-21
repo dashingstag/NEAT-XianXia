@@ -1269,6 +1269,9 @@ mod tests {
         let (ax, ay) = ((land_a as f32 + 0.5) * r.cell, (row as f32 + 0.5) * r.cell);
         let (bx, by) = ((land_b as f32 + 0.5) * r.cell, (row as f32 + 0.5) * r.cell);
         assert!(!w.clear_shot(ax, ay, bx, by));
+        let wet_x = ax + r.cell;
+        assert_eq!(w.map.terrain_at(wet_x, ay), Terrain::Water);
+        assert!(w.route_between(ax, ay, wet_x, ay).is_none());
         w.markets[0].x = ax;
         w.markets[0].y = ay;
         w.markets[1].x = bx;
@@ -1585,6 +1588,18 @@ impl World {
         if matches!(a.action[i], Action::DiscussCamp | Action::MigrateToCamp) {
             return self.camp_rumour_destination(i);
         }
+        if matches!(
+            a.action[i],
+            Action::BuyInformation | Action::SellInformation
+        ) {
+            return self.information_destination(i);
+        }
+        if matches!(
+            a.action[i],
+            Action::CollectMeat | Action::SellMeat | Action::BuyMeat
+        ) {
+            return self.meat_destination(i);
+        }
         if matches!(a.action[i], Action::Gravedigger | Action::BuildGraveyard) {
             return self.job_destination(i);
         }
@@ -1625,7 +1640,10 @@ impl World {
                 .get(a.target[i] as usize)
                 .map(|_| self.shelter_destination(i, a.target[i] as usize));
         }
-        if matches!(a.action[i], Action::MakeCamp | Action::Wait) {
+        if matches!(
+            a.action[i],
+            Action::MakeCamp | Action::Wait | Action::Play | Action::Recover
+        ) {
             return Some((a.x[i], a.y[i]));
         }
         if a.action[i] == Action::Gather {
@@ -1851,144 +1869,114 @@ impl World {
         if self.map.spec.size == MapSize::Classic || self.clear_shot(ax, ay, bx, by) {
             return Some(Vec::new());
         }
+        if !self.passable(ax, ay) || !self.passable(bx, by) {
+            return None;
+        }
         const CELL: f32 = 64.0;
         let cols = (self.map.spec.width() / CELL).ceil() as usize;
         let rows = (self.map.spec.height() / CELL).ceil() as usize;
-        let mut pass = vec![false; cols * rows];
-        // A cell is walkable only when its centre and quarter-offset samples
-        // are all dry, so routed segments cannot shave through water cells.
-        for j in 0..rows {
-            for i in 0..cols {
-                let cx = (i as f32 + 0.5) * CELL;
-                let cy = (j as f32 + 0.5) * CELL;
+        let center = |index: usize| {
+            ((index % cols) as f32 * CELL + CELL * 0.5,
+             (index / cols) as f32 * CELL + CELL * 0.5)
+        };
+        let mut pass = vec![None; cols * rows];
+        let mut walkable = |index: usize| {
+            *pass[index].get_or_insert_with(|| {
+                let (x, y) = center(index);
                 let q = CELL * 0.25;
-                pass[j * cols + i] = [(cx, cy), (cx - q, cy - q), (cx + q, cy + q), (cx - q, cy + q), (cx + q, cy - q)]
+                [(x, y), (x - q, y - q), (x + q, y + q), (x - q, y + q), (x + q, y - q)]
                     .into_iter()
-                    .all(|(x, y)| self.map.terrain_at(x, y) != Terrain::Water);
-            }
-        }
+                    .all(|(x, y)| self.passable(x, y))
+            })
+        };
         let cell_of = |x: f32, y: f32| {
-            (
-                (x / CELL).clamp(0.0, (cols - 1) as f32) as usize,
-                (y / CELL).clamp(0.0, (rows - 1) as f32) as usize,
-            )
+            ((x / CELL).clamp(0.0, (cols - 1) as f32) as usize,
+             (y / CELL).clamp(0.0, (rows - 1) as f32) as usize)
         };
-        let (si, sj) = cell_of(ax, ay);
-        let (gi, gj) = cell_of(bx, by);
-        // A* with deciunit costs: orthogonal 10, diagonal 14, octile heuristic.
-        use std::collections::BinaryHeap;
-        let mut g = vec![u64::MAX; cols * rows];
-        let mut from = vec![usize::MAX; cols * rows];
-        let mut heap = BinaryHeap::new();
-        let h = |i: usize, j: usize| {
-            let di = i.abs_diff(gi);
-            let dj = j.abs_diff(gj);
-            (di.max(dj) * 10 + di.min(dj) * 4) as u64
-        };
-        let start = sj * cols + si;
-        let mut goal = gj * cols + gi;
-        // The mover is already standing in the start cell, so it counts as
-        // standable even when the erosion mask would fail a quarter-sample.
-        if self.map.terrain_at(ax, ay) != Terrain::Water {
-            pass[start] = true;
-        }
-        // The goal cell is different: forcing it passable would emit its
-        // possibly-flooded centre as a waypoint. Instead snap the goal to
-        // the nearest genuinely passing cell whose centre keeps a clear
-        // final leg to the target point.
-        if !pass[goal] {
-            let mut snapped = false;
-            'snap: for r in 1..=2i32 {
-                for dj in -r..=r {
-                    for di in -r..=r {
-                        let (ni, nj) = (gi as i32 + di, gj as i32 + dj);
-                        if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
-                            continue;
-                        }
-                        let n = nj as usize * cols + ni as usize;
-                        if !pass[n] {
-                            continue;
-                        }
-                        let (cx, cy) = (
-                            ni as f32 * CELL + CELL * 0.5,
-                            nj as f32 * CELL + CELL * 0.5,
-                        );
-                        if self.clear_shot(cx, cy, bx, by) {
-                            goal = n;
-                            snapped = true;
-                            break 'snap;
-                        }
+        // Real positions need a safe connector to the grid. A dry endpoint
+        // can sit in a partially flooded cell whose centre is unreachable.
+        let mut connectors = |x: f32, y: f32| {
+            let (i, j) = cell_of(x, y);
+            let mut result = Vec::new();
+            for row in j.saturating_sub(2)..=(j + 2).min(rows - 1) {
+                for col in i.saturating_sub(2)..=(i + 2).min(cols - 1) {
+                    let node = row * cols + col;
+                    let (cx, cy) = center(node);
+                    if walkable(node) && self.clear_shot(x, y, cx, cy) {
+                        result.push((node, (dist(x, y, cx, cy) * 10.0).ceil() as u64));
                     }
                 }
             }
-            if !snapped {
-                return None;
-            }
-        }
-        g[start] = 0;
-        heap.push((std::cmp::Reverse(h(si, sj)), start));
-        let mut found = false;
-        while let Some((std::cmp::Reverse(_), at)) = heap.pop() {
-            if at == goal {
-                found = true;
-                break;
-            }
-            let (i, j) = (at % cols, at / cols);
-            for dj in -1i32..=1 {
-                for di in -1i32..=1 {
-                    if di == 0 && dj == 0 {
-                        continue;
-                    }
-                    let (ni, nj) = (i as i32 + di, j as i32 + dj);
-                    if ni < 0 || nj < 0 || ni >= cols as i32 || nj >= rows as i32 {
-                        continue;
-                    }
-                    let n = nj as usize * cols + ni as usize;
-                    // No corner cutting through water on diagonals.
-                    if !pass[n]
-                        || (di != 0 && dj != 0
-                            && (!pass[j * cols + ni as usize]
-                                || !pass[nj as usize * cols + i]))
-                    {
-                        continue;
-                    }
-                    let cost = g[at] + if di == 0 || dj == 0 { 10 } else { 14 };
-                    if cost < g[n] {
-                        g[n] = cost;
-                        from[n] = at;
-                        heap.push((
-                            std::cmp::Reverse(cost + h(ni as usize, nj as usize)),
-                            n,
-                        ));
-                    }
-                }
-            }
-        }
-        if !found {
+            result
+        };
+        let starts = connectors(ax, ay);
+        let goals = connectors(bx, by);
+        if starts.is_empty() || goals.is_empty() {
             return None;
         }
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let mut cost_to_goal = vec![None; cols * rows];
+        for (node, cost) in goals {
+            cost_to_goal[node] = Some(cost);
+        }
+        let heuristic = |node| {
+            let (x, y) = center(node);
+            (dist(x, y, bx, by) * 10.0) as u64
+        };
+        let mut cost = vec![u64::MAX; cols * rows];
+        let mut from = vec![usize::MAX; cols * rows];
+        let mut heap = BinaryHeap::new();
+        for (node, initial) in starts {
+            cost[node] = initial;
+            heap.push(Reverse((initial + heuristic(node), initial, node)));
+        }
+        let mut best = None;
+        let mut best_cost = u64::MAX;
+        while let Some(Reverse((estimate, spent, at))) = heap.pop() {
+            if estimate >= best_cost {
+                break;
+            }
+            if spent != cost[at] {
+                continue;
+            }
+            if let Some(exit) = cost_to_goal[at] {
+                if spent + exit < best_cost {
+                    best_cost = spent + exit;
+                    best = Some(at);
+                }
+            }
+            let (i, j) = (at % cols, at / cols);
+            let (x, y) = center(at);
+            for nj in j.saturating_sub(1)..=(j + 1).min(rows - 1) {
+                for ni in i.saturating_sub(1)..=(i + 1).min(cols - 1) {
+                    let next = nj * cols + ni;
+                    if next == at || !walkable(next) {
+                        continue;
+                    }
+                    if ni != i && nj != j && (!walkable(j * cols + ni) || !walkable(nj * cols + i)) {
+                        continue;
+                    }
+                    let (nx, ny) = center(next);
+                    let next_cost = spent + (dist(x, y, nx, ny) * 10.0).ceil() as u64;
+                    if next_cost < cost[next] && self.clear_shot(x, y, nx, ny) {
+                        cost[next] = next_cost;
+                        from[next] = at;
+                        heap.push(Reverse((next_cost + heuristic(next), next_cost, next)));
+                    }
+                }
+            }
+        }
+        let goal = best?;
         let mut cells = vec![goal];
         let mut at = goal;
-        while at != start {
+        while from[at] != usize::MAX {
             at = from[at];
             cells.push(at);
         }
         cells.reverse();
-        let mut raw: Vec<(f32, f32)> = vec![(ax, ay)];
-        // The start cell centre just duplicates the mover's position, and
-        // an unsnapped goal centre duplicates the target — but a snapped
-        // goal centre is the waypoint the final leg was verified from.
-        let keep = if goal == gj * cols + gi {
-            cells.len().saturating_sub(1)
-        } else {
-            cells.len()
-        };
-        for &c in cells.get(1..keep).unwrap_or(&[]) {
-            raw.push((
-                (c % cols) as f32 * CELL + CELL * 0.5,
-                (c / cols) as f32 * CELL + CELL * 0.5,
-            ));
-        }
+        let mut raw = vec![(ax, ay)];
+        raw.extend(cells.into_iter().map(center));
         raw.push((bx, by));
         // Greedy line-of-sight smoothing over the water boundary.
         let mut path = vec![raw[0]];
@@ -2005,14 +1993,13 @@ impl World {
         }
         Some(path)
     }
-    fn clear_shot(&mut self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+    fn clear_shot(&self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
         let d = dist(ax, ay, bx, by);
-        // Sample at raster resolution: coarser strides can jump a water
-        // band narrow enough to strand a point-sampling walker.
-        // Sample at mover-step resolution: a water band narrower than a
-        // step can be hopped by a rotated steer, anything wider must be
-        // routed around — so this stride decides detour-vs-direct exactly
-        // like the mover will experience it.
+        // Validate endpoints as well as the interior so an underwater
+        // target cannot masquerade as a direct dry route.
+        if !self.passable(ax, ay) || !self.passable(bx, by) {
+            return false;
+        }
         let n = (d / 4.0).ceil().max(1.0) as usize;
         for k in 1..n {
             let t = k as f32 / n as f32;
@@ -2047,6 +2034,20 @@ impl World {
             "Local activity".into()
         }
     }
+    pub(super) fn patch_reach(&mut self, patch: usize, land_reach: f32) -> f32 {
+        let Some(site) = self.patches.get(patch) else {
+            return land_reach;
+        };
+        if site.kind == 3
+            && self.map.spec.size != MapSize::Classic
+            && self.map.terrain_at(site.x, site.y) == Terrain::Water
+        {
+            24.0
+        } else {
+            land_reach
+        }
+    }
+
     /// Whether a walker may stand at (x, y). Classic maps keep the
     /// historical everything-walkable rule; generated maps treat water
     /// as impassable so shores shape real routes.
@@ -2466,6 +2467,7 @@ impl World {
         if d <= 0.0 || step <= 0.0 {
             return None;
         }
+        let step = step.min(d);
         let ux = (tx - x) / d;
         let uy = (ty - y) / d;
         if self.passable(x + ux * step, y + uy * step) {
@@ -2538,24 +2540,52 @@ impl World {
             progress = progress.max(stored);
         }
         self.water.detours.get_mut(&key).unwrap().progress = progress;
-        if total - progress <= 12.0 || dist(x, y, last.0, last.1) < 12.0 {
+        if (total - progress <= 12.0 || dist(x, y, last.0, last.1) < 12.0)
+            && self.clear_shot(x, y, tx, ty)
+        {
             self.water.detours.remove(&key);
             return (tx, ty);
         }
         let path = &self.water.detours[&key].path;
         let mut ahead = progress + 16.0;
+        let mut until_corner = progress;
+        let mut corner = None;
         for s in 0..path.len() - 1 {
             let (ax, ay) = path[s];
             let (bx, by) = path[s + 1];
             let len = dist(ax, ay, bx, by);
+            if corner.is_none() && until_corner <= len && len > 0.0 {
+                corner = Some(((ax, ay), (bx, by)));
+            }
             if ahead <= len && len > 0.0 {
                 let tt = ahead / len;
-                return (ax + (bx - ax) * tt, ay + (by - ay) * tt);
+                let aim = (ax + (bx - ax) * tt, ay + (by - ay) * tt);
+                return self.safe_detour_aim(x, y, aim, corner);
             }
+            until_corner -= len;
             ahead -= len;
         }
-        path[path_len - 1]
+        self.safe_detour_aim(x, y, last, corner)
     }
+    fn safe_detour_aim(
+        &self,
+        x: f32,
+        y: f32,
+        aim: (f32, f32),
+        corner: Option<((f32, f32), (f32, f32))>,
+    ) -> (f32, f32) {
+        if let Some((before, after)) = corner {
+            if !self.clear_shot(x, y, aim.0, aim.1) {
+                return if self.clear_shot(x, y, after.0, after.1) {
+                    after
+                } else {
+                    before
+                };
+            }
+        }
+        aim
+    }
+
     /// Route a stalled mover around the water blocking it. `route_between`
     /// answers one of: dry waypoints (stored as the active detour), an
     /// empty path (already a clear shot — steering resolves it), or None
@@ -3087,6 +3117,8 @@ impl World {
                 if !self.agents.alive[i]
                     || self.agents.health[i] < 25.0
                     || self.agents.hunger[i] > 70.0
+                    || self.in_energy_emergency(i)
+                    || self.should_travel_for_food_alone(i)
                 {
                     self.agents.convoy[i] = NONE;
                     self.agents.solo_until[i] = self.tick + 120;
@@ -3235,6 +3267,8 @@ impl World {
                 || self.tick < a.solo_until[i]
                 || a.health[i] < 25.0
                 || a.hunger[i] > 70.0
+                || self.in_energy_emergency(i)
+                || self.should_travel_for_food_alone(i)
             {
                 continue;
             }

@@ -8,6 +8,8 @@ var requested_key := ""
 var explored_ms := 0
 var fog_texture: Texture2D
 var fog_rect := Rect2()
+var explored_grid: Dictionary = {}
+var explored_cells := PackedByteArray()
 var raster_cell := 0.0
 var raster_cols := 0
 var raster_rows := 0
@@ -93,6 +95,8 @@ func set_map_layers(layers: Dictionary) -> void:
 		requested_key = ""
 	var explored: Dictionary = layers.get("explored", {})
 	if key == map_key and not explored.is_empty():
+		explored_grid = explored
+		explored_cells = Marshalls.base64_to_raw(explored.known)
 		fog_texture = ImageTexture.create_from_image(fog_image(explored))
 		fog_rect = Rect2(0, 0, int(explored.cols)*float(explored.chunk), int(explored.rows)*float(explored.chunk))
 	# Swapped textures free the old RIDs; every item with recorded draw
@@ -101,6 +105,18 @@ func set_map_layers(layers: Dictionary) -> void:
 	fog.queue_redraw()
 	field.minimap.queue_redraw()
 	queue_redraw()
+
+func is_explored(point: Vector2) -> bool:
+	if field._classic_terrain():
+		return true
+	if explored_grid.is_empty() or map_key != JSON.stringify(field.world.get("map", {})):
+		return false
+	var cell := Vector2i((point / float(explored_grid.chunk)).floor())
+	var cols := int(explored_grid.cols)
+	var rows := int(explored_grid.rows)
+	if cell.x < 0 or cell.y < 0 or cell.x >= cols or cell.y >= rows:
+		return false
+	return explored_cells[cell.y * cols + cell.x] != 0
 
 # Unexplored chunks under a pale mist; linear filtering feathers the borders.
 static func fog_image(explored: Dictionary) -> Image:
@@ -384,14 +400,14 @@ func _draw() -> void:
 		var forest: Dictionary = forests[id]
 		var center := Vector2(forest.x, forest.y)
 		var radius := float(forest.radius)
-		if not forest_view.grow(radius * 1.25).has_point(center):
+		if not forest_view.grow(radius * 1.25).has_point(center) or not is_explored(center):
 			continue
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius * 1.22, radius * 1.14), float(id)), Color(0.32, 0.48, 0.32, 0.30))
 		draw_colored_polygon(_terrain_shape(center, Vector2(radius, radius * 0.93), float(id)), Color("617f53"))
 	for id in range(forests.size()):
 		var forest: Dictionary = forests[id]
 		var centre := Vector2(forest.x,forest.y)
-		if not forest_view.grow(float(forest.radius)).has_point(centre):
+		if not forest_view.grow(float(forest.radius)).has_point(centre) or not is_explored(centre):
 			continue
 		var trees: PackedVector2Array = field._tree_points(id,float(forest.radius))
 		for tree in range(0,trees.size(),3 if field.fidelity==1 else 1):
@@ -420,6 +436,7 @@ func _draw() -> void:
 		if not done:
 			draw_circle(gpos,7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
 	_ground_cover(forest_view, markets)
+	_draw_landmarks(forest_view)
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
 	_draw_ports()
@@ -487,6 +504,35 @@ func _ground_cover_sprig(cls: int, p: Vector2, h: int) -> void:
 		else "terrain-flora-xianxia/" + id + ".png"
 	if not _asset(id, static_path, p, side, side):
 		draw_circle(p, side * 0.35, Color("78a65a") if cls != 2 else Color("6a8a6f"), true, -1.0, true)
+
+func _draw_landmarks(view: Rect2) -> void:
+	var visible := view.grow(35.0)
+	for site in field.world.get("landmarks", []):
+		var at := Vector2(site.x, site.y)
+		if not visible.has_point(at) or not is_explored(at):
+			continue
+		draw_circle(at + Vector2(1, 4), 18.0, Color("384738"))
+		draw_circle(at, 16.0, Color("bdad79"))
+		match str(site.kind):
+			"pavilion":
+				draw_rect(Rect2(at + Vector2(-10, -2), Vector2(20, 11)), Color("8b583f"))
+				draw_colored_polygon(PackedVector2Array([at + Vector2(-16, -2), at + Vector2(0, -15), at + Vector2(16, -2)]), Color("456f73"))
+				draw_line(at + Vector2(-13, -2), at + Vector2(13, -2), Color("d0aa76"), 2.0)
+				draw_rect(Rect2(at + Vector2(-3, 1), Vector2(6, 8)), Color("dfb66b"))
+			"grove":
+				for crown in [Vector2(-7, 2), Vector2(7, 2), Vector2(0, -7)]:
+					draw_circle(at + crown + Vector2(1, 1), 7.0, Color("355b48"))
+					draw_circle(at + crown, 5.5, Color("6c9a68"))
+				draw_circle(at + Vector2(1, -8), 2.0, Color("e6bd9a"))
+			_:
+				for stone in [Vector2(-9, 5), Vector2(9, 5), Vector2(0, -3)]:
+					draw_rect(Rect2(at + stone - Vector2(3, 6), Vector2(6, 11)), Color("5c665e"))
+					draw_line(at + stone - Vector2(2, 5), at + stone + Vector2(-2, 3), Color("c1c5a9"), 1.5)
+		if field.zoom >= 0.85:
+			var name_text := str(site.name)
+			var font := ThemeDB.fallback_font
+			var width := font.get_string_size(name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			draw_string(font, at + Vector2(-width * 0.5, 30), name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("243322"))
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()

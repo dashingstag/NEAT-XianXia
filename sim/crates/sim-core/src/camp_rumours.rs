@@ -89,6 +89,7 @@ impl World {
     fn food_on_person(&self, i: usize) -> u32 {
         let a = &self.agents;
         a.berries[i]
+            + self.meat_trade.pack(i) as u32
             + a.fish[i]
             + a.rice[i]
             + if [0, 3, 8].contains(&a.cargo_kind[i]) {

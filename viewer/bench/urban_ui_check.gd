@@ -172,5 +172,26 @@ func check_ui() -> void:
 		ui.field.queue_redraw()
 		await process_frame
 		await process_frame
+	var carcass := {"id": 27, "x": 1200.0, "y": 700.0, "species": "Deer", "portions": 2}
+	ui.state.wildlife["carcasses"] = [carcass]
+	ui.field.world = ui.state
+	ui.field.pick_mode = "Wildlife"
+	ui.field.set_fidelity(1)
+	var at := Vector2(carcass.x, carcass.y)
+	ui.field._select_at(ui.field.offset + at * ui.field.zoom)
+	assert(ui.site_selection.kind == "carcasses" and int(ui.site_selection.id) == 27)
+	assert(ui._site_text().contains("Deer carcass") and ui._site_text().contains("2 meat portions remaining"))
+	carcass.portions = 1
+	assert(ui._site_text().contains("1 meat portion remaining"))
+	ui.state.wildlife.carcasses.clear()
+	assert(ui.field._pick_carcass(at) == -1)
+	assert(ui._site_text().contains("depleted"))
+
+	var animal := {"id": 2, "species": "Fox", "gender": "Male", "age_days": 300, "adult": true,
+		"health": 100.0, "hunger": 20.0, "energy": 80.0, "forest": 0, "action": "Rest",
+		"generation": 0, "genome_nodes": 49, "genome_genes": 48}
+	assert(ui._animal_text(animal).contains("Diet: prey and carcass meat."))
+	animal.species = "Rabbit"
+	assert(ui._animal_text(animal).contains("Diet: grass or forest berries."))
 	print(JSON.stringify({"urban_ui":"passed","buildings_inspected":checked,"zones":world.urban.zones.size(),"fidelity_levels":3,"connected_to_live_backend":false}))
 	quit()

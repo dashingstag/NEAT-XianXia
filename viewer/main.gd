@@ -245,17 +245,17 @@ func _ready() -> void:
 	resource_panel.add_theme_constant_override("separation",12)
 	inspector_tabs.add_child(resource_panel)
 	resource_panel.add_child(label("Place a resource site",18))
-	var help := label("Choose a resource and amount, then click Place and select open ground on the map. Escape cancels. Mines are finite; berries regrow up to their capacity.",13)
+	var help := label("Choose a resource and amount, then click Place and select open ground on the map. Escape cancels. Mines are finite. Berries and woodland regrow up to their capacity.",13)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	resource_panel.add_child(help)
 	resource_option = OptionButton.new()
-	var icon_names := ["berries","","","","gold","silver","copper","iron"]
-	for kind in [0,4,5,6,7]:
+	var icon_names := ["berries","timber","","","gold","silver","copper","iron"]
+	for kind in [0,1,4,5,6,7]:
 		var icon: Texture2D = preload("res://art_texture.gd").read("res://assets/parked/icons-brush/"+icon_names[kind]+".png")
 		if icon != null:
-			resource_option.add_icon_item(icon,["Berries","","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
+			resource_option.add_icon_item(icon,["Berries","Woodland","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
 		else:
-			resource_option.add_item(["Berries","","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
+			resource_option.add_item(["Berries","Woodland","","","Gold mine","Silver mine","Copper mine","Iron mine"][kind],kind)
 	resource_panel.add_child(resource_option)
 	resource_panel.add_child(label("Starting amount / capacity",12))
 	resource_quantity = SpinBox.new()
@@ -264,7 +264,7 @@ func _ready() -> void:
 	resource_quantity.value = 600
 	resource_quantity.step = 100
 	resource_panel.add_child(resource_quantity)
-	resource_option.item_selected.connect(func(_index: int): resource_quantity.value=600 if resource_option.get_selected_id()==0 else 50000)
+	resource_option.item_selected.connect(func(_index: int): resource_quantity.value=600 if resource_option.get_selected_id()<=1 else 50000)
 	resource_panel.add_child(button("Place on map",func(): field.placement_kind=resource_option.get_selected_id(); notice.text="Click open ground to place %s. Drag still pans; Escape cancels." % resource_option.get_item_text(resource_option.selected)))
 
 	notice = label("Start run-server.ps1 if the native process is not running. No simulation runs in GDScript.",12)
@@ -377,7 +377,9 @@ func _animal_text(animal: Dictionary) -> String:
 	if animal.get("pregnancy_days_left") != null:
 		text += "Pregnancy: %.1f days remaining\n" % float(animal.pregnancy_days_left)
 	text += "\nNEAT generation %s / %s nodes / %s genes\n" % [int(animal.generation),int(animal.genome_nodes),int(animal.genome_genes)]
-	text += "Diet: grass or forest berries. Grass cannot feed people.\n\n[color=#a8cea0]FEASIBLE ACTION SCORES[/color]\n"
+	var predator := bool(animal.get("predator", str(animal.species) in ["Fox", "Wolf"]))
+	text += "Diet: prey and carcass meat.\n" if predator else "Diet: grass or forest berries. Grass cannot feed people.\n"
+	text += "\n[color=#a8cea0]FEASIBLE ACTION SCORES[/color]\n"
 	for choice in animal.get("choices",[]):
 		text += "%s: %.3f\n" % [choice.action,float(choice.score)]
 	text += "\nSensors: need, benefit, risk, distance, fertility, continuity, species, hunger, energy, health, nearby people, grass, density, night and adulthood."
@@ -402,6 +404,11 @@ func _site_data() -> Dictionary:
 		return {}
 	var kind: String = site_selection.kind
 	var id := int(site_selection.id)
+	if kind == "carcasses":
+		for carcass in state.get("wildlife", {}).get("carcasses", []):
+			if int(carcass.id) == id and int(carcass.portions) > 0:
+				return carcass
+		return {}
 	if kind=="house":
 		var towns: Array = state.get("markets",[])
 		var market := int(site_selection.market)
@@ -426,11 +433,19 @@ func _site_data() -> Dictionary:
 func _site_text() -> String:
 	var d := _site_data()
 	if d.is_empty():
+		if site_selection.get("kind") == "carcasses":
+			return "This carcass is depleted."
 		return "Select a building or resource on the map."
 	var kind: String = site_selection.kind
 	var title := "Site"
 	var body := ""
 	match kind:
+		"landmarks":
+			title = str(d.name)
+			body = "A scenic place to take a break. Nearby villagers may come here for recreation and recover more happiness than they would playing in place."
+		"carcasses":
+			title = "%s carcass" % str(d.species)
+			body = "[b]%d meat portion%s remaining[/b]\n" % [int(d.portions), "" if int(d.portions) == 1 else "s"]
 		"patches":
 			var k := int(d.kind)
 			var products: Array = state.get("products",[])
@@ -461,6 +476,13 @@ func _site_text() -> String:
 				if office.last_election is Dictionary:
 					body += "Last election · %s votes cast\n" % int(office.last_election.turnout)
 				break
+			var meat_trade: Dictionary = state.get("meat_trade", {})
+			var meat_stock: Dictionary = meat_trade.get("market_stock", {})
+			var meat_portions := int(meat_stock.get(str(int(d.id)), 0))
+			if state.get("map", {}).get("size", "Classic") != "Classic":
+				var meat_quote: Dictionary = meat_trade.get("quotes", {}).get(str(int(d.id)), {})
+				if not meat_quote.is_empty():
+					body += "Game meat: %s/%s portions · bid %sc · ask %sc · recent sales %s\n" % [meat_portions, int(meat_quote.get("capacity", 12)), int(meat_quote.get("bid", 0)), int(meat_quote.get("ask", 0)), int(meat_quote.get("recent_sales", 0))]
 			body += "\nGOODS held · offered@ask · wanted@bid · lifetime sold\n"
 			var products: Array = state.get("products",[])
 			var quotes: Array = d.get("quotes",[])
@@ -497,6 +519,22 @@ func _site_text() -> String:
 				for rumour in state.get("camp_rumours", []):
 					if int(rumour.tavern) == int(site_selection.id):
 						body += "\nRumour: a new campsite named %s." % str(rumour.name)
+				if state.get("map", {}).get("size", "Classic") != "Classic":
+					var exchange: Dictionary = state.get("information_trade", {})
+					if not exchange.is_empty():
+						body += "\n\n[b]MARKET REPORTS[/b]\nBuys for %sc · sells for %sc · expires after %s days\n" % [int(exchange.sell_price), int(exchange.buy_price), int(exchange.lifetime_days)]
+						var reports: Array = []
+						for listing in exchange.get("taverns", []):
+							if int(listing.id) == int(site_selection.id):
+								reports = listing.reports
+								break
+						if reports.is_empty():
+							body += "No current reports. Travellers can sell observations.\n"
+						for report in reports:
+							var markets: Array = state.get("markets", [])
+							var market_id := int(report.market)
+							if market_id < markets.size():
+								body += "%s · %.1f days old\n" % [markets[market_id].name, (float(state.get("tick", 0)) - float(report.observed_tick)) / 3000.0]
 		"farms":
 			title = "Rice farm"
 			body = "%s\n\nAge: %.1f days\nTending visits: %s\nRice ready: %s\n\nFertility: %.0f%% / moisture: %.0f%%\n\nCrops require 15 full days and daily tending. Farmer reward: 2 copper per funded shift." % ["Ready to harvest" if d.mature else "Growing",float(d.age_days),int(d.tended_days),int(d.harvest_remaining),float(d.fertility)*100.0,float(d.moisture)*100.0]
@@ -697,6 +735,11 @@ func _decode(data: PackedByteArray) -> void:
 		detail.text = _buyer_link() + PersonInspector.describe(info,state)
 	var grass: Dictionary = ecology.get("grass_account",{})
 	var lines := "[color=#a8cea0]WOODLAND WILDLIFE[/color]\nRabbits %s / deer %s / births %s / deaths %s\nGrass %s / eaten %s / berries eaten %s\n\n" % [int(ecology.get("rabbits",0)),int(ecology.get("deer",0)),int(ecology.get("births",0)),int(ecology.get("deaths",0)),int(grass.get("stock",0)),int(grass.get("eaten",0)),int(ecology.get("berries_eaten",0))]
+	if ecology.has("living_by_species"):
+		var wildlife_counts: Dictionary = ecology.living_by_species
+		lines += "Foxes %s / wolves %s / pheasants %s / carcass meat %s\n\n" % [
+			int(wildlife_counts.get("Fox", 0)), int(wildlife_counts.get("Wolf", 0)),
+			int(wildlife_counts.get("Pheasant", 0)), int(ecology.get("carcass_meat", 0))]
 	lines += "[color=#e5c78e]VILLAGE JOB BOARDS[/color]\nClick a village board to inspect its policy.\n"
 	for board in state.get("job_boards",[]):
 		if board_focus >= 0 and int(board.market) != board_focus:

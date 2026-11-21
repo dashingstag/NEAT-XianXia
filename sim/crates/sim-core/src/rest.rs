@@ -217,15 +217,23 @@ impl Shelter {
 }
 impl Agents {
     pub fn drain_energy(&mut self, i: usize, amount: f32) {
+        let unpaid = self.spend_energy(i, amount);
+        self.health[i] = (self.health[i] - unpaid).max(0.0);
+    }
+
+    pub(super) fn spend_energy(&mut self, i: usize, amount: f32) -> f32 {
+        if self.rested[i] {
+            return 0.0;
+        }
         let amount = amount
             * if self.traits[i] & life::HARDY != 0 {
                 0.7
             } else {
                 1.0
             };
-        if !self.rested[i] {
-            self.energy[i] = (self.energy[i] - amount).max(0.0);
-        }
+        let remaining = self.energy[i] - amount;
+        self.energy[i] = remaining.max(0.0);
+        (-remaining).max(0.0)
     }
 }
 impl World {

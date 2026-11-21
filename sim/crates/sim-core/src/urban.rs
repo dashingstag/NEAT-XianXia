@@ -2297,13 +2297,15 @@ impl World {
                 .get(c.target as usize)
                 .and_then(Option::as_ref)
                 .map(|j| {
-                    [
-                        "Builder contract",
-                        "Goods transport",
-                        "Forest clearance",
-                        "Shelter clearance",
-                    ][j.kind as usize]
-                        .into()
+                    match j.kind {
+                        0 => "Builder contract",
+                        1 => "Goods transport",
+                        2 => "Forest clearance",
+                        3 => "Shelter clearance",
+                        4 => "Shipwright contract",
+                        _ => "Contract job",
+                    }
+                    .into()
                 })
                 .unwrap_or("Completed contract".into()),
             Action::ShopGoods => {
@@ -2356,7 +2358,7 @@ impl World {
     }
     pub(super) fn urban_summary(&self) -> serde_json::Value {
         let wares = self.ware_stocks();
-        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":500,"reserve_threshold":100,"zones":self.urban.zones,"buildings":self.urban.buildings.iter().enumerate().map(|(id,b)|serde_json::json!({"id":id,"market":b.market,"kind":b.kind,"line":b.line,"x":b.x,"y":b.y,"ready":b.ready,"needs_clear":b.needs_clear,"advertised":b.advertised,"owner":if b.owner==NONE{None}else{Some(b.owner)},"renter":if b.renter==NONE{None}else{Some(b.renter)},"price":b.price,"rent":b.rent,"arrears":b.arrears,"cash":b.cash,"raw":b.raw,"wares":b.wares,"made":b.made,"sold":b.sold,"shelter":if b.shelter==NONE{None}else{Some(b.shelter)}})).collect::<Vec<_>>(),"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal","Shipwright"][j.kind as usize]),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
+        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":500,"reserve_threshold":100,"zones":self.urban.zones,"buildings":self.urban.buildings.iter().enumerate().map(|(id,b)|serde_json::json!({"id":id,"market":b.market,"kind":b.kind,"line":b.line,"x":b.x,"y":b.y,"ready":b.ready,"needs_clear":b.needs_clear,"advertised":b.advertised,"owner":if b.owner==NONE{None}else{Some(b.owner)},"renter":if b.renter==NONE{None}else{Some(b.renter)},"price":b.price,"rent":b.rent,"arrears":b.arrears,"cash":b.cash,"raw":b.raw,"wares":b.wares,"made":b.made,"sold":b.sold,"shelter":if b.shelter==NONE{None}else{Some(b.shelter)}})).collect::<Vec<_>>(),"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal","Shipwright"].get(j.kind as usize).copied().unwrap_or("Contract")),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
     }
     pub(super) fn validate_urban(&self) -> Result<(), String> {
         if self.urban.assigned.len() != self.agents.len()
@@ -2498,6 +2500,24 @@ mod tests {
         w.agents.target[i] = b as u32;
         w.agents.x[i] = w.urban.buildings[b].x;
         w.agents.y[i] = w.urban.buildings[b].y;
+    }
+    #[test]
+    fn shipwright_jobs_label_choices_and_boards() {
+        // Regression: kind-4 Shipwright jobs index the contract-name and
+        // board-name arrays — labelling one for the inspector panicked and
+        // killed the backend mid-run.
+        let mut w = funded();
+        let j = w.new_job(0, 4, NONE, NONE, 0, 0, 10.0, 10.0, 8);
+        w.urban.jobs.push(Some(j));
+        let id = w.urban.jobs.len() - 1;
+        let c = Candidate {
+            action: Action::UrbanWork,
+            target: id as u32,
+            ..Default::default()
+        };
+        assert_eq!(w.urban_choice_name(&c), "Shipwright contract");
+        let summary = w.urban_summary();
+        assert_eq!(summary["jobs"][0]["kind"], serde_json::json!("Shipwright"));
     }
     #[test]
     fn town_requires_nine_completed_buildings_and_builders_are_paid_once() {

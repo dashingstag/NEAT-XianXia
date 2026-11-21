@@ -59,3 +59,21 @@ and a feasible urban shopping offer on 85. These probe counts use a
 different observation point from committed decisions. Conservation and
 checkpoint replay passed on both days. Choice competition was the largest
 observed drop after offer admission in this seed.
+
+
+### Rerun after the Frontier food-access changes
+
+The same mature fixture with experimental restocking on PR #43 produced
+three completed deliveries and 1,311 stocked-and-open shop-ticks on day
+two. The cumulative decision sample saw 3,468 decisions, 32 actor-ticks
+with an affordable item that fit, and 24 pre-tick urban shopping offers.
+Of the 12 admitted shopping choices, none won. Rest won six, farming won
+two, and four other actions each won once. The candidate cap omitted none.
+No sampled shopper started travel or reached checkout, and the entire
+town made zero retail sales. Conservation and exact checkpoint replay
+passed on both days.
+
+The controlled last-item test exercises checkout with a stocked shop and
+eligible buyers. In the organic run, the first observed failure after
+offer admission was action selection. The experiment does not establish
+whether a change to buyer preferences would produce sustained demand.

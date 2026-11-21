@@ -1009,7 +1009,36 @@ impl World {
         self.patches
             .iter()
             .enumerate()
-            .filter(|(_, p)| [0, 3].contains(&p.kind) && p.stock > 0)
+            .filter(|(id, p)| {
+                if ![0, 3].contains(&p.kind) || p.stock == 0 {
+                    return false;
+                }
+                // A fish patch deeper than the 24-unit bank cast can never
+                // be worked — offering it strands foragers at the shore.
+                if self.map.spec.size != MapSize::Classic
+                    && self.map.terrain_at(p.x, p.y) == Terrain::Water
+                {
+                    let (dx, dy) = self.map.dry_ground(p.x, p.y);
+                    if dist(dx, dy, p.x, p.y) > 24.0 {
+                        return false;
+                    }
+                }
+                !self.target_unreachable(i, Action::ForageMeal, *id as u32)
+                    // A patch proven blocked also suppresses its cell
+                    // neighbours: the same channel cuts them off, and a
+                    // starving mover cannot afford a 240-tick stall to
+                    // re-learn that per candidate.
+                    && !self.water.unreachable.get(&(i as u32)).is_some_and(|b| {
+                        b.iter().any(|(&(a, t), &at)| {
+                            a == Action::ForageMeal as u8
+                                && self.tick.saturating_sub(at) < 2400
+                                && t != *id as u32
+                                && self.patches.get(t as usize).is_some_and(|bp| {
+                                    dist(bp.x, bp.y, p.x, p.y) <= 96.0
+                                })
+                        })
+                    })
+            })
             .min_by(|(_, a), (_, b)| {
                 dist(a.x, a.y, self.agents.x[i], self.agents.y[i]).total_cmp(&dist(
                     b.x,
@@ -1072,8 +1101,17 @@ impl World {
                 p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
             })
         {
-            let home = a.home[i] as usize;
-            return self.markets.get(home).map(|m| (m.x, m.y));
+            // Head for the closest settlement, not necessarily home: a
+            // carrier cut off from its own village files the report at
+            // whatever market it can reach.
+            return self
+                .markets
+                .iter()
+                .min_by(|m1, m2| {
+                    dist(a.x[i], a.y[i], m1.x, m1.y)
+                        .total_cmp(&dist(a.x[i], a.y[i], m2.x, m2.y))
+                })
+                .map(|m| (m.x, m.y));
         }
         if self.is_urban_action(a.action[i]) {
             return self.urban_destination(i);

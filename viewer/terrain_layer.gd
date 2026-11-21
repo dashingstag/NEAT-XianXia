@@ -419,10 +419,74 @@ func _draw() -> void:
 			done = _asset("grass","lod/l2/grass.png",gpos,18,18,1.0 if fraction>0.25 else 0.45)
 		if not done:
 			draw_circle(gpos,7.0,Color("78a65a") if fraction>0.25 else Color("998761"))
+	_ground_cover(forest_view, markets)
 	_draw_settlement_ground(markets, forest_view)
 	_draw_roads(markets)
 	_draw_ports()
 	_draw_ships()
+
+# Open-land cover at fidelity 2+: hash-seeded tufts, shrubs and the odd lone
+# tree on grass, fertile and marsh cells, drawn through the same anim, glyph,
+# fallback ladder as the forests so the ground between groves carries drawn
+# features instead of flat raster. Overview zoom stays landmark-clean.
+func _ground_cover(view: Rect2, markets: Array) -> void:
+	if field.fidelity < 2:
+		return
+	var step := 72.0
+	var x0 := int(floor(view.position.x / step)) - 1
+	var x1 := int(floor(view.end.x / step)) + 1
+	var y0 := int(floor(view.position.y / step)) - 1
+	var y1 := int(floor(view.end.y / step)) + 1
+	var hill: Rect2 = field.hill_footprint() if field._classic_terrain() else Rect2()
+	for gy in range(y0, y1 + 1):
+		for gx in range(x0, x1 + 1):
+			var h := int(absi(gx * 7919 + gy * 104729) % 524287)
+			if h % 5 == 0:
+				continue
+			var p := Vector2(gx * step + float(h % 58) + 7.0,
+				gy * step + float((h / 58) % 58) + 7.0)
+			var cls := class_at(p)
+			if cls < 0:
+				cls = (0 if p.x > 2700.0 else (1 if hill.has_point(p) else 5)) \
+					if field._classic_terrain() else 5
+			if not (cls == 2 or cls == 4 or cls == 5):
+				continue
+			if _inside_settlement(markets, p):
+				continue
+			_ground_cover_sprig(cls, p, h)
+			if h % 13 == 0:
+				_ground_cover_sprig(cls, p + Vector2(26, -17), h * 31 + 7)
+
+func _inside_settlement(markets: Array, p: Vector2) -> bool:
+	for market in markets:
+		if Vector2(market.x, market.y).distance_squared_to(p) \
+				< pow(field._settlement_radius(market) * 0.9, 2.0):
+			return true
+	return false
+
+func _ground_cover_sprig(cls: int, p: Vector2, h: int) -> void:
+	if cls == 5 and h % 11 == 0:
+		# Lone savanna tree: same shadow and crown fallback as the groves.
+		var side := 20.0 + float(h % 3) * 3.0
+		var tree_id: String = field.TREE_GLYPHS[h % field.TREE_GLYPHS.size()]
+		draw_circle(p + Vector2(4, 5), side * 0.42, Color(0.10, 0.22, 0.16, 0.22), true, -1.0, true)
+		if _asset(tree_id, "terrain-flora-xianxia/" + tree_id + ".png", p, side, side):
+			return
+		draw_circle(p, 9.0, Color("365c43"), true, -1.0, true)
+		draw_circle(p + Vector2(-2, -3), 6.8, Color("507448"), true, -1.0, true)
+		draw_circle(p + Vector2(-4, -5), 4.0, Color("739055"), true, -1.0, true)
+		return
+	var id := "grass"
+	if cls == 2:
+		id = "lotus" if h % 4 == 0 else "willow"
+	elif cls == 4:
+		id = "plum" if h % 5 == 0 else ("bamboo" if h % 5 == 1 else "grass")
+	var side := 11.0 + float(h % 3)
+	draw_circle(p + Vector2(2, 3), side * 0.30, Color(0.10, 0.22, 0.16, 0.18), true, -1.0, true)
+	var static_path := "lod/l2/grass.png" if id == "grass" \
+		else "terrain-flora-xianxia/" + id + ".png"
+	if not _asset(id, static_path, p, side, side):
+		draw_circle(p, side * 0.35, Color("78a65a") if cls != 2 else Color("6a8a6f"), true, -1.0, true)
 
 func _terrain_shape(center: Vector2, radii: Vector2, phase: float) -> PackedVector2Array:
 	var points := PackedVector2Array()
@@ -580,6 +644,26 @@ func _draw_roads(markets: Array) -> void:
 			draw_polyline(points, Color(0.35, 0.90, 0.83, 0.70), width, true)
 
 func _draw_ports() -> void:
+	# Reported-but-unaddressed water blocks: the stranded walker's position
+	# and the direction it could not reach. Drawn as a dashed bearing with a
+	# warning post so the report -> port -> ship chain stays observable —
+	# blocks vanish as soon as a port covers their stretch.
+	for block in field.world.get("water_blocks", []):
+		var at := Vector2(block.x, block.y)
+		var target := Vector2(block.tx, block.ty)
+		var dir := (target - at)
+		var reach := minf(56.0, dir.length())
+		var bearing := dir.normalized() * reach if reach > 1.0 else Vector2(14, 0)
+		var pulse := 0.75
+		if field.fidelity == 3:
+			pulse = 0.45 + 0.30 * sin(field.shader_clock * 2.6 + at.x * 0.05)
+		var warn := Color("e0b64f", pulse)
+		draw_dashed_line(at, at + bearing, warn, 2.2, 6.0, true)
+		draw_circle(at, 4.6, Color("a04834", pulse))
+		draw_circle(at + bearing, 3.0, warn)
+		if int(block.get("reports", 1)) > 1 and field.fidelity > 1:
+			draw_string(ThemeDB.fallback_font, at + Vector2(7, -7), str(int(block.reports)),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, warn)
 	for port in field.world.get("ports", []):
 		var home := Vector2(port.x, port.y)
 		var landing := Vector2(port.lx, port.ly)

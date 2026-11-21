@@ -116,6 +116,20 @@ pub struct WaterState {
     pub detours: BTreeMap<u32, Detour>,
     /// Convoy slot -> stall probe, same 24-unit rule as `progress`.
     pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
+    /// (action, target) pairs a mover proved water-blocked, so a starving
+    /// walker stops re-selecting the crossing it cannot finish and picks
+    /// reachable food instead. Fed walkers keep pressing the shore —
+    /// their reports feed the port chain and ferries need the demand.
+    /// Entries decay after ~a day; soft state, rebuilt on load.
+    #[serde(skip)]
+    pub unreachable: BTreeMap<u32, BTreeMap<(u8, u32), u64>>,
+    /// (action, target) -> positions from which movers proved it water-
+    /// blocked. Shared shore knowledge: one strander's failed route marks
+    /// the crossing for every mover stalled on the same bank, so a
+    /// starving crowd does not each pay the ~700-tick stall cost to
+    /// re-learn it. Entries decay after ~a day; soft state.
+    #[serde(skip)]
+    pub shared_unreachable: BTreeMap<(u8, u32), Vec<(f32, f32, u64)>>,
 }
 
 /// Daytime traffic census. Mover-observations accumulate per unordered
@@ -751,6 +765,154 @@ mod tests {
         }
         assert!(w.water.ports[0].near_done, "shipwright finishes the port");
     }
+    fn shore_span(w: &mut World) -> Option<(f32, f32, f32)> {
+        let r = w.map.raster();
+        for j in 1..r.rows - 1 {
+            for i in 1..r.cols - 2 {
+                if r.terrain[j * r.cols + i] == Terrain::Water as u8 {
+                    continue;
+                }
+                let mut k = i + 1;
+                while k < r.cols - 1 && r.terrain[j * r.cols + k] == Terrain::Water as u8 {
+                    k += 1;
+                }
+                if k > i + 1
+                    && k < r.cols - 1
+                    && r.terrain[j * r.cols + k] != Terrain::Water as u8
+                {
+                    return Some((
+                        (i as f32 + 0.5) * r.cell,
+                        (j as f32 + 0.5) * r.cell,
+                        (k as f32 + 0.5) * r.cell,
+                    ));
+                }
+            }
+        }
+        None
+    }
+    #[test]
+    fn unzoned_camp_plans_port_with_stone_jetty() {
+        // A camp is exactly the settlement whose stranders need rescue: the
+        // block must plan even without districts, falling back to a stone
+        // jetty when the market cannot stock twenty timber.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let Some((bx, by, tx)) = shore_span(&mut w) else { return };
+        w.water.blocks.push(WaterBlock {
+            market: 0,
+            x: bx,
+            y: by,
+            tx,
+            ty: by,
+            tick: 0,
+            reports: 1,
+        });
+        w.urban.states[0].zoned = false;
+        w.markets[0].coins = 500;
+        w.markets[0].add(1, 4, 0);
+        w.markets[0].add(2, 24, 0);
+        w.plan_ports();
+        assert_eq!(
+            w.water.ports.len(),
+            1,
+            "unzoned market with jetty materials should still plan"
+        );
+        assert!(w
+            .urban
+            .jobs
+            .iter()
+            .flatten()
+            .any(|j| j.kind == 4 && j.source == 0));
+    }
+    #[test]
+    fn report_files_at_the_market_the_carrier_reaches() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        if w.markets.len() < 2 {
+            return;
+        }
+        // Home is market 0 but the carrier is stranded on market 1's side:
+        // reaching market 1's ground files the report there.
+        w.agents.home[0] = 0;
+        w.agents.x[0] = w.markets[1].x;
+        w.agents.y[0] = w.markets[1].y;
+        w.water.pending.push(PendingBlock {
+            agent: 0,
+            x: 10.0,
+            y: 10.0,
+            tx: 90.0,
+            ty: 10.0,
+            tick: w.tick,
+        });
+        w.update_water_reports();
+        assert!(
+            w.water.pending.is_empty(),
+            "reaching any market delivers the report"
+        );
+        assert_eq!(
+            w.water.blocks.len(),
+            1,
+            "delivered report becomes a water block"
+        );
+        assert_eq!(
+            w.water.blocks[0].market, 1,
+            "block is keyed to the reached market, not the distant home"
+        );
+    }
+    #[test]
+    fn pushed_off_route_mover_rejoins_the_detour() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        if w.map.spec.size == MapSize::Classic {
+            return;
+        }
+        // Detour (0,0)->(200,0) with stored progress 160; a mover pushed
+        // back to (30,0) must re-project instead of steering at a lookahead
+        // it can no longer reach.
+        w.water.detours.insert(
+            0,
+            Detour {
+                path: vec![(0.0, 0.0), (200.0, 0.0)],
+                progress: 160.0,
+                attempt: 0,
+            },
+        );
+        let (gx, _) = w.detour_target(0, 30.0, 0.0, 200.0, 0.0);
+        assert!(
+            gx < 80.0,
+            "lookahead should rejoin near the mover, got {gx}"
+        );
+        assert!(
+            w.water.detours[&0].progress < 60.0,
+            "stored progress regressed to the fresh projection"
+        );
+    }
+    #[test]
+    fn shore_mates_inherit_a_proven_unreachable_target() {
+        // One strander's failed route marks the crossing for every hungry
+        // mover stalled on the same bank — the crowd must not each pay the
+        // ~700-tick stall cost to re-learn it.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        if w.map.spec.size == MapSize::Classic {
+            return;
+        }
+        w.agents.hunger[0] = 90.0;
+        w.agents.hunger[1] = 90.0;
+        w.agents.x[0] = 100.0;
+        w.agents.y[0] = 100.0;
+        w.agents.x[1] = 400.0;
+        w.agents.y[1] = 400.0;
+        w.water
+            .shared_unreachable
+            .insert((Action::ForageMeal as u8, 77), vec![(104.0, 96.0, w.tick)]);
+        assert!(w.target_unreachable(0, Action::ForageMeal, 77));
+        assert!(
+            !w.target_unreachable(1, Action::ForageMeal, 77),
+            "a mover on a different shore is not taught by this bank"
+        );
+        w.agents.hunger[0] = 20.0;
+        assert!(
+            !w.target_unreachable(0, Action::ForageMeal, 77),
+            "a fed mover keeps pressing — its reports feed the port chain"
+        );
+    }
     #[test]
     fn ship_ferries_queued_walkers_across_water() {
         let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
@@ -819,6 +981,111 @@ mod tests {
             let d = dist(w.agents.x[i], w.agents.y[i], lx, by);
             assert!(d < 40.0, "rider {i} left {d} from the far dock");
         }
+    }
+    #[test]
+    fn failed_detour_blocks_the_unreachable_target() {
+        // A walker whose destination has no dry route gets its current
+        // (action, target) pair on the blocked list; hunger then stops
+        // the decision layer from re-offering the same crossing.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        // Find a dry point and a water point with no land path between them.
+        let mut pair = None;
+        let r = w.map.raster();
+        'outer: for row in 4..r.rows - 4 {
+            for col in 4..r.cols - 4 {
+                let (x, y) = ((col as f32 + 0.5) * r.cell, (row as f32 + 0.5) * r.cell);
+                if w.map.terrain_at(x, y) == Terrain::Water
+                    && w.route_between(100.0, 100.0, x, y).is_none()
+                {
+                    pair = Some((x, y));
+                    break 'outer;
+                }
+            }
+        }
+        let Some((wx, wy)) = pair else { return };
+        w.agents.x[0] = 100.0;
+        w.agents.y[0] = 100.0;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = 77;
+        w.compute_detour(0, 100.0, 100.0, wx, wy);
+        assert!(w
+            .water
+            .unreachable
+            .get(&0)
+            .is_some_and(|b| b.contains_key(&(Action::ForageMeal as u8, 77))));
+        // The block only bites when the mover is actually hungry.
+        w.agents.hunger[0] = 80.0;
+        assert!(w.target_unreachable(0, Action::ForageMeal, 77));
+        assert!(!w.target_unreachable(0, Action::BuyFood, 77));
+        assert!(!w.target_unreachable(0, Action::ForageMeal, 78));
+        w.agents.hunger[0] = 10.0;
+        assert!(!w.target_unreachable(0, Action::ForageMeal, 77));
+        // Entries decay after ~a day so a retry is still possible.
+        w.agents.hunger[0] = 80.0;
+        w.tick += 2401;
+        assert!(!w.target_unreachable(0, Action::ForageMeal, 77));
+    }
+    #[test]
+    fn starving_riders_step_off_a_docked_ship() {
+        // Riders pinned to a moored hull cannot reach food: the starving
+        // must disembark at the dock instead of dying aboard while the
+        // ferry waits for passengers.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        w.water.ports.push(Port {
+            market: 0,
+            x: 200.0,
+            y: 200.0,
+            lx: 800.0,
+            ly: 200.0,
+            near_done: true,
+            far_done: true,
+            ferry: true,
+            queue: Vec::new(),
+            queue_far: Vec::new(),
+        });
+        w.water.ships.push(Ship {
+            port: 0,
+            x: 200.0,
+            y: 200.0,
+            at_far: false,
+            aboard: vec![0, 1],
+            departed: false,
+            docked_since: w.tick,
+            path: Vec::new(),
+            leg: 0,
+        });
+        w.agents.hunger[0] = 80.0;
+        w.agents.hunger[1] = 20.0;
+        w.ship_step();
+        assert_eq!(w.water.ships[0].aboard, vec![1]);
+        assert!(
+            dist(w.agents.x[0], w.agents.y[0], 200.0, 200.0) < 30.0,
+            "released rider should stand on the dock"
+        );
+    }
+    #[test]
+    fn shipless_port_queues_release_the_starving() {
+        // With no ship commissioned nothing drains a queue — starving
+        // waiters must be released so they can walk to food.
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        w.water.ports.push(Port {
+            market: 0,
+            x: 200.0,
+            y: 200.0,
+            lx: 800.0,
+            ly: 200.0,
+            near_done: true,
+            far_done: true,
+            ferry: true,
+            queue: vec![0, 1],
+            queue_far: vec![2],
+        });
+        w.agents.hunger[0] = 80.0;
+        w.agents.hunger[1] = 20.0;
+        w.agents.health[2] = 10.0;
+        w.update_water_reports();
+        assert_eq!(w.water.ports[0].queue, vec![1]);
+        assert!(w.water.ports[0].queue_far.is_empty());
     }
     #[test]
     fn end_to_end_strand_report_port_ship() {
@@ -2060,13 +2327,33 @@ impl World {
                         self.water.ships[si].aboard.push(id);
                     }
                 }
+                // Riders are pinned to the hull and cannot walk to food:
+                // while moored, disembark the starving and the hurt onto
+                // the dock so a long wait for passengers is not a death
+                // sentence. They re-queue later if still stranded.
+                let mut released: Vec<u32> = Vec::new();
                 let aboard: Vec<u32> = self.water.ships[si]
                     .aboard
                     .iter()
                     .copied()
-                    .filter(|&id| self.agents.alive[id as usize])
+                    .filter(|&id| {
+                        let i = id as usize;
+                        if !self.agents.alive[i] {
+                            return false;
+                        }
+                        if self.agents.hunger[i] > 60.0 || self.agents.health[i] < 30.0 {
+                            released.push(id);
+                            return false;
+                        }
+                        true
+                    })
                     .collect();
                 self.water.ships[si].aboard = aboard;
+                for (rank, id) in released.iter().enumerate() {
+                    let i = *id as usize;
+                    self.agents.x[i] = dock.0 + (rank % 7) as f32 * 3.0 - 9.0;
+                    self.agents.y[i] = dock.1 + (rank / 7) as f32 * 3.0 - 10.5;
+                }
                 let aboard = self.water.ships[si].aboard.len();
                 let waited = self
                     .tick
@@ -2242,7 +2529,14 @@ impl World {
             total = base;
         }
         let stored = self.water.detours[&key].progress;
-        progress = progress.max(stored);
+        // Monotonic progress stops the lookahead flipping between adjacent
+        // segments — but a mover shoved well behind its stored progress is
+        // off-route entirely: clamping forward steers it at a point that is
+        // only reachable across water, and it pins there forever. Let the
+        // projection reset instead so the mover re-joins the path.
+        if stored - progress <= 32.0 {
+            progress = progress.max(stored);
+        }
         self.water.detours.get_mut(&key).unwrap().progress = progress;
         if total - progress <= 12.0 || dist(x, y, last.0, last.1) < 12.0 {
             self.water.detours.remove(&key);
@@ -2269,6 +2563,22 @@ impl World {
     /// empty-path entry doubles as a ~2400-tick backoff so unreachable
     /// movers do not rerun A* every stall tick.
     fn compute_detour(&mut self, key: u32, x: f32, y: f32, tx: f32, ty: f32) {
+        // Starving solo movers are the famine case: they must re-decide to
+        // a reachable target instead of grinding the crossing. Fed movers
+        // keep pressing — their stalls are the reports that feed ports.
+        let starving_agent = key & 0x8000_0000 == 0
+            && self.agents.convoy[key as usize] == NONE
+            && self.agents.hunger[key as usize] > 55.0;
+        if starving_agent
+            && self.target_unreachable(
+                key as usize,
+                self.agents.action[key as usize],
+                self.agents.target[key as usize],
+            )
+        {
+            return;
+        }
+        let mut reroute_live = false;
         if let Some(d) = self.water.detours.get(&key) {
             // Unreachable marks back off for ~2400 ticks; a live detour that
             // still has the mover stalled reroutes sooner from its new spot.
@@ -2276,7 +2586,30 @@ impl World {
             if self.tick.saturating_sub(d.attempt) < retry {
                 return;
             }
+            reroute_live = !d.path.is_empty();
         } else if self.water.detours.len() >= 512 {
+            // Router saturated: a starving strander locked out of the A*
+            // would re-pick the same unreachable target until it dies.
+            // The advisory block expires, so a later open slot can still
+            // prove reachability; fed movers keep pressing meanwhile.
+            if starving_agent {
+                self.record_unreachable(key);
+            }
+            return;
+        }
+        if reroute_live && starving_agent {
+            // One routed shot while starving: a detour that expired its
+            // retry with the mover still pinned has already failed. Mark
+            // the target so the hunger offer redirects to nearer food.
+            self.record_unreachable(key);
+            self.water.detours.insert(
+                key,
+                Detour {
+                    path: Vec::new(),
+                    progress: 0.0,
+                    attempt: self.tick,
+                },
+            );
             return;
         }
         match self.route_between(x, y, tx, ty) {
@@ -2299,8 +2632,78 @@ impl World {
                         attempt: self.tick,
                     },
                 );
+                // A failed A* is proof this walker's destination cannot be
+                // reached dry: record its current (action, target) so the
+                // decision layer can steer a starving mover elsewhere.
+                if key & 0x8000_0000 == 0 && self.agents.convoy[key as usize] == NONE {
+                    self.record_unreachable(key);
+                }
             }
         }
+    }
+    /// Mark this agent's current (action, target) as water-blocked. The
+    /// entry is advisory for hungry movers and expires after ~2400 ticks;
+    /// each agent keeps at most the 8 freshest marks. The shore position
+    /// is also shared so neighbours of the same bank skip the target
+    /// without paying the stall cost themselves.
+    fn record_unreachable(&mut self, key: u32) {
+        let i = key as usize;
+        let pair = (self.agents.action[i] as u8, self.agents.target[i]);
+        let blocks = self.water.unreachable.entry(key).or_default();
+        if blocks.len() >= 8 {
+            let oldest = *blocks.iter().min_by_key(|(_, t)| *t).unwrap().0;
+            blocks.remove(&oldest);
+        }
+        blocks.insert(pair, self.tick);
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        let origins = self.water.shared_unreachable.entry(pair).or_default();
+        origins.retain(|&(_, _, t)| self.tick.saturating_sub(t) < 2400);
+        let fresh = origins
+            .iter()
+            .any(|&(ox, oy, _)| dist(ox, oy, x, y) <= 48.0);
+        if !fresh {
+            if origins.len() >= 16 {
+                let oldest = origins
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, &(_, _, t))| t)
+                    .unwrap()
+                    .0;
+                origins.remove(oldest);
+            }
+            origins.push((x, y, self.tick));
+        }
+    }
+    /// True while `target` sits on the mover's water-blocked list — but only
+    /// for a hungry mover. A fed strander keeps pressing the shore (its
+    /// reports feed the port chain and a ferry may board it); a starving one
+    /// must re-decide to food it can actually reach, or it dies in place.
+    pub(super) fn target_unreachable(&self, i: usize, action: Action, target: u32) -> bool {
+        if self.agents.hunger[i] <= 55.0 {
+            return false;
+        }
+        if self
+            .water
+            .unreachable
+            .get(&(i as u32))
+            .and_then(|blocks| blocks.get(&(action as u8, target)))
+            .is_some_and(|&t| self.tick.saturating_sub(t) < 2400)
+        {
+            return true;
+        }
+        // Same-bank sharing: another strander already proved this target
+        // from within ~96u of where this mover is standing.
+        let Some(origins) = self
+            .water
+            .shared_unreachable
+            .get(&(action as u8, target))
+        else {
+            return false;
+        };
+        let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        origins.iter().any(|&(ox, oy, t)| {
+            self.tick.saturating_sub(t) < 2400 && dist(ox, oy, x, y) <= 96.0
+        })
     }
     /// Move agent `i` toward (tx, ty) by `step` units, steering around water
     /// on generated maps; on Classic this is the historical straight step.
@@ -2412,46 +2815,89 @@ impl World {
                 self.agents.alive.get(key as usize).copied().unwrap_or(false)
             }
         });
+        // Blocked-target entries age out after ~a day (a port or a changed
+        // destination may make the crossing possible again), and die with
+        // their mover.
+        let tick = self.tick;
+        self.water.unreachable.retain(|&key, blocks| {
+            if !self.agents.alive.get(key as usize).copied().unwrap_or(false) {
+                return false;
+            }
+            blocks.retain(|_, t| tick.saturating_sub(*t) < 2400);
+            !blocks.is_empty()
+        });
+        // Port queues are only a waiting list: the dead, starving and hurt
+        // must leave it even when no ship has been commissioned yet, or a
+        // shipless dock becomes a pile of starving walkers.
+        for pi in 0..self.water.ports.len() {
+            for far in [false, true] {
+                let mut q = std::mem::take(if far {
+                    &mut self.water.ports[pi].queue_far
+                } else {
+                    &mut self.water.ports[pi].queue
+                });
+                q.retain(|&id| {
+                    let i = id as usize;
+                    self.agents.alive[i] && self.agents.hunger[i] <= 60.0 && self.agents.health[i] > 30.0
+                });
+                if far {
+                    self.water.ports[pi].queue_far = q;
+                } else {
+                    self.water.ports[pi].queue = q;
+                }
+            }
+        }
         if self.water.pending.is_empty() {
             return;
         }
-        let mut arrived: Vec<PendingBlock> = Vec::new();
+        let mut arrived: Vec<(PendingBlock, u32)> = Vec::new();
         self.water.pending.retain(|p| {
             let i = p.agent as usize;
-            let home = self.agents.home[i] as usize;
-            let at_home = self.agents.alive[i]
-                && home < self.markets.len()
-                && {
-                    let m = &self.markets[home];
-                    let r = rest::settlement_radius(m.housing_blocks).max(160.0);
-                    dist(self.agents.x[i], self.agents.y[i], m.x, m.y) < r
-                };
+            // Filed at the first settlement the bearer actually reaches —
+            // a carrier whose home lies across the water can never get
+            // there, and holding the report for home delivery would trap
+            // it at the same shore it is trying to cross.
+            let reached = if self.agents.alive[i] {
+                let (x, y) = (self.agents.x[i], self.agents.y[i]);
+                self.markets
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| {
+                        let r = rest::settlement_radius(m.housing_blocks).max(160.0);
+                        dist(x, y, m.x, m.y) < r
+                    })
+                    .min_by(|(_, a), (_, b)| {
+                        dist(x, y, a.x, a.y).total_cmp(&dist(x, y, b.x, b.y))
+                    })
+                    .map(|(mi, _)| mi as u32)
+            } else {
+                None
+            };
             // A carried report goes stale after ~2 days: the bearer may be
             // stranded on the wrong side itself, and keeping it forever
             // would hold a report-queue slot for a delivery that can never
             // happen. Expired reports drop silently; reaching home still
             // delivers.
             let expired = self.tick.saturating_sub(p.tick) > 4800;
-            if at_home {
-                arrived.push(*p);
+            if let Some(m) = reached {
+                arrived.push((*p, m));
             }
-            !at_home && !expired && self.agents.alive[i] && home < self.markets.len()
+            reached.is_none() && !expired && self.agents.alive[i]
         });
-        for p in arrived {
+        for (p, market) in arrived {
             if !self.agents.alive[p.agent as usize] {
                 continue;
             }
-            let market = self.agents.home[p.agent as usize];
             let cell = ((p.x / 96.0) as i32, (p.y / 96.0) as i32);
             if let Some(b) = self.water.blocks.iter_mut().find(|b| {
-                b.market == market as u32
+                b.market == market
                     && ((b.x / 96.0) as i32, (b.y / 96.0) as i32) == cell
             }) {
                 b.reports = b.reports.saturating_add(1);
                 b.tick = p.tick;
             } else if self.water.blocks.len() < 64 {
                 self.water.blocks.push(WaterBlock {
-                    market: market as u32,
+                    market,
                     x: p.x,
                     y: p.y,
                     tx: p.tx,
@@ -2462,11 +2908,12 @@ impl World {
             }
         }
     }
-    /// Turn delivered water blocks into paired port construction. A zoned
-    /// village with the coffers and materials surveys a landing across the
-    /// water, then posts Shipwright jobs on the urban board: the home shore
-    /// always, the far shore only when a dry land route exists — otherwise
-    /// the port is flagged `ferry` and waits for a ship to carry builders.
+    /// Turn delivered water blocks into paired port construction. A
+    /// settlement with the coffers and materials surveys a landing across
+    /// the water, then posts Shipwright jobs on the urban board: the home
+    /// shore always, the far shore only when a dry land route exists —
+    /// otherwise the port is flagged `ferry` and waits for a ship to carry
+    /// builders.
     pub(super) fn plan_ports(&mut self) {
         if self.map.spec.size == MapSize::Classic
             || (self.water.blocks.is_empty() && self.water.ports.is_empty())
@@ -2500,24 +2947,27 @@ impl World {
                 }
             }
             // A finished home dock on a ferry port commissions its ship:
-            // forty timber and a shipwright crew, posted like a build job.
+            // forty timber for a proper junk, or twelve for a lashed raft
+            // when the market's forests are stripped — a slow ferry still
+            // beats no crossing at all.
+            let raft = self.markets[m].stock(1) < 40;
             if p.near_done
                 && p.ferry
                 && !self.water.ships.iter().any(|s| s.port == pi as u32)
                 && !self.urban.jobs.iter().flatten().any(|j| {
                     j.kind == 4 && j.target == pi as u32 && j.source == 2
                 })
-                && self.markets[m].stock(1) >= 40
+                && self.markets[m].stock(1) >= if raft { 12 } else { 40 }
                 && self.markets[m].coins >= WAGE
             {
-                let mut left = 40;
+                let mut left = if raft { 12 } else { 40 };
                 while left > 0 {
                     left -= self.markets[m]
                         .take(1, left)
                         .expect("reserved ship timber")
                         .quantity;
                 }
-                self.ledger.built[1] += 40;
+                self.ledger.built[1] += if raft { 12 } else { 40 };
                 self.markets[m].coins -= WAGE;
                 let j = self.new_job(m, 4, NONE, NONE, 2, pi as u32, p.x, p.y, WAGE);
                 self.post_urban_job(j);
@@ -2530,12 +2980,25 @@ impl World {
             }
             let b = self.water.blocks[bi];
             let m = b.market as usize;
-            if m >= self.markets.len()
-                || !self.urban.states.get(m).map(|s| s.zoned).unwrap_or(false)
-                || self.coffers(m) < 2 * WAGE
-                || self.markets[m].stock(1) < WOOD
-                || self.markets[m].stock(2) < STONE
+            // Any settlement that can pay and stock the materials answers a
+            // delivered block: the strander is often a camp-dweller, and a
+            // zoning gate would deny ferries to exactly the movers the water
+            // chain exists to rescue. Timber is preferred, but a fieldstone
+            // jetty on a few piles serves when the forests are stripped.
+            let materials = if m < self.markets.len()
+                && self.markets[m].stock(1) >= WOOD
+                && self.markets[m].stock(2) >= STONE
             {
+                Some([(1usize, WOOD), (2, STONE)])
+            } else if m < self.markets.len()
+                && self.markets[m].stock(1) >= 4
+                && self.markets[m].stock(2) >= 24
+            {
+                Some([(1usize, 4), (2, 24)])
+            } else {
+                None
+            };
+            if m >= self.markets.len() || self.coffers(m) < 2 * WAGE || materials.is_none() {
                 continue;
             }
             if self.water.ports.iter().any(|p| {
@@ -2588,7 +3051,7 @@ impl World {
                 queue: Vec::new(),
                 queue_far: Vec::new(),
             });
-            for (k, q) in [(1usize, WOOD), (2, STONE)] {
+            for (k, q) in materials.unwrap() {
                 let mut left = q;
                 while left > 0 {
                     left -= self.markets[m]

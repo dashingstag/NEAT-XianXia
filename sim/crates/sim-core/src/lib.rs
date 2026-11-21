@@ -1035,6 +1035,35 @@ impl World {
                 };
                 return (out, 1);
             }
+            // No stocked patch this mover can reach — head for the home
+            // market: whatever food, family or work waits there beats
+            // starving in place on a dead shore. If the way home is itself
+            // water-blocked the unreachable filter drops this candidate.
+            let home = self.agents.home[i] as usize;
+            if home < self.markets.len()
+                && dist(
+                    self.agents.x[i],
+                    self.agents.y[i],
+                    self.markets[home].x,
+                    self.markets[home].y,
+                ) > 48.0
+            {
+                // Aim at whatever food kind the market actually has on the
+                // shelf; with empty shelves the walk home is still better
+                // than starving where the mover stands.
+                let kind = [0usize, 3, 8]
+                    .into_iter()
+                    .find(|&k| self.markets[home].stock(k) > 0)
+                    .unwrap_or(0);
+                out[0] = Candidate {
+                    action: Action::BuyFood,
+                    target: home as u32,
+                    kind,
+                    inputs: [0.0; INPUTS],
+                    score: 9.0,
+                };
+                return (out, 1);
+            }
         }
         if self.urgent_family_care(i) {
             out[0] = Candidate {
@@ -1623,11 +1652,38 @@ impl World {
             }
             tally
         });
-        out[..count]
+        let best = out[..count]
             .iter()
+            .filter(|c| !self.target_unreachable(i, c.action, c.target))
             .max_by(|a, b| a.score.total_cmp(&b.score))
-            .copied()
-            .map(|candidate| Request {
+            .copied();
+        // A starving mover offered nothing better than Wait still walks:
+        // any move toward a market or a job beats standing on a dead shore
+        // until the hunger meter runs out.
+        let best = if self.agents.hunger[i] >= 55.0
+            && best.is_some_and(|c| c.action == Action::Wait)
+        {
+            out[..count]
+                .iter()
+                .filter(|c| {
+                    c.action != Action::Wait
+                        && !self.target_unreachable(i, c.action, c.target)
+                })
+                .max_by(|a, b| a.score.total_cmp(&b.score))
+                .copied()
+                .or(best)
+        } else {
+            best
+        };
+        // When every offer is water-blocked the mover has nothing better
+        // to try — keep its best anyway rather than freeze the decision.
+        best.or_else(|| {
+            out[..count]
+                .iter()
+                .max_by(|a, b| a.score.total_cmp(&b.score))
+                .copied()
+        })
+        .map(|candidate| Request {
                 memory_offers,
                 counts,
                 agent: i,
@@ -3058,6 +3114,196 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    #[ignore]
+    fn diag_shore_deaths() {
+        let mut w = World::new_with_size(3000, 42, Hill::default(), MapSize::X4).unwrap();
+        const NAMES: [&str; 39] = [
+            "Rest","Gather","Deliver","BuyFood","Build","Trade","Mint","Barter","WorkForFood",
+            "MakeCamp","Wait","BuildGraveyard","Gravedigger","Court","CareFamily","CraftTool",
+            "BuyTool","Farm","HarvestRice","EquipTool","ForageMeal","StoreCargo","Socialize",
+            "BuildTavern","BuildSchool","Teach","AttendSchool","UrbanWork","LeaseBusiness",
+            "OperateBusiness","OrderGoods","BuyHome","RentHome","ShopGoods","Hunt",
+            "CollectEstate","BuildBank","BorrowBusiness","RepayLoan",
+        ];
+        let mut seen: Vec<bool> = vec![false; w.agents.len()];
+        let mut water_deaths = 0usize;
+        let mut shore_deaths = 0usize;
+        let mut inland_deaths = 0usize;
+        let mut starved_shore = 0usize;
+        let mut hist = [0usize; 70];
+        let mut clusters: std::collections::BTreeMap<(i32, i32), usize> =
+            std::collections::BTreeMap::new();
+        let mut samples: Vec<String> = Vec::new();
+        for _ in 1..=9600u64 {
+            w.step(true);
+            for i in 0..w.agents.len() {
+                if seen[i] || w.agents.alive[i] {
+                    continue;
+                }
+                seen[i] = true;
+                let (x, y) = (w.agents.x[i], w.agents.y[i]);
+                let here = w.map.terrain_at(x, y);
+                let wet = here == Terrain::Water || here == Terrain::River;
+                let shore = !wet && [(24.0, 0.0), (-24.0, 0.0), (0.0, 24.0), (0.0, -24.0)]
+                    .iter()
+                    .any(|&(ox, oy)| {
+                        w.map.terrain_at(x + ox, y + oy) == Terrain::Water
+                    });
+                let aboard = w.water.ships.iter().any(|s| s.aboard.contains(&(i as u32)));
+                let queued = w
+                    .water
+                    .ports
+                    .iter()
+                    .any(|p| p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32)));
+                let act = NAMES
+                    .get(w.agents.action[i] as usize)
+                    .copied()
+                    .unwrap_or("?");
+                hist[(w.agents.action[i] as usize).min(69)] += 1;
+                if wet {
+                    water_deaths += 1;
+                } else if shore || aboard || queued {
+                    shore_deaths += 1;
+                    *clusters
+                        .entry(((x / 96.0) as i32, (y / 96.0) as i32))
+                        .or_default() += 1;
+                    if w.agents.hunger[i] > 80.0 {
+                        starved_shore += 1;
+                    }
+                    if samples.len() < 15 {
+                        let carrying = w.water.pending.iter().any(|p| p.agent == i as u32);
+                        let stall = w.water.progress.get(i).and_then(|p| *p).map(|(_, _, s)| w.tick - s);
+                        let (mx, my) = {
+                            let m = &w.markets[w.agents.home[i] as usize];
+                            (m.x, m.y)
+                        };
+                        let home_d = dist(x, y, mx, my) as i32;
+                        let home_ok = w
+                            .route_between(x, y, mx, my)
+                            .is_some_and(|p| !p.is_empty() || dist(x, y, mx, my) < 48.0);
+                        let dest = w.personal_destination(i);
+                        let (td, twet) = dest.map(|(dx, dy)| {
+                            (dist(x, y, dx, dy) as i32, w.map.terrain_at(dx, dy) == Terrain::Water)
+                        }).unwrap_or((-1, false));
+                        let home_wet = w
+                            .personal_destination(i)
+                            .map(|_| {
+                                let m = &w.markets[w.agents.home[i] as usize];
+                                w.map.terrain_at(m.x, m.y) == Terrain::Water
+                            })
+                            .unwrap_or(false);
+                        samples.push(format!(
+                            "a{i} act={act} hunger={:.0} carry={} stall={:?} dest_d={} dest_wet={} home_d={} home_ok={} home_wet={} detour={} blocks={}",
+                            w.agents.hunger[i],
+                            carrying,
+                            stall,
+                            td,
+                            twet,
+                            home_d,
+                            home_ok,
+                            home_wet,
+                            w.water.detours.contains_key(&(i as u32)),
+                            w.water.unreachable.get(&(i as u32)).map(|b| b.len()).unwrap_or(0)
+                        ));
+                    }
+                } else {
+                    inland_deaths += 1;
+                }
+            }
+        }
+        eprintln!(
+            "deaths: water={water_deaths} shore={shore_deaths} (starved={starved_shore}) inland={inland_deaths} of {}",
+            w.stats.deaths
+        );
+        let mut top: Vec<_> = clusters.iter().collect();
+        top.sort_by(|a, b| b.1.cmp(a.1));
+        eprintln!(
+            "top shoreline clusters: {}",
+            top.iter()
+                .take(8)
+                .map(|(k, c)| format!("{k:?}:{c}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        eprintln!(
+            "actions: {}",
+            hist.iter()
+                .enumerate()
+                .filter(|&(_, &c)| c > 0)
+                .map(|(k, &c)| format!("{}:{}", NAMES.get(k).copied().unwrap_or("?"), c))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let stocked = w
+            .patches
+            .iter()
+            .filter(|p| [0, 3].contains(&p.kind) && p.stock > 0)
+            .count();
+        eprintln!(
+            "patches: {} total, {} stocked food, berry_stock={} fish_stock={}",
+            w.patches.len(),
+            stocked,
+            w.patches.iter().filter(|p| p.kind == 0).map(|p| p.stock).sum::<u64>(),
+            w.patches.iter().filter(|p| p.kind == 3).map(|p| p.stock).sum::<u64>()
+        );
+        eprintln!(
+            "ports={} ships={} blocks={} pending={} unreachable={} detours={} probes={} jobs4={}",
+            w.water.ports.len(),
+            w.water.ships.len(),
+            w.water.blocks.len(),
+            w.water.pending.len(),
+            w.water.unreachable.len(),
+            w.water.detours.len(),
+            w.water.progress.iter().flatten().count(),
+            w.urban.jobs.iter().flatten().filter(|j| j.kind == 4).count()
+        );
+        eprintln!("{}", samples.join("\n"));
+        // What does the offer board look like for a starving Wait-er?
+        let mut offer_lines: Vec<String> = Vec::new();
+        for i in 0..w.agents.len() {
+            if offer_lines.len() >= 10 {
+                break;
+            }
+            if !(w.agents.alive[i]
+                && w.agents.action[i] == Action::Wait
+                && w.agents.hunger[i] > 85.0)
+            {
+                continue;
+            }
+            let mut counts = Counts::new();
+            let (out, n) = w.offer_counted(i, Some(&mut counts));
+            let board = out[..n]
+                .iter()
+                .map(|c| format!("{:?}@{}:{:.2}", c.action, c.target, c.score))
+                .collect::<Vec<_>>()
+                .join(" ");
+            offer_lines.push(format!("a{i} hunger={:.0} offers: {board}", w.agents.hunger[i]));
+        }
+        eprintln!("{}", offer_lines.join("\n"));
+        // Why don't the 64 delivered blocks become ports?
+        let (mut poor, mut no_wood, mut no_stone, mut ok) = (0, 0, 0, 0);
+        for b in &w.water.blocks {
+            let m = b.market as usize;
+            if m >= w.markets.len() || w.coffers(m) < 96 {
+                poor += 1;
+            } else if w.markets[m].stock(1) < 20 {
+                no_wood += 1;
+            } else if w.markets[m].stock(2) < 4 {
+                no_stone += 1;
+            } else {
+                ok += 1;
+            }
+        }
+        eprintln!("block sponsors: poor={poor} no_wood={no_wood} no_stone={no_stone} ready={ok}");
+        let per_market: Vec<String> = w
+            .markets
+            .iter()
+            .enumerate()
+            .map(|(i, m)| format!("m{i}:c{}:w{}:s{}", w.coffers(i), m.stock(1), m.stock(2)))
+            .collect();
+        eprintln!("markets: {}", per_market.join(" "));
     }
     #[test]
     fn conservation_survives_parallel_competition() {

@@ -2033,7 +2033,7 @@ impl World {
         }
         Some(path)
     }
-    fn clear_shot(&self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
+    pub(super) fn clear_shot(&self, ax: f32, ay: f32, bx: f32, by: f32) -> bool {
         let d = dist(ax, ay, bx, by);
         // Validate endpoints as well as the interior so an underwater
         // target cannot masquerade as a direct dry route.

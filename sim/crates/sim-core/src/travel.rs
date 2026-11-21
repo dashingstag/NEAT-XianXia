@@ -124,6 +124,11 @@ pub struct WaterState {
     /// Routed detours for stalled movers: agent idx, or a convoy slot
     /// with the high bit set.
     pub detours: BTreeMap<u32, Detour>,
+    // Per-tick search budget. The next simulation tick resets it after a load.
+    #[serde(skip)]
+    retry_budget_tick: u64,
+    #[serde(skip)]
+    fast_retries: u8,
     /// Convoy slot -> stall probe, same 24-unit rule as `progress`.
     pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
     /// (action, target) pairs a mover proved water-blocked, so a starving
@@ -1320,6 +1325,22 @@ mod tests {
         let wet_x = ax + r.cell;
         assert_eq!(w.map.terrain_at(wet_x, ay), Terrain::Water);
         assert!(w.route_between(ax, ay, wet_x, ay).is_none());
+        w.tick = 120;
+        for i in 0..5u32 {
+            w.agents.hunger[i as usize] = 60.0;
+            w.water.detours.insert(i, Detour {
+                path: vec![(ax, ay)],
+                progress: 0.0,
+                attempt: 0,
+            });
+            w.compute_detour(i, ax, ay, bx, by);
+        }
+        assert_eq!(w.water.fast_retries, 4);
+        assert_eq!(w.water.detours[&4].attempt, 0);
+        w.tick += 1;
+        w.compute_detour(4, ax, ay, bx, by);
+        assert_eq!(w.water.fast_retries, 1);
+        assert_eq!(w.water.detours[&4].attempt, w.tick);
         w.markets[0].x = ax;
         w.markets[0].y = ay;
         w.markets[1].x = bx;
@@ -2687,6 +2708,20 @@ impl World {
         let starving_agent = key & 0x8000_0000 == 0
             && self.agents.convoy[key as usize] == NONE
             && self.agents.hunger[key as usize] > 55.0;
+        let mut reroute_live = false;
+        let mut fast_retry = false;
+        if let Some(d) = self.water.detours.get(&key) {
+            // Unreachable marks back off for ~2400 ticks; a live detour that
+            // still has the mover stalled reroutes sooner from its new spot.
+            let normal_retry = if d.has_route() { 480 } else { 2400 };
+            let age = self.tick.saturating_sub(d.attempt);
+            fast_retry = starving_agent && !d.matches_destination(tx, ty) && age < normal_retry;
+            let retry = if fast_retry { 80 } else { normal_retry };
+            if self.tick.saturating_sub(d.attempt) < retry {
+                return;
+            }
+            reroute_live = d.has_route() && d.matches_destination(tx, ty);
+        }
         let routing_for_report = key & 0x8000_0000 == 0
             && self.water.pending.iter().any(|report| report.agent == key);
         if starving_agent && !routing_for_report
@@ -2698,21 +2733,7 @@ impl World {
         {
             return;
         }
-        let mut reroute_live = false;
-        if let Some(d) = self.water.detours.get(&key) {
-            // Unreachable marks back off for ~2400 ticks; a live detour that
-            // still has the mover stalled reroutes sooner from its new spot.
-            let retry = match (d.has_route(), d.matches_destination(tx, ty), d.path.is_empty()) {
-                (true, true, _) => 480,
-                (false, true, _) => 2400,
-                (_, _, true) if !starving_agent => 2400,
-                _ => 80,
-            };
-            if self.tick.saturating_sub(d.attempt) < retry {
-                return;
-            }
-            reroute_live = d.has_route() && d.matches_destination(tx, ty);
-        } else if self.water.detours.len() >= 512 {
+        if !self.water.detours.contains_key(&key) && self.water.detours.len() >= 512 {
             // Router saturated: a starving strander locked out of the A*
             // would re-pick the same unreachable target until it dies.
             // The advisory block expires, so a later open slot can still
@@ -2736,6 +2757,17 @@ impl World {
                 },
             );
             return;
+        }
+        if fast_retry && !self.clear_shot(x, y, tx, ty) {
+            const MAX_FAST_RETRIES_PER_TICK: u8 = 4;
+            if self.water.retry_budget_tick != self.tick {
+                self.water.retry_budget_tick = self.tick;
+                self.water.fast_retries = 0;
+            }
+            if self.water.fast_retries >= MAX_FAST_RETRIES_PER_TICK {
+                return;
+            }
+            self.water.fast_retries += 1;
         }
         match self.route_between(x, y, tx, ty) {
             Some(path) if !path.is_empty() => {

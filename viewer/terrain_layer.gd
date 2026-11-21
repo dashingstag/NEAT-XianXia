@@ -119,8 +119,12 @@ static func fog_image(explored: Dictionary) -> Image:
 
 const TERRAIN_COLORS := [Color("35606d"), Color("9a9682"), Color("71866a"), Color("62804f"), Color("a5ad6c"), Color("93a575"), Color("4f8f9b")]
 
-# One pixel per generator cell: class colour, light from the north-west, sandy
-# shores and a faint jade cast where qi gathers.
+# Class colour, north-west light, sandy shores and a jade qi cast, rendered
+# at 4 subpixels per generator cell and bilinearly blended between cell
+# centres: terrain boundaries, relief shading and qi zones resolve as
+# continuous gradients instead of hard cell blocks at fidelity 2 and 3.
+const GROUND_SUB := 4
+
 static func terrain_image(terrain: Dictionary) -> Image:
 	var cols := int(terrain.cols)
 	var rows := int(terrain.rows)
@@ -128,8 +132,8 @@ static func terrain_image(terrain: Dictionary) -> Image:
 	var elevation := Marshalls.base64_to_raw(terrain.elevation)
 	var qi := Marshalls.base64_to_raw(terrain.qi)
 	assert(classes.size() == cols*rows and elevation.size() == cols*rows and qi.size() == cols*rows)
-	var pixels := PackedByteArray()
-	pixels.resize(cols*rows*4)
+	var cells := []
+	cells.resize(cols*rows)
 	for j in range(rows):
 		for i in range(cols):
 			var at := j*cols+i
@@ -148,11 +152,48 @@ static func terrain_image(terrain: Dictionary) -> Image:
 				if e < 0.38:
 					color = color.lerp(Color("c7bd91"), clampf((0.38-e)/0.04, 0.0, 1.0)*0.7)
 				color = color.lerp(Color("8fd3c4"), qi[at]/255.0*0.35)
-			pixels[at*4] = color.r8
-			pixels[at*4+1] = color.g8
-			pixels[at*4+2] = color.b8
-			pixels[at*4+3] = 255
-	return Image.create_from_data(cols, rows, false, Image.FORMAT_RGBA8, pixels)
+			cells[at] = color
+	var pixels := PackedByteArray()
+	pixels.resize(cols*rows*GROUND_SUB*GROUND_SUB*4)
+	var w := cols*GROUND_SUB
+	for j in range(rows):
+		for i in range(cols):
+			for sy in range(GROUND_SUB):
+				var v := (sy+0.5)/GROUND_SUB
+				var j0: int
+				var j1: int
+				var wy: float
+				if v >= 0.5:
+					j0 = j
+					j1 = mini(j+1, rows-1)
+					wy = v - 0.5
+				else:
+					j0 = maxi(j-1, 0)
+					j1 = j
+					wy = v + 0.5
+				for sx in range(GROUND_SUB):
+					var u := (sx+0.5)/GROUND_SUB
+					var i0: int
+					var i1: int
+					var wx: float
+					if u >= 0.5:
+						i0 = i
+						i1 = mini(i+1, cols-1)
+						wx = u - 0.5
+					else:
+						i0 = maxi(i-1, 0)
+						i1 = i
+						wx = u + 0.5
+					var c: Color = cells[j0*cols+i0]*(1.0-wx)*(1.0-wy) \
+						+ cells[j0*cols+i1]*wx*(1.0-wy) \
+						+ cells[j1*cols+i0]*(1.0-wx)*wy \
+						+ cells[j1*cols+i1]*wx*wy
+					var px := (j*GROUND_SUB+sy)*w + i*GROUND_SUB+sx
+					pixels[px*4] = c.r8
+					pixels[px*4+1] = c.g8
+					pixels[px*4+2] = c.b8
+					pixels[px*4+3] = 255
+	return Image.create_from_data(w, rows*GROUND_SUB, false, Image.FORMAT_RGBA8, pixels)
 
 # Short waterline dashes on water cells that touch land; they read as wave
 # detail when the map is zoomed in and stay hidden far out.

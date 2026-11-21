@@ -888,6 +888,7 @@ func _process(delta: float) -> void:
 		if anim_redraw >= 0.1:
 			anim_redraw = 0.0
 			queue_redraw()
+			terrain.queue_redraw()
 	detail_material.set_shader_parameter("clock",shader_clock)
 	detail_material.set_shader_parameter("blend_amount",minf(snapshot_age/snapshot_interval,1.0))
 

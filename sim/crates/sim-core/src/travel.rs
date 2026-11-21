@@ -339,11 +339,19 @@ mod tests {
         let home = w.agents.home[0] as usize;
         w.agents.x[0] = w.markets[home].x;
         w.agents.y[0] = w.markets[home].y;
+        w.water.progress[0] = Some((w.agents.x[0], w.agents.y[0], w.tick - 601));
         w.update_water_reports();
         assert!(w.water.pending.is_empty());
         assert_eq!(w.water.blocks.len(), 1);
         assert_eq!(w.water.blocks[0].market, home as u32);
         assert_eq!(w.water.blocks[0].reports, 1);
+
+        // The old trip's stall clock would immediately file another report,
+        // redirecting the walker back to the market every other tick.
+        w.track_stranded(0, tx, ty);
+        assert!(w.water.pending.is_empty());
+        assert_eq!(w.water.progress[0].unwrap().2, w.tick);
+
         // A second report at the same shore dedupes into `reports`.
         w.water.pending.push(PendingBlock {
             agent: 1,
@@ -3045,6 +3053,11 @@ impl World {
         for (p, market) in arrived {
             if !self.agents.alive[p.agent as usize] {
                 continue;
+            }
+            // Delivery ends the report trip. Let the walker resume its own
+            // destination before the stall probe can request another report.
+            if let Some(probe) = self.water.progress.get_mut(p.agent as usize) {
+                *probe = None;
             }
             let cell = ((p.x / 96.0) as i32, (p.y / 96.0) as i32);
             if let Some(b) = self.water.blocks.iter_mut().find(|b| {

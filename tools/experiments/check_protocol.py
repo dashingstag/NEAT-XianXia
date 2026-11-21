@@ -74,13 +74,16 @@ def check(stream):
     assert (explored["cols"], explored["rows"], explored["chunk"]) == (8, 5, 384) and len(known) == 40
     assert 0 < sum(known) <= 40 and set(known) <= {0, 1}
     assert "terrain" not in send(stream, {"command": "map_layers", "terrain": False})["map_layers"]
-    assert len(first["products"]) == 13 and len(first["sensors"]) == 48
-    assert len(first["selected"]["choices"][0]["inputs"]) == 48
+    assert len(first["products"]) == 13 and len(first["sensors"]) == 52
+    assert first["sensors"][-4:] == [
+        "energy_urgency", "rest_urgency", "happiness_urgency", "social_urgency",
+    ]
+    assert len(first["selected"]["choices"][0]["inputs"]) == len(first["sensors"])
     assert len(first["selected"]["person"]["goals"]) <= 5
     send(stream,{"command":"select_animal","animal":0})
     animal=snapshot(stream)["selected_animal"]
     assert animal["species"] == "Rabbit" and animal["genome_nodes"] >= 53
-    assert animal["choices"] and len(animal["choices"][0]["inputs"]) == 48
+    assert animal["choices"] and len(animal["choices"][0]["inputs"]) == len(first["sensors"])
     send(stream,{"command":"select","agent":0})
     send(stream, {"command":"time_of_day","hour":20.0})
     phase = snapshot(stream)

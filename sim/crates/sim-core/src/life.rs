@@ -10,6 +10,23 @@ pub const GLUTTON: u16 = 64;
 pub const SOCIALITE: u16 = 128;
 pub const GREGARIOUS: u16 = 256;
 pub const COMMUNITY_MINDED: u16 = 512;
+pub const HUNTING_INCLINED: u16 = 1 << 11;
+pub const CRAFTING_INCLINED: u16 = 1 << 12;
+
+fn occupational_aspiration(traits: u16, rng: &mut Rng) -> Option<Aspiration> {
+    match traits & (HUNTING_INCLINED | CRAFTING_INCLINED) {
+        HUNTING_INCLINED => Some(Aspiration::Hunter),
+        CRAFTING_INCLINED => Some([Aspiration::Artisan, Aspiration::Blacksmith][rng.index(2)]),
+        0 => None,
+        _ => Some(
+            [
+                Aspiration::Hunter,
+                Aspiration::Artisan,
+                Aspiration::Blacksmith,
+            ][rng.index(3)],
+        ),
+    }
+}
 const SURNAMES: [&str; 24] = [
     "Lin", "Chen", "Zhao", "Li", "Wang", "Liu", "Zhang", "Shen", "Han", "Gu", "Lu", "Su", "Bai",
     "Ye", "Mo", "Xu", "Jiang", "Qin", "Feng", "Tang", "Xiao", "He", "Song", "Yun",
@@ -36,6 +53,36 @@ pub enum Aspiration {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hungry_villager_can_forage_fish_from_dry_shore() {
+        let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
+        let raster = w.map.raster();
+        let (x, y) = (0..raster.rows)
+            .flat_map(|y| (1..raster.cols).map(move |x| (x, y)))
+            .find(|&(x, y)| {
+                raster.terrain[y * raster.cols + x] == Terrain::Water as u8
+                    && raster.terrain[y * raster.cols + x - 1] != Terrain::Water as u8
+            })
+            .expect("generated Frontier has a shoreline");
+        let target = w.patches.iter().position(|patch| patch.kind == 3).unwrap();
+        let (x, y) = ((x as f32 + 0.5) * raster.cell, (y as f32 + 0.5) * raster.cell);
+        w.patches[target].x = x;
+        w.patches[target].y = y;
+        w.agents.x[0] = x - raster.cell;
+        w.agents.y[0] = y;
+        w.agents.hunger[0] = 70.0;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = target as u32;
+        let stock = w.patches[target].stock;
+        assert!(stock > 0);
+        for _ in 0..10 {
+            w.execute_personal(0, Action::ForageMeal);
+        }
+        assert_eq!(w.agents.hunger[0], 30.0);
+        assert_eq!(w.patches[target].stock, stock - 1);
+        assert_ne!(w.map.terrain_at(w.agents.x[0], w.agents.y[0]), Terrain::Water);
+        w.check().unwrap();
+    }
     #[test]
     fn full_hands_cannot_block_emergency_meals() {
         let mut w = World::new(2, 42).unwrap();
@@ -343,6 +390,64 @@ mod tests {
         assert!((w.work_factor(0, Action::Gather, 1) - 0.8).abs() < 0.001);
     }
     #[test]
+    fn occupational_traits_and_opportunity_bias_goals() {
+        let mut near = World::new_with_size(32, 42, Hill::default(), MapSize::X4).unwrap();
+        let animal = &near.wildlife.animals[0];
+        near.agents.x[0] = animal.x;
+        near.agents.y[0] = animal.y;
+        near.people[0].aspiration = Aspiration::Wealth;
+        near.agents.traits[0] = HUNTING_INCLINED;
+        let mut far = near.clone();
+        far.agents.x[0] = 0.0;
+        far.agents.y[0] = 0.0;
+        let mut near_hunts = 0;
+        let mut far_hunts = 0;
+        for day in 1..=256 {
+            for world in [&mut near, &mut far] {
+                world.tick = day * rest::DAY_TICKS;
+                world.people[0].goals.clear();
+                world.refresh_occupation_goals(0);
+            }
+            near_hunts += usize::from(near.has_goal(0, GoalKind::Hunt));
+            far_hunts += usize::from(far.has_goal(0, GoalKind::Hunt));
+        }
+        assert!(near_hunts > far_hunts);
+
+        far.people[0].goals.clear();
+        far.add_goal(0, GoalKind::Hunt, 10);
+        far.refresh_occupation_goals(0);
+        let mut hunt = [0.0; INPUTS];
+        far.personal_inputs(0, Action::HuntWildlife, 0, &mut hunt);
+        assert_eq!(hunt[33], 1.0);
+
+        far.add_goal(0, GoalKind::Weapon, 10);
+        far.agents.cargo_kind[0] = 1;
+        far.agents.cargo[0] = 2;
+        assert!(far
+            .hunting_offers(0)
+            .iter()
+            .any(|c| c.action == Action::CraftSpear));
+
+        let mut rng = Rng(42);
+        assert!(occupational_aspiration(HUNTING_INCLINED, &mut rng) == Some(Aspiration::Hunter));
+        assert!(matches!(
+            occupational_aspiration(CRAFTING_INCLINED, &mut rng),
+            Some(Aspiration::Artisan | Aspiration::Blacksmith)
+        ));
+        far.people[0].goals.clear();
+        far.agents.traits[0] = CRAFTING_INCLINED;
+        for day in 1..=30 {
+            far.tick = day * rest::DAY_TICKS;
+            far.refresh_occupation_goals(0);
+            if far.has_goal(0, GoalKind::Tool) {
+                break;
+            }
+        }
+        assert!(far.has_goal(0, GoalKind::Craft));
+        assert!(far.has_goal(0, GoalKind::Tool));
+    }
+
+    #[test]
     fn aspiration_and_goal_are_contextual_brain_inputs() {
         let mut w = World::new(1, 42).unwrap();
         w.people[0].aspiration = Aspiration::Blacksmith;
@@ -403,6 +508,7 @@ pub enum GoalKind {
     Transport,
     Hunt,
     BusinessLoan,
+    Weapon,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Goal {
@@ -512,6 +618,14 @@ impl World {
             if r.index(2) == 0 {
                 self.agents.traits[i] |= [SOCIALITE, GREGARIOUS, COMMUNITY_MINDED][r.index(3)];
             }
+            if r.index(4) == 0 {
+                self.agents.traits[i] |= [HUNTING_INCLINED, CRAFTING_INCLINED][r.index(2)];
+            }
+            if r.index(3) != 0 {
+                if let Some(aspiration) = occupational_aspiration(self.agents.traits[i], &mut r) {
+                    self.people[i].aspiration = aspiration;
+                }
+            }
             self.matches.push(NONE);
             self.refresh_goals(i);
         }
@@ -617,6 +731,7 @@ impl World {
             GoalKind::Produce => self.urban_progress(i).made,
             GoalKind::Transport => self.urban_progress(i).hauled,
             GoalKind::Hunt => self.urban_progress(i).hunted,
+            GoalKind::Weapon => u64::from(self.has_hunting_weapon(i)),
             GoalKind::Save => self.agents.coins[i],
             GoalKind::Job => p.jobs,
             GoalKind::Craft => p.crafts,
@@ -652,6 +767,64 @@ impl World {
             created: self.tick,
         });
     }
+    pub(super) fn has_goal(&self, i: usize, kind: GoalKind) -> bool {
+        self.people[i]
+            .goals
+            .iter()
+            .any(|g| g.kind == kind && self.tick < g.expires)
+    }
+
+    fn refresh_occupation_goals(&mut self, i: usize) {
+        // One independent draw per game day, so the refresh cadence cannot
+        // turn a small probability into a near guarantee.
+        if self.tick % rest::DAY_TICKS != 0 || self.people[i].goals.len() >= 5 {
+            return;
+        }
+        let day = self.tick / rest::DAY_TICKS;
+        let mut rng = Rng(self.seed
+            ^ (i as u64).wrapping_mul(0x517cc1b727220a95)
+            ^ day.wrapping_mul(0x9e3779b97f4a7c15)
+            ^ 0x48414e4449435241);
+        let traits = self.agents.traits[i];
+        if self.map.spec.size != MapSize::Classic {
+            let interested = traits & HUNTING_INCLINED != 0;
+            let proximity = self.hunting_proximity(i);
+            let hunt_chance = 0.005 + 0.20 * proximity + if interested { 0.10 } else { 0.0 };
+            if rng.unit() < hunt_chance {
+                self.add_goal(i, GoalKind::Hunt, 10);
+            }
+            let hunting = self.has_goal(i, GoalKind::Hunt);
+            let weapon_chance = if hunting {
+                if interested {
+                    0.80
+                } else {
+                    0.60
+                }
+            } else {
+                0.01 * proximity
+            };
+            if !self.has_hunting_weapon(i) && rng.unit() < weapon_chance {
+                self.add_goal(i, GoalKind::Weapon, 10);
+            }
+        }
+        let craftsman = traits & CRAFTING_INCLINED != 0;
+        if craftsman && rng.unit() < 0.22 {
+            let goal = if self.people[i].aspiration == Aspiration::Artisan {
+                GoalKind::Produce
+            } else {
+                GoalKind::Craft
+            };
+            self.add_goal(i, goal, 10);
+        }
+        let crafting = self.has_goal(i, GoalKind::Craft) || self.has_goal(i, GoalKind::Produce);
+        if crafting
+            && self.agents.tools[i].contains(&0)
+            && rng.unit() < if craftsman { 0.75 } else { 0.50 }
+        {
+            self.add_goal(i, GoalKind::Tool, 10);
+        }
+    }
+
     fn refresh_goals(&mut self, i: usize) {
         if !self.is_adult(i) {
             return;
@@ -693,6 +866,7 @@ impl World {
                 30
             },
         );
+        self.refresh_occupation_goals(i);
         if self.people[i].goals.len() < 3 {
             let choice = ((self.seed ^ i as u64 ^ self.tick / 50) % 7) as usize;
             self.add_goal(
@@ -911,7 +1085,16 @@ impl World {
                 GoalKind::Trade => {
                     matches!(action, Action::Trade | Action::Deliver | Action::Barter)
                 }
-                GoalKind::Tool => matches!(action, Action::BuyTool | Action::EquipTool),
+                GoalKind::Tool => matches!(
+                    action,
+                    Action::BuyTool | Action::EquipTool | Action::CraftTool
+                ),
+                GoalKind::Weapon => {
+                    matches!(action, Action::CraftSpear | Action::CraftBow)
+                        || action == Action::Gather
+                            && kind == 1
+                            && (self.agents.cargo_kind[i] != 1 || self.agents.cargo[i] < 2)
+                }
                 GoalKind::Child => action == Action::CareFamily,
                 GoalKind::Harvest => action == Action::HarvestRice,
                 GoalKind::Teach => action == Action::Teach,
@@ -919,7 +1102,7 @@ impl World {
                 GoalKind::LeaseShop => action == Action::LeaseBusiness,
                 GoalKind::Produce => action == Action::OperateBusiness,
                 GoalKind::Transport => action == Action::UrbanWork,
-                GoalKind::Hunt => action == Action::Hunt,
+                GoalKind::Hunt => matches!(action, Action::Hunt | Action::HuntWildlife),
             };
             if aligns {
                 x[33] = 1.0;
@@ -1084,6 +1267,9 @@ impl World {
                 .schools
                 .get(a.target[i] as usize)
                 .map(|s| (s.x, s.y)),
+            Action::Socialize if a.target[i] == NONE => {
+                self.markets.get(a.home[i] as usize).map(|m| (m.x, m.y))
+            }
             Action::Socialize | Action::BuildTavern => {
                 self.taverns.get(a.target[i] as usize).map(|t| (t.x, t.y))
             }
@@ -1119,14 +1305,8 @@ impl World {
             return;
         };
         let d = dist(self.agents.x[i], self.agents.y[i], x, y);
-        // A destination in open water (a fish patch, say) can be worked
-        // from the bank within a short cast, the same reach Gather uses;
-        // without it walkers pin at the shoreline waiting for a 5-unit
-        // arrival that can never happen.
-        let reach = if self.map.spec.size != MapSize::Classic
-            && self.map.terrain_at(x, y) == Terrain::Water
-        {
-            24.0
+        let reach = if action == Action::ForageMeal {
+            self.patch_reach(self.agents.target[i] as usize, 5.0)
         } else {
             5.0
         };
@@ -1148,6 +1328,9 @@ impl World {
                     self.forage_memory.cancel(i);
                     return;
                 };
+                if dist(self.agents.x[i], self.agents.y[i], patch.x, patch.y) > reach {
+                    return;
+                }
                 let kind = patch.kind;
                 if patch.stock == 0 {
                     self.forage_memory
@@ -1168,6 +1351,7 @@ impl World {
                 self.ledger.consumed[kind] += 1;
                 self.people[i].meals += 1;
                 self.agents.hunger[i] = (self.agents.hunger[i] - 40.0).max(0.0);
+                self.restore_meal_energy(i);
                 self.agents.timer[i] = 0.0;
             }
             Action::StoreCargo => {
@@ -1467,18 +1651,24 @@ impl World {
             (self.agents.traits[mother] | self.agents.traits[father]) & !education::EDUCATED;
         let shared = self.agents.traits[mother] & self.agents.traits[father] & !education::EDUCATED;
         let mut inherited = shared;
-        for bit in 0..10 {
+        for bit in 0..13 {
             let flag = 1u16 << bit;
             if union & flag != 0 && self.rng.index(2) == 0 {
                 inherited |= flag;
             }
         }
         if inherited == 0 && union != 0 {
-            let options: Vec<u16> = (0..10)
+            let options: Vec<u16> = (0..13)
                 .map(|bit| 1u16 << bit)
                 .filter(|flag| union & flag != 0)
                 .collect();
             inherited = options[self.rng.index(options.len())];
+        }
+        let mut occupation_rng = Rng(self.seed ^ id as u64 ^ 0x4f43435550415449);
+        if occupation_rng.index(3) != 0 {
+            if let Some(aspiration) = occupational_aspiration(inherited, &mut occupation_rng) {
+                person.aspiration = aspiration;
+            }
         }
         self.agents.traits[id] = inherited;
         self.social.push(0.0);
@@ -1505,6 +1695,8 @@ impl World {
         let p = &self.people[i];
         let traits = [
             (education::EDUCATED, "Educated"),
+            (HUNTING_INCLINED, "Hunting inclined"),
+            (CRAFTING_INCLINED, "Crafting inclined"),
             (SOCIALITE, "Socialite"),
             (GREGARIOUS, "Gregarious"),
             (COMMUNITY_MINDED, "Community minded"),

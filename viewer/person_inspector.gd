@@ -29,7 +29,15 @@ static func describe(info: Dictionary, state: Dictionary) -> String:
 	var leadership_award: Variant = person.get("leadership_award")
 	if leadership_award is Dictionary:
 		text += "Happiness %.0f · base %.0f · leadership +%s for %.0f more days\n" % [float(person.happiness), float(person.base_happiness), int(leadership_award.amount), maxf(0.0, (float(leadership_award.expires) - float(state.get("tick", 0))) / 3000.0)]
+	var priorities: Array = person.get("need_priorities", [])
+	if not priorities.is_empty():
+		text += "[color=#a8cea0]NEED PRIORITIES[/color]\n"
+		for priority in priorities:
+			text += "%s %.0f%% %s\n" % [priority.need, float(priority.urgency) * 100.0, "· recovery overrides other activities" if priority.get("critical", false) else ""]
+		text += "\n"
 	text += "Carrying %s / %s weight · wallet weighs 1 when nonempty\n" % [info.get("carried_weight",0),info.get("capacity",0)]
+	if int(person.get("carried_meat", 0)) > 0:
+		text += "Carried meat · %s portions\n" % int(person.carried_meat)
 	text += "Rested %.0f/100 / %s / %s\n%s\n" % [float(info.get("rested_meter",0)),"RESTED BUFF" if info.get("rested",false) else "Unrested","SLEEPING" if info.get("sleeping",false) else "Awake",str(info.get("rest_location",""))]
 	if info.get("job") is Dictionary:
 		var job: Dictionary = info.job
@@ -46,6 +54,8 @@ static func describe(info: Dictionary, state: Dictionary) -> String:
 	var decision = info.get("last_decision")
 	if decision is Dictionary:
 		text += "\nLast decision at tick %s: %s (target %s)\n" % [decision.decision_tick,decision.action,decision.target]
+		if decision.get("outcome") != null and decision.action in ["HuntWildlife", "EatCarcass", "CraftSpear", "CraftBow", "CollectMeat", "SellMeat", "BuyMeat", "BuyInformation", "SellInformation"]:
+			text += "Outcome: %s at tick %s\n" % [str(decision.outcome).replace("_", " "), int(decision.resolution_tick)]
 		if decision.get("candidate_counts") is Dictionary:
 			for family in decision.candidate_counts:
 				var totals = decision.candidate_counts[family]

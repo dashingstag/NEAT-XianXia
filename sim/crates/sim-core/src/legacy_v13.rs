@@ -1,4 +1,11 @@
 //! Explicit schema-13 reader: preserves learned relationships and restores the original hill.
+//! Live types this schema trusts: Banking, Compiled, Contract, Convoy, Corpse, Council
+//!   Education, Farm, FertileRegion, Genome, Graveyard, Innovations, Ledger, Patch, Person
+//!   Relationships, Rng, Road, Shelter, Statistics, Tavern, Urban, Wildlife
+//! — all still shared with the live schema (agents and markets already
+//! have frozen twins). A serde-layout change to one reinterprets this
+//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
+//! first — freeze a Legacy twin before changing the type.
 //! Serialized layouts are frozen here. Changing a live type must not alter these readers.
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -83,8 +83,8 @@ pub struct Ship {
 }
 
 /// A routed land detour a stalled mover follows around water. `path`
-/// empty marks a recent failed lookup: the mover retries the router
-/// only after a long backoff instead of every stall tick.
+/// with one point records a completed route lookup and its destination.
+/// An empty path is a legacy lookup without a recorded destination.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Detour {
     pub path: Vec<(f32, f32)>,
@@ -93,6 +93,16 @@ pub struct Detour {
     /// projections of adjacent segments.
     pub progress: f32,
     pub attempt: u64,
+}
+
+impl Detour {
+    fn has_route(&self) -> bool {
+        self.path.len() >= 2
+    }
+
+    fn matches_destination(&self, x: f32, y: f32) -> bool {
+        self.path.last().is_some_and(|&(tx, ty)| dist(x, y, tx, ty) <= 48.0)
+    }
 }
 
 /// Water-route reporting state. Persisted so pending reports survive
@@ -393,7 +403,7 @@ mod tests {
             w.walk_toward(0, tx, ty, 4.0);
         }
         assert!(
-            matches!(w.water.detours.get(&0), Some(d) if !d.path.is_empty()),
+            matches!(w.water.detours.get(&0), Some(d) if d.has_route()),
             "stalled walker should have been routed around the lake"
         );
         // Following the detour must actually reach the far shore.
@@ -417,6 +427,44 @@ mod tests {
             w.agents.y[0]
         );
     }
+    #[test]
+    fn detour_failure_backoff_follows_the_destination_through_save() {
+        let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
+        let (x, y) = (w.agents.x[0], w.agents.y[0]);
+        let r = w.map.raster();
+        let wet = r.terrain.iter().enumerate()
+            .find(|&(at, &terrain)| {
+                let wx = (at % r.cols) as f32 * r.cell + r.cell * 0.5;
+                let wy = (at / r.cols) as f32 * r.cell + r.cell * 0.5;
+                terrain == Terrain::Water as u8 && dist(x, y, wx, wy) > 100.0
+            })
+            .unwrap().0;
+        let wx = (wet % r.cols) as f32 * r.cell + r.cell * 0.5;
+        let wy = (wet / r.cols) as f32 * r.cell + r.cell * 0.5;
+        w.agents.hunger[0] = 60.0;
+        w.agents.action[0] = Action::ForageMeal;
+        w.agents.target[0] = 0;
+        w.tick = 500;
+        w.compute_detour(0, x, y, wx, wy);
+        assert!(w.target_unreachable(0, Action::ForageMeal, 0));
+        assert!(!w.water.detours[&0].has_route());
+
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-detour-destination-{}.snapshot", std::process::id()
+        ));
+        w.save(&path).unwrap();
+        let mut w = World::load(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        w.tick = 580;
+        w.compute_detour(0, x, y, wx, wy);
+        assert_eq!(w.water.detours[&0].attempt, 500);
+
+        w.agents.target[0] = 1;
+        w.compute_detour(0, x, y, x, y);
+        assert_eq!(w.water.detours[&0].attempt, 580);
+        assert!(!w.target_unreachable(0, Action::ForageMeal, 1));
+    }
+
     #[test]
     fn full_report_queue_still_detours_stranders() {
         // Regression: the 256-entry cap on carried reports used to gate
@@ -468,7 +516,7 @@ mod tests {
             w.walk_toward(0, tx, ty, 4.0);
         }
         assert!(
-            matches!(w.water.detours.get(&0), Some(d) if !d.path.is_empty()),
+            matches!(w.water.detours.get(&0), Some(d) if d.has_route()),
             "a saturated report queue must not disable stall probes or detours"
         );
     }
@@ -1875,7 +1923,7 @@ impl World {
                 .water
                 .detours
                 .get(&key)
-                .is_some_and(|d| !d.path.is_empty())
+                .is_some_and(|d| d.has_route())
         {
             return self.detour_target(key, x, y, gx, gy);
         }
@@ -2533,7 +2581,7 @@ impl World {
     /// routed for a different destination.
     fn detour_target(&mut self, key: u32, x: f32, y: f32, tx: f32, ty: f32) -> (f32, f32) {
         let path_len = match self.water.detours.get(&key) {
-            Some(d) if !d.path.is_empty() => d.path.len(),
+            Some(d) if d.has_route() => d.path.len(),
             _ => return (tx, ty),
         };
         // Stale only when the mover's destination changed; a "clear shot"
@@ -2639,7 +2687,9 @@ impl World {
         let starving_agent = key & 0x8000_0000 == 0
             && self.agents.convoy[key as usize] == NONE
             && self.agents.hunger[key as usize] > 55.0;
-        if starving_agent
+        let routing_for_report = key & 0x8000_0000 == 0
+            && self.water.pending.iter().any(|report| report.agent == key);
+        if starving_agent && !routing_for_report
             && self.target_unreachable(
                 key as usize,
                 self.agents.action[key as usize],
@@ -2652,22 +2702,27 @@ impl World {
         if let Some(d) = self.water.detours.get(&key) {
             // Unreachable marks back off for ~2400 ticks; a live detour that
             // still has the mover stalled reroutes sooner from its new spot.
-            let retry = if d.path.is_empty() { 2400 } else { 480 };
+            let retry = match (d.has_route(), d.matches_destination(tx, ty), d.path.is_empty()) {
+                (true, true, _) => 480,
+                (false, true, _) => 2400,
+                (_, _, true) if !starving_agent => 2400,
+                _ => 80,
+            };
             if self.tick.saturating_sub(d.attempt) < retry {
                 return;
             }
-            reroute_live = !d.path.is_empty();
+            reroute_live = d.has_route() && d.matches_destination(tx, ty);
         } else if self.water.detours.len() >= 512 {
             // Router saturated: a starving strander locked out of the A*
             // would re-pick the same unreachable target until it dies.
             // The advisory block expires, so a later open slot can still
             // prove reachability; fed movers keep pressing meanwhile.
-            if starving_agent {
+            if starving_agent && !routing_for_report {
                 self.record_unreachable(key);
             }
             return;
         }
-        if reroute_live && starving_agent {
+        if reroute_live && starving_agent && !routing_for_report {
             // One routed shot while starving: a detour that expired its
             // retry with the mover still pinned has already failed. Mark
             // the target so the hunger offer redirects to nearer food.
@@ -2675,7 +2730,7 @@ impl World {
             self.water.detours.insert(
                 key,
                 Detour {
-                    path: Vec::new(),
+                    path: vec![(tx, ty)],
                     progress: 0.0,
                     attempt: self.tick,
                 },
@@ -2693,11 +2748,11 @@ impl World {
                     },
                 );
             }
-            _ => {
+            route => {
                 self.water.detours.insert(
                     key,
                     Detour {
-                        path: Vec::new(),
+                        path: vec![(tx, ty)],
                         progress: 0.0,
                         attempt: self.tick,
                     },
@@ -2705,7 +2760,8 @@ impl World {
                 // A failed A* is proof this walker's destination cannot be
                 // reached dry: record its current (action, target) so the
                 // decision layer can steer a starving mover elsewhere.
-                if key & 0x8000_0000 == 0 && self.agents.convoy[key as usize] == NONE {
+                if route.is_none() && !routing_for_report
+                    && key & 0x8000_0000 == 0 && self.agents.convoy[key as usize] == NONE {
                     self.record_unreachable(key);
                 }
             }

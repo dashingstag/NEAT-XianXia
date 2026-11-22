@@ -11,7 +11,7 @@ Use Python 3.11 or later, Rust/Cargo 1.99.1, Godot 4.6.3 standard and Node 24 fo
 ```text
 python tools/dev.py doctor
 python tools/dev.py play
-python tools/dev.py test all
+python testing/run.py test all
 ```
 
 The launcher opens a paused world or resumes the last explicitly saved world. Use **Run** to start and **Save** before closing the viewer. See [player and release instructions](docs/PLAY.md).
@@ -36,6 +36,8 @@ The viewer shows the latest merged PR and the running commit in its header and w
 
 ## Check a change
 
+Start in the [testing folder](testing/README.md) for checks, benchmarks, replay, and queued runs.
+
 | Command after `python tools/dev.py` | Evidence |
 |---|---|
 | `test isolation` | Two distinct backends reset and save their worlds. An intentional interruption closes one while the other loads and advances. |
@@ -53,7 +55,7 @@ Add `--background` to a test, benchmark, or simulation soak to get your
 terminal back while it runs.
 
 ```text
-python tools/dev.py test all --background
+python testing/run.py test all --background
 python tools/dev.py soak --map x4 --seeds 5 --steps 5475000 --background
 ```
 

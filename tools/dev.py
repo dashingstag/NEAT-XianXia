@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = tomllib.loads((ROOT / "project.toml").read_text())
 SCENARIOS = tomllib.loads((ROOT / CONFIG["project"]["world"]).read_text())
 CONTRACT = CONFIG["contracts"]
-sys.path.insert(0, str(ROOT / "tools/experiments"))
+sys.path.insert(0, str(ROOT / "testing/protocol"))
 FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -265,7 +265,7 @@ def package(run):
     stage = run / "xianxia"
     (stage / "bin").mkdir(parents=True)
     shutil.copy2(backend(), stage / "bin")
-    for name in ["viewer", "tools", "world", "fixtures"]:
+    for name in ["viewer", "tools", "testing", "world", "fixtures"]:
         shutil.copytree(ROOT / name, stage / name, ignore=shutil.ignore_patterns(".godot", "__pycache__"))
     for name in ["project.toml", "README.md", "LICENSE"]:
         shutil.copy2(ROOT / name, stage)
@@ -306,7 +306,7 @@ def start_background(run, arguments):
     source = run / "source"
     source.mkdir()
     ignore = shutil.ignore_patterns("target", ".godot", "node_modules", "__pycache__", ".work")
-    for directory in ("sim", "viewer", "world", "tools", "fixtures", "labs"):
+    for directory in ("sim", "viewer", "world", "tools", "testing", "fixtures", "labs"):
         shutil.copytree(ROOT / directory, source / directory, ignore=ignore)
     shutil.copy2(ROOT / "project.toml", source)
     env = {**os.environ, "XIANXIA_BACKGROUND_RUN": str(run), "CARGO_TARGET_DIR": str(run / "target")}

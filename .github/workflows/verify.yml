@@ -34,7 +34,7 @@ jobs:
           "GODOT_BIN=$($exe.FullName)" >> $env:GITHUB_ENV
       - run: python tools/dev.py doctor
       - run: python tools/sync_skills.py --check
-      - run: python tools/dev.py test all
+      - run: python testing/run.py test all
       - run: python tools/dev.py package
       - uses: actions/upload-artifact@v4
         if: always()

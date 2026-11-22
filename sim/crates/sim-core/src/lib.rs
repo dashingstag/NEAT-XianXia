@@ -137,6 +137,23 @@ pub enum Action {
     MigrateToCamp = 68,
     DeliverWaterReport = 69,
 }
+impl Action {
+    /// Activity shown on the wire: frames pack the action into six bits, so
+    /// variants at 64+ must be mapped to a legacy activity here — the
+    /// `every_action_remapped_below_the_six_bit_wire_budget` test enforces
+    /// that this match covers every such variant.
+    pub fn wire(self) -> Action {
+        match self {
+            Action::BuyInformation | Action::SellInformation | Action::DiscussCamp => {
+                Action::Socialize
+            }
+            Action::NominateSelf | Action::MigrateToCamp | Action::DeliverWaterReport => {
+                Action::Wait
+            }
+            action => action,
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Agents {
     pub x: Vec<f32>,
@@ -3448,13 +3465,7 @@ impl World {
             out.extend((i as u32).to_le_bytes());
             out.extend(self.agents.x[i].to_le_bytes());
             out.extend(self.agents.y[i].to_le_bytes());
-            let wire_action = match self.agents.action[i] {
-                Action::BuyInformation | Action::SellInformation | Action::DiscussCamp => {
-                    Action::Socialize
-                }
-                Action::NominateSelf | Action::MigrateToCamp | Action::DeliverWaterReport => Action::Wait,
-                action => action,
-            };
+            let wire_action = self.agents.action[i].wire();
             out.push(
                 wire_action as u8
                     | if self.agents.rested[i] { 64 } else { 0 }
@@ -3946,6 +3957,40 @@ mod tests {
         assert_eq!(a.markets, b.markets);
         assert_eq!(a.rng, b.rng);
         std::fs::remove_file(path).unwrap();
+    }
+    /// Every Action variant must have a wire encoding below the six-bit
+    /// budget after Action::wire() — variants at repr 64+ with no remap arm
+    /// would silently corrupt the rested(64)/grouped(128) flag bits.
+    #[test]
+    fn every_action_remapped_below_the_six_bit_wire_budget() {
+        let mut decoded = 0usize;
+        for index in 0..128u8 {
+            let Ok(action) = postcard::from_bytes::<Action>(&[index]) else {
+                break;
+            };
+            decoded += 1;
+            assert!(
+                (action.wire() as u8) < 64,
+                "{action:?} (repr {}) has no legacy wire mapping",
+                action as u8
+            );
+        }
+        // Bump the count when appending variants — and keep wire() covering
+        // any repr 64+.
+        assert_eq!(decoded, 54);
+    }
+    /// Postcard stores the declaration index, not the repr. The release-
+    /// format remap keys off indices 39-41 decoding to these variants;
+    /// inserting or reordering variants above them silently mis-decodes
+    /// every release save's action column.
+    #[test]
+    fn release_remap_declaration_indices_are_pinned() {
+        assert_eq!(
+            postcard::to_allocvec(&Action::HuntWildlife).unwrap(),
+            vec![39u8]
+        );
+        assert_eq!(postcard::to_allocvec(&Action::EatCarcass).unwrap(), vec![40u8]);
+        assert_eq!(postcard::to_allocvec(&Action::CraftSpear).unwrap(), vec![41u8]);
     }
     #[test]
     fn release_checkpoints_restore_their_original_action_indices() {

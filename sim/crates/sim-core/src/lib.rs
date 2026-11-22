@@ -55,6 +55,9 @@ pub use travel::{Ship, TrafficState, WaterState};
 pub const DT: f32 = 0.1;
 pub const GOODS: usize = 13;
 pub const CANDIDATES: usize = 64;
+/// Settlements a checkpoint can hold; the wire encodes home markets in one
+/// byte and settlement founding stops below this so saves always reload.
+pub const MAX_MARKETS: usize = 64;
 pub const WEIGHTS: [u32; GOODS] = [1, 4, 3, 2, 5, 4, 3, 4, 1, 4, 5, 3, 4];
 pub const MINT_VALUES: [u64; GOODS] = [0, 0, 0, 0, 100, 10, 1, 0, 0, 0, 0, 0, 0];
 pub const PRODUCTS: [&str; GOODS] = [
@@ -1004,6 +1007,7 @@ impl World {
             .collect()
     }
     pub fn check(&self) -> Result<(), String> {
+        self.validate_schema()?;
         for a in self.accounts() {
             if a.error != 0 {
                 return Err(format!("{} conservation error {}", a.product, a.error));
@@ -3064,7 +3068,11 @@ impl World {
             }
         }
     }
-    fn validate(&self) -> Result<(), String> {
+    /// The serialized-schema invariant sweep: pool lengths, capacity and
+    /// index bounds a world must satisfy to reload. `validate()` gates load
+    /// with it and `check()` applies it at runtime too, so a world that can
+    /// be saved can also be reloaded.
+    fn validate_schema(&self) -> Result<(), String> {
         let n = self.agents.len();
         let a = &self.agents;
         let lengths = [
@@ -3112,7 +3120,7 @@ impl World {
             || n == 0
             || n > 1_200_000
             || lengths.iter().any(|l| *l != n)
-            || !(3..=64).contains(&self.markets.len())
+            || !(3..=MAX_MARKETS).contains(&self.markets.len())
         {
             return Err("Invalid checkpoint schema or pool lengths".into());
         }
@@ -3151,6 +3159,10 @@ impl World {
         if membership != a.convoy {
             return Err("Orphan convoy membership".into());
         }
+        Ok(())
+    }
+    fn validate(&self) -> Result<(), String> {
+        self.validate_schema()?;
         self.validate_rest()?;
         self.validate_jobs()?;
         self.validate_people()?;

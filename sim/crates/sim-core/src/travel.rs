@@ -666,6 +666,109 @@ mod tests {
         );
     }
     #[test]
+    fn short_blocked_hops_route_at_trip_start_too() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        // A short hop — past one 24u probe window but under the old 96u
+        // gate — is where most shoreline grinding lived: local trips
+        // across a cove stalled the full 240 ticks before routing.
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if bx - ax > 24.0
+                        && bx - ax <= 90.0
+                        && matches!(
+                            w.route_between(ax, y, bx, y),
+                            Some(p) if p.len() >= 2
+                        )
+                    {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        w.walk_toward(0, tx, ty, 4.0);
+        assert!(
+            w.water
+                .detours
+                .get(&0)
+                .is_some_and(|d| d.matches_destination(tx, ty)),
+            "a short water-blocked hop should be routed at trip start too"
+        );
+    }
+    #[test]
+    fn departed_convoys_route_around_water_at_trip_start() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if bx - ax > 100.0
+                        && matches!(
+                            w.route_between(ax, y, bx, y),
+                            Some(p) if p.len() >= 3
+                        )
+                    {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.convoy[0] = 0;
+        w.agents.convoy[1] = 0;
+        w.convoys = vec![Some(Convoy {
+            members: vec![0, 1],
+            x,
+            y,
+            goal_x: tx,
+            goal_y: ty,
+            created: w.tick,
+            departed: true,
+        })];
+        // One convoy step: the stall probe has no history yet, but a
+        // water-blocked caravan is already routed along dry waypoints.
+        w.travel_step();
+        assert!(
+            w.water
+                .detours
+                .get(&0x8000_0000)
+                .is_some_and(|d| d.matches_destination(tx, ty) && d.has_route()),
+            "a departed convoy should be routed at trip start, not after stalling"
+        );
+    }
+    #[test]
     fn detour_failure_backoff_follows_the_destination_through_save() {
         let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
         let (x, y) = (w.agents.x[0], w.agents.y[0]);
@@ -3290,14 +3393,15 @@ impl World {
             self.water.progress.resize(i + 1, None);
         }
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
-        // Route at trip start, not after the stall: a distant destination
-        // gets a staggered line check — clear lines store nothing and are
-        // rechecked ~64 ticks later, while a water-blocked trip walks dry
-        // waypoints from its first steps instead of grinding the shore
-        // until the probe fires. Entries therefore only exist for trips
-        // the router actually had to answer, so the detour map serves
-        // real demand instead of clear-shot lookups.
-        if dist(x, y, tx, ty) > 96.0
+        // Route at trip start, not after the stall: any destination past
+        // one progress-probe window gets a staggered line check — clear
+        // lines store nothing and are rechecked ~64 ticks later, while a
+        // water-blocked trip walks dry waypoints from its first steps
+        // instead of grinding the shore until the probe fires. Entries
+        // therefore only exist for trips the router actually had to
+        // answer, so the detour map serves real demand instead of
+        // clear-shot lookups.
+        if dist(x, y, tx, ty) > 24.0
             && !self.water.detours.contains_key(&(i as u32))
             && (self.tick + i as u64) % 64 == 0
             && !self.clear_shot(x, y, tx, ty)
@@ -3754,6 +3858,17 @@ impl World {
                     c.y = ny;
                 }
                 if self.map.spec.size != MapSize::Classic {
+                    // Route at trip start like walkers do: a caravan whose
+                    // direct line crosses water picks up dry waypoints
+                    // immediately instead of grinding the shore until the
+                    // 240-tick probe below fires.
+                    if d > 24.0
+                        && !self.water.detours.contains_key(&key)
+                        && (self.tick + slot as u64) % 64 == 0
+                        && !self.clear_shot(c.x, c.y, c.goal_x, c.goal_y)
+                    {
+                        self.compute_detour(key, c.x, c.y, c.goal_x, c.goal_y);
+                    }
                     match self.water.convoy_probe.get(&(slot as u32)).copied() {
                         Some((px, py, since)) if dist(c.x, c.y, px, py) >= 24.0 => {
                             // Sliding along a shore is not progress — only

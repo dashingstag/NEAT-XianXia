@@ -1,5 +1,7 @@
 # Districts, property and private industry
 
+Historical prototype notes. The save-format numbers, paths and command examples below describe an earlier implementation snapshot; they are not current compatibility claims or run instructions. Use the [root README](../README.md) for current commands and the [contract notes](../contracts/README.md) for supported save formats.
+
 The native Rust simulation owns all decisions, property, money, inventories and contracts. Godot displays snapshots and sends player commands. `crates/sim-core/src/urban.rs` contains the new system; the existing council and individual NEAT evaluators rank its feasible actions alongside previous activities.
 
 ## Rules in this prototype

@@ -47,7 +47,7 @@ The viewer shows the latest merged PR and the running commit in its header and w
 | `bench --scenario mature-town` | Headless step timings on a populated town. Viewer frame time requires a separate graphics run. |
 | `package` | Runtime ZIP containing the backend, Godot project, launcher and release metadata. Requires Python and Godot on the target machine. |
 
-Every command prints its own evidence directory under `.work/`. Override with `XIANXIA_RUNS`. Build artifacts follow Cargo's normal target-directory settings. See [agent instructions](AGENTS.md), [compatibility contract](contracts/README.md), and [handoff status](docs/HANDOFF.md). Earlier plans and prototype notes in docs are historical context.
+Every command prints its own evidence directory under `.work/`. Override with `XIANXIA_RUNS`. Build artifacts follow Cargo's normal target-directory settings. See [agent instructions](AGENTS.md), [compatibility contract](contracts/README.md), and the [historical import handoff](docs/HANDOFF.md). Earlier plans and prototype notes in docs are historical context.
 
 Add `--background` to a test, benchmark, or simulation soak to get your
 terminal back while it runs.

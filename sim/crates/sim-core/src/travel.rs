@@ -1757,6 +1757,42 @@ mod tests {
     }
 
     #[test]
+    fn founding_stops_at_the_checkpoint_market_bound() {
+        let mut w = World::new(8, 42).unwrap();
+        // Saturate markets below the load gate; the founding branch must
+        // refuse new camps so every savable world still passes 3..=64.
+        while w.markets.len() < crate::MAX_MARKETS {
+            let mut m = w.markets[0].clone();
+            m.id = w.markets.len() as u32;
+            m.y = 1800.0 - w.markets.len() as f32;
+            m.coins = 0;
+            m.goods = std::array::from_fn(|_| VecDeque::new());
+            m.quotes = std::array::from_fn(|_| Quote::default());
+            w.markets.push(m);
+        }
+        w.patches[0].x = 330.0;
+        w.patches[0].y = 180.0;
+        for i in 0..8 {
+            w.agents.x[i] = 330.0;
+            w.agents.y[i] = 180.0;
+            w.agents.coins[i] = w.agents.coins[i].max(2);
+            w.agents.berries[i] = w.agents.berries[i].max(2);
+            w.agents.cargo_kind[i] = 1;
+            w.agents.cargo[i] = 2;
+            w.agents.action[i] = Action::Gather;
+            w.agents.dwell_cell[i] = 3 + 4096;
+            w.agents.dwell_ticks[i] = 120;
+            w.agents.target[i] = 0;
+        }
+        w.ledger.initial = w.stocks();
+        w.tick = 10;
+        w.settlement_step();
+        assert_eq!(w.markets.len(), crate::MAX_MARKETS);
+        assert_eq!(w.stats.camps_founded, 0);
+        w.check().unwrap();
+    }
+
+    #[test]
     fn passing_crowds_do_not_found_camps_but_local_workers_can() {
         let mut w = World::new(8, 42).unwrap();
         w.patches[0].x = 330.0;
@@ -3789,7 +3825,7 @@ impl World {
             return;
         }
         for ids in groups.values() {
-            if self.markets.len() >= 64 || ids.len() < 8 {
+            if self.markets.len() >= crate::MAX_MARKETS || ids.len() < 8 {
                 continue;
             }
             let x = ids.iter().map(|&i| self.agents.x[i]).sum::<f32>() / ids.len() as f32;

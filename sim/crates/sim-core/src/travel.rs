@@ -769,6 +769,130 @@ mod tests {
         );
     }
     #[test]
+    fn stalled_convoy_near_goal_dissolves_for_solo_finish() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let (x, y) = ((r.cols / 2) as f32 * r.cell, (r.rows / 2) as f32 * r.cell);
+        let (tx, ty) = (x + 30.0, y);
+        w.agents.convoy[0] = 0;
+        w.agents.convoy[1] = 0;
+        w.convoys = vec![Some(Convoy {
+            members: vec![0, 1],
+            x,
+            y,
+            goal_x: tx,
+            goal_y: ty,
+            created: w.tick,
+            departed: true,
+        })];
+        // The caravan has made no 24u progress for longer than the probe
+        // threshold while sitting ~30u short of its goal.
+        w.tick = 241;
+        w.water.convoy_probe.insert(0, (x, y, 0));
+        w.travel_step();
+        assert!(
+            w.convoys[0].is_none(),
+            "a caravan stalled near its goal should release its members"
+        );
+        assert_eq!(w.agents.convoy[0], NONE);
+        assert_eq!(w.agents.convoy[1], NONE);
+        assert!(w.agents.solo_until[0] > w.tick);
+    }
+    #[test]
+    fn stalled_convoy_with_failed_route_dissolves_mid_route() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let (x, y) = ((r.cols / 2) as f32 * r.cell, (r.rows / 2) as f32 * r.cell);
+        let (tx, ty) = (x + 200.0, y);
+        w.agents.convoy[0] = 0;
+        w.agents.convoy[1] = 0;
+        w.convoys = vec![Some(Convoy {
+            members: vec![0, 1],
+            x,
+            y,
+            goal_x: tx,
+            goal_y: ty,
+            created: w.tick,
+            departed: true,
+        })];
+        // A completed lookup already failed to find dry waypoints — the
+        // marker would suppress re-routing for ~2400 ticks while the
+        // whole caravan waits frozen.
+        w.water.detours.insert(
+            0x8000_0000,
+            Detour {
+                path: vec![(tx, ty)],
+                progress: 0.0,
+                attempt: 0,
+            },
+        );
+        w.tick = 241;
+        w.water.convoy_probe.insert(0, (x, y, 0));
+        w.travel_step();
+        assert!(
+            w.convoys[0].is_none(),
+            "a caravan whose goal proved unroutable should release its members"
+        );
+        assert_eq!(w.agents.convoy[0], NONE);
+        assert!(w.agents.solo_until[0] > w.tick);
+    }
+    #[test]
+    fn stalled_convoy_with_routable_goal_keeps_its_caravan() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if bx - ax > 100.0
+                        && matches!(
+                            w.route_between(ax, y, bx, y),
+                            Some(p) if p.len() >= 3
+                        )
+                    {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.convoy[0] = 0;
+        w.agents.convoy[1] = 0;
+        w.convoys = vec![Some(Convoy {
+            members: vec![0, 1],
+            x,
+            y,
+            goal_x: tx,
+            goal_y: ty,
+            created: w.tick,
+            departed: true,
+        })];
+        w.tick = 241;
+        w.water.convoy_probe.insert(0, (x, y, 0));
+        w.travel_step();
+        let c = w.convoys[0]
+            .as_ref()
+            .expect("a stalled caravan that can still route keeps its members");
+        assert_eq!(c.members.len(), 2);
+        assert!(
+            w.water.detours[&0x8000_0000].path.len() >= 2,
+            "the stalled caravan should have been given dry waypoints"
+        );
+    }
+    #[test]
     fn detour_failure_backoff_follows_the_destination_through_save() {
         let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
         let (x, y) = (w.agents.x[0], w.agents.y[0]);
@@ -3889,7 +4013,31 @@ impl World {
                         Some((_, _, since))
                             if self.tick.saturating_sub(since) > 240 =>
                         {
+                            // A caravan stalled within ~48u of its goal
+                            // has done its job: members walk the last hop
+                            // solo, where their fine-grained steering and
+                            // per-agent routing handle pinches the convoy
+                            // router's 64u grid cannot — and lone
+                            // stranders file the reports that feed ports
+                            // instead of parading frozen on the shore.
+                            if d <= 48.0 {
+                                self.release(&c.members);
+                                continue;
+                            }
                             self.compute_detour(key, c.x, c.y, c.goal_x, c.goal_y);
+                            // No dry route to the goal at all — a failed
+                            // lookup marker — dissolves the caravan so
+                            // members retry as individuals rather than
+                            // waiting out the ~2400-tick route backoff.
+                            if self
+                                .water
+                                .detours
+                                .get(&key)
+                                .is_some_and(|d| !d.has_route())
+                            {
+                                self.release(&c.members);
+                                continue;
+                            }
                         }
                         Some(_) => {}
                         _ => {

@@ -3983,6 +3983,140 @@ mod tests {
         assert!(SaveVersion::parse(b"XXSAVE1x................").is_err());
         assert!(SaveVersion::parse(b"XXSAVE04").is_err());
     }
+    /// fixtures/dev-v34.snapshot is real binary output (the release
+    /// runner loaded bank-v12, stepped 75 ticks, re-saved as XXSAVE34).
+    /// It freezes the tuple+tails layout of the development family as
+    /// historical bytes: a World serde change that forgets to bump the
+    /// format — or a v34 tail-walk edit — fails here instead of passing
+    /// on synthesized same-build bytes.
+    #[test]
+    fn real_dev_format_fixture_loads_and_checks() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/dev-v34.snapshot"
+        );
+        let mut restored = World::load(Path::new(path)).unwrap();
+        restored.check().unwrap();
+        for _ in 0..3 {
+            restored.step(false);
+        }
+        restored.check().unwrap();
+    }
+    /// The development family (v20-29, 34) reads one base tuple then
+    /// walks a version-dependent tail chain. No real pre-34 bytes
+    /// survive (see fixtures/README.md), so this pins the per-version
+    /// tail order synthetically: write exactly the elements each
+    /// version's reader consumes, in order, and require the load to
+    /// place them. Reordering or dropping a tail element in the loader
+    /// — or a World layout change without a format bump — fails here.
+    #[test]
+    fn dev_format_tail_walk_is_pinned() {
+        let w = World::new(8, 17).unwrap();
+        let base = || {
+            postcard::to_allocvec(&(
+                &w,
+                &w.food_memory,
+                &w.forage_memory,
+                &w.work_memory,
+                &w.commitments,
+                &w.map,
+                (&w.explored, &w.carcasses),
+            ))
+            .unwrap()
+        };
+        let hunt = || {
+            postcard::to_allocvec(&(
+                &w.wildlife.spawns,
+                &w.wildlife.spears,
+                &w.wildlife.bows,
+                &w.wildlife.hunting_stats,
+            ))
+            .unwrap()
+        };
+        let meat = postcard::to_allocvec(&w.meat_trade).unwrap();
+        let info = postcard::to_allocvec(&w.market_information).unwrap();
+        let demand = postcard::to_allocvec(&w.meat_trade.demand).unwrap();
+        // Mirrors World::load's tail walk per version:
+        //   v20: nothing             v21: LegacyWildlifeSpawns
+        //   v22: spawns              v23: (spawns, spears)
+        //   v24-25: hunt4            v26: + meat_trade
+        //   v27: + (Option<OldReport>, Option<OldReport>)
+        //   v28: + market_information
+        //   v29: + demand after market_information
+        type OldReport = (u64, Vec<([Quote; GOODS], Quote)>);
+        let tails: Vec<(&[u8; 8], Vec<u8>)> = vec![
+            (b"XXSAVE20", vec![]),
+            (
+                b"XXSAVE21",
+                // LegacyWildlifeSpawns{points:[{forest,species,vacant}],spawned}
+                // — spawned must stay 0: at genesis every animal counts
+                // under the ecology ledger's initial_animals.
+                postcard::to_allocvec(&(vec![(0usize, 2u8, None::<u64>)], 0u64))
+                    .unwrap(),
+            ),
+            (b"XXSAVE22", postcard::to_allocvec(&w.wildlife.spawns).unwrap()),
+            (
+                b"XXSAVE23",
+                postcard::to_allocvec(&(&w.wildlife.spawns, &w.wildlife.spears))
+                    .unwrap(),
+            ),
+            (b"XXSAVE24", hunt()),
+            (b"XXSAVE25", hunt()),
+            (b"XXSAVE26", [hunt(), meat.clone()].concat()),
+            (
+                b"XXSAVE27",
+                [
+                    hunt(),
+                    meat.clone(),
+                    postcard::to_allocvec(&(None::<OldReport>, None::<OldReport>))
+                        .unwrap(),
+                ]
+                .concat(),
+            ),
+            (b"XXSAVE28", [hunt(), meat.clone(), info.clone()].concat()),
+            (
+                b"XXSAVE29",
+                [hunt(), meat.clone(), info.clone(), demand.clone()].concat(),
+            ),
+        ];
+        for (header, tail) in tails {
+            let mut raw = base();
+            raw.extend(tail);
+            let mut data = header.to_vec();
+            data.extend((raw.len() as u64).to_le_bytes());
+            data.extend(zstd::stream::encode_all(raw.as_slice(), 3).unwrap());
+            let path = std::env::temp_dir().join(format!(
+                "xianxia-{}-{}.snapshot",
+                std::str::from_utf8(&header[6..8]).unwrap(),
+                std::process::id()
+            ));
+            std::fs::write(&path, data).unwrap();
+            let restored = World::load(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            if matches!(
+                header,
+                b"XXSAVE22"
+                    | b"XXSAVE23"
+                    | b"XXSAVE24"
+                    | b"XXSAVE25"
+                    | b"XXSAVE26"
+                    | b"XXSAVE27"
+                    | b"XXSAVE28"
+                    | b"XXSAVE29"
+            ) {
+                assert_eq!(restored.wildlife.spawns, w.wildlife.spawns);
+            }
+            if header == b"XXSAVE21" {
+                assert_ne!(restored.wildlife.spawns, Default::default());
+            }
+            if header == b"XXSAVE29" {
+                assert_eq!(
+                    postcard::to_allocvec(&restored.meat_trade.demand).unwrap(),
+                    postcard::to_allocvec(&w.meat_trade.demand).unwrap()
+                );
+            }
+        }
+    }
     #[test]
     fn checkpoint_load_preserves_world_state_exactly() {
         // A current-format checkpoint must deserialize without running the

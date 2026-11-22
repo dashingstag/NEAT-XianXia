@@ -312,6 +312,7 @@ fn soak(o: &Options) -> Result<(), String> {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 enum Command {
+    StreamBuildings,
     ForgetFootpaths {
         segment: Option<[f32; 4]>,
     },
@@ -436,6 +437,8 @@ fn messages(buffer: &mut Vec<u8>) -> Result<Vec<Value>, String> {
     }
     Ok(messages)
 }
+const MAX_VIEWER_FRAME: usize = 4 * 1024 * 1024;
+
 fn frame(payload: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len() + 4);
     out.extend((payload.len() as u32).to_le_bytes());
@@ -448,6 +451,11 @@ struct Client {
     output: Vec<u8>,
     offset: usize,
     replies: VecDeque<Vec<u8>>,
+    stream_buildings: bool,
+    buildings: Vec<Value>,
+    building_updates: VecDeque<Vec<u8>>,
+    next_buildings: Instant,
+    oversize_reported: bool,
 }
 impl Client {
     fn new(stream: TcpStream) -> Result<Self, String> {
@@ -459,6 +467,11 @@ impl Client {
             output: vec![],
             offset: 0,
             replies: VecDeque::new(),
+            stream_buildings: false,
+            buildings: Vec::new(),
+            building_updates: VecDeque::new(),
+            next_buildings: Instant::now(),
+            oversize_reported: false,
         })
     }
     fn read(&mut self) -> Result<Vec<Value>, String> {
@@ -484,15 +497,65 @@ impl Client {
     fn reply_value(&mut self, value: Value) {
         let mut bytes = b"XNC1".to_vec();
         bytes.extend(serde_json::to_vec(&value).unwrap());
+        if bytes.len() > MAX_VIEWER_FRAME {
+            bytes = b"XNC1".to_vec();
+            bytes.extend_from_slice(br#"{"ok":false,"message":"Viewer reply exceeds the 4 MiB limit."}"#);
+        }
         if self.replies.len() >= 8 {
             self.replies.pop_front();
         }
         self.replies.push_back(frame(bytes));
     }
+    fn reset_buildings(&mut self) {
+        if self.stream_buildings {
+            self.buildings.clear();
+            self.building_updates.clear();
+            self.building_updates.push_back(frame(br#"XNC1{"building_count":0}"#.to_vec()));
+            self.next_buildings = Instant::now();
+        }
+    }
+
+    fn update_buildings(&mut self, world: &World, now: Instant) {
+        if !self.stream_buildings || now < self.next_buildings || !self.building_updates.is_empty() {
+            return;
+        }
+        self.next_buildings = now + Duration::from_secs(1);
+        let rows = world.viewer_buildings();
+        if rows == self.buildings {
+            return;
+        }
+        for (chunk, batch) in rows.chunks(256).enumerate() {
+            let start = chunk * 256;
+            if self.buildings.get(start..start + batch.len()) != Some(batch) {
+                let mut bytes = b"XNC1".to_vec();
+                bytes.extend(serde_json::to_vec(&json!({"building_batch":batch,"building_offset":start})).unwrap());
+                self.building_updates.push_back(frame(bytes));
+            }
+        }
+        let mut commit = b"XNC1".to_vec();
+        commit.extend(serde_json::to_vec(&json!({"building_count":rows.len()})).unwrap());
+        self.building_updates.push_back(frame(commit));
+        self.buildings = rows;
+    }
+
     fn send(&mut self, snapshot: Option<Vec<u8>>) -> Result<(), String> {
+        let snapshot = snapshot.filter(|bytes| {
+            if bytes.len() <= MAX_VIEWER_FRAME {
+                self.oversize_reported = false;
+                true
+            } else {
+                if !self.oversize_reported {
+                    self.reply("World snapshot exceeds the 4 MiB viewer limit.", false);
+                    self.oversize_reported = true;
+                }
+                false
+            }
+        });
         if self.offset == self.output.len() {
             self.output = if let Some(reply) = self.replies.pop_front() {
                 reply
+            } else if let Some(update) = self.building_updates.pop_front() {
+                update
             } else if let Some(bytes) = snapshot {
                 frame(bytes)
             } else {
@@ -559,6 +622,12 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
             let mut layers = None;
             let result: Result<String, String> =
                 (|| match serde_json::from_value::<Command>(value).map_err(|e| e.to_string())? {
+                    Command::StreamBuildings => {
+                        if let Some(c) = client.as_mut() {
+                            c.stream_buildings = true;
+                        }
+                        Ok("Building stream enabled".into())
+                    }
                     Command::WatchWealth { enabled } => {
                         wealth.subscribe(enabled);
                         Ok("Wealth subscription updated".into())
@@ -640,6 +709,9 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                         advance_remaining = 0;
                         wealth.invalidate();
                         world = World::new_with_size(agents, seed, world.hill, world.map.spec.size)?;
+                        if let Some(c) = client.as_mut() {
+                            c.reset_buildings();
+                        }
                         selected = Some(0);
                         selected_animal = None;
                         paused = true;
@@ -658,6 +730,9 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                         advance_remaining = 0;
                         wealth.invalidate();
                         world = World::load(&o.checkpoint)?;
+                        if let Some(c) = client.as_mut() {
+                            c.reset_buildings();
+                        }
                         paused = true;
                         selected = Some(0);
                         selected_animal = None;
@@ -718,17 +793,19 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
         }
         let snapshot = if now >= next_snapshot && client.is_some() {
             next_snapshot = now + Duration::from_millis(100);
-            Some(world.viewer_snapshot(
+            Some(world.viewer_snapshot_with_buildings(
                 20_000,
                 selected,
                 paused,
                 selected_animal,
                 wealth.report(&world),
+                !client.as_ref().is_some_and(|c| c.stream_buildings),
             ))
         } else {
             None
         };
         if let Some(c) = client.as_mut() {
+            c.update_buildings(&world, now);
             if let Err(e) = c.send(snapshot) {
                 eprintln!("{e}");
                 client = None;

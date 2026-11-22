@@ -31,3 +31,16 @@ Depleted carcasses drop out of the list. Selected-animal metadata
 includes a `predator` flag for the diet description.
 
 Current saves use XXSAVE34 for the merged gameplay features, governance, campsite rumours, water routes and road traffic. XXSAVE33 added road traffic to the release format. XXSAVE32 stores the water-route state alongside governance and campsite rumours. XXSAVE31 adds campsite rumours to XXSAVE30, which stores governance and temporary happiness awards. XXSAVE29 added local meat sales history. XXSAVE28 added personal market knowledge and the tavern report trade. XXSAVE27 used shared market reports. XXSAVE26 added carried meat, market stock, and the meat trade ledger. XXSAVE25 added the weapon goal. XXSAVE24 introduced bows and hunting counters. XXSAVE23 introduced crafted hunting spears. XXSAVE22 records the terrain anchors of hidden wildlife spawn points. Upgrading from XXSAVE21 preserves the existing forest timers and spawn count and adds mountain and shoreline sites. The XXSAVE20 envelope added finite wildlife carcass stocks to the XXSAVE19 payload. That payload includes the world, the procedural map specification, exploration state, and outcome-memory payloads. The loader accepts the plain XXSAVE15 world from the 48-sensor rollout, the subsequent XXSAVE15 procedural map payload, and the experimental XXSAVE15 through XXSAVE18 memory envelopes. Legacy 42-sensor genomes migrate to the widened schema while retaining optional memory nodes and their connections. The world publishes its hill center and radius in the snapshot field `hill`. Saves through version 13 restore the historical center (1500, 1380) and radius 360. The included v12 fixture exercises the introduction of relationship state. Saves 1 through 3 predate the supported migration range. For a persistent field, test load, advance, save, reopen and replay. For an optional inspector field, exercise both an older frame and a frame containing the field.
+
+### Viewer frame budget and building updates
+
+Server-to-viewer payloads are limited to 4 MiB, excluding the four-byte
+length prefix. The server returns a bounded XNC1 diagnostic if an encoded
+snapshot or reply is too large. The connection stays available for commands.
+
+Clients can send `stream_buildings` to receive compact XNS1 snapshots with
+`building_stream: true`. These omit building rows. XNC1 updates carry
+`building_batch` arrays and their zero-based `building_offset`. An update
+ends with `building_count`, which applies the pending rows and truncates
+removed entries. A reset or load clears the stream before sending the new
+world's rows. Clients that do not opt in still receive embedded building rows.

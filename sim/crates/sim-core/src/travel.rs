@@ -559,6 +559,113 @@ mod tests {
         );
     }
     #[test]
+    fn blocked_trips_route_at_trip_start_not_after_a_stall() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        // Same stripe search as stalled_walkers_route_around_lakes, but
+        // the trip must exceed the 96u trip-start routing threshold.
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if bx - ax > 100.0
+                        && matches!(
+                            w.route_between(ax, y, bx, y),
+                            Some(p) if p.len() >= 3
+                        )
+                    {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        // One tick of travel: the stall probe has no history yet, but a
+        // water-blocked trip is already routed along dry waypoints.
+        w.walk_toward(0, tx, ty, 4.0);
+        assert!(
+            matches!(w.water.detours.get(&0), Some(d) if d.has_route()),
+            "water-blocked trip should be routed at trip start, not after stalling"
+        );
+        assert!(
+            w.water.detours[&0].matches_destination(tx, ty),
+            "the proactive route is keyed to the walker's destination"
+        );
+    }
+    #[test]
+    fn stale_detour_entries_do_not_suppress_a_new_trips_lookup() {
+        let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
+        let r = w.map.raster();
+        let mut span = None;
+        let limit = (r.cols - 4) as f32 * r.cell;
+        'outer: for row in 4..r.rows - 4 {
+            let y = (row as f32 + 0.5) * r.cell;
+            let mut x = 4.0 * r.cell;
+            while x < limit {
+                if w.map.terrain_at(x, y) != Terrain::Water {
+                    x += 4.0;
+                    continue;
+                }
+                let start = x;
+                while x < limit && w.map.terrain_at(x, y) == Terrain::Water {
+                    x += 4.0;
+                }
+                if x - start >= 32.0 && x < limit {
+                    let (ax, bx) = (start - 4.0, x);
+                    if bx - ax > 160.0
+                        && w.passable(bx + 60.0, y)
+                        && matches!(
+                            w.route_between(ax, y, bx, y),
+                            Some(p) if p.len() >= 3
+                        )
+                    {
+                        span = Some((ax, y, bx, y));
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        let Some((x, y, tx, ty)) = span else { return };
+        w.agents.x[0] = x;
+        w.agents.y[0] = y;
+        w.walk_toward(0, tx, ty, 4.0);
+        assert!(w
+            .water
+            .detours
+            .get(&0)
+            .is_some_and(|d| d.matches_destination(tx, ty) && d.has_route()));
+        // Redirect 60u further along the same far bank — still across the
+        // same water, but >48u from the old destination. The stale entry
+        // must expire immediately instead of blocking the new trip's
+        // router query for its retry window.
+        let (tx2, ty2) = (tx + 60.0, ty);
+        w.walk_toward(0, tx2, ty2, 4.0);
+        let d = w.water.detours.get(&0).expect("new trip should be routed");
+        assert!(
+            d.matches_destination(tx2, ty2),
+            "detour should be re-keyed to the new destination"
+        );
+        assert!(
+            d.has_route(),
+            "new water-blocked trip should be routed, not backed off"
+        );
+    }
+    #[test]
     fn detour_failure_backoff_follows_the_destination_through_save() {
         let mut w = World::new_with_size(8, 42, Hill::default(), MapSize::X4).unwrap();
         let (x, y) = (w.agents.x[0], w.agents.y[0]);
@@ -2861,18 +2968,26 @@ impl World {
     /// dry line-of-sight, the waypoints are consumed, or the detour was
     /// routed for a different destination.
     fn detour_target(&mut self, key: u32, x: f32, y: f32, tx: f32, ty: f32) -> (f32, f32) {
+        // Stale when the mover's destination changed — for backoff
+        // markers as well as routes, or a lookup keyed to an old trip
+        // would suppress the new trip's router query for its whole
+        // retry window. A "clear shot" check here stays dropped because
+        // coarse sampling can call a thin band open and send the mover
+        // back into the stall loop.
+        if self
+            .water
+            .detours
+            .get(&key)
+            .is_some_and(|d| !d.matches_destination(tx, ty))
+        {
+            self.water.detours.remove(&key);
+            return (tx, ty);
+        }
         let path_len = match self.water.detours.get(&key) {
             Some(d) if d.has_route() => d.path.len(),
             _ => return (tx, ty),
         };
-        // Stale only when the mover's destination changed; a "clear shot"
-        // check here was dropped because coarse sampling can call a thin
-        // band open and send the mover back into the stall loop.
         let last = self.water.detours[&key].path[path_len - 1];
-        if dist(last.0, last.1, tx, ty) > 48.0 {
-            self.water.detours.remove(&key);
-            return (tx, ty);
-        }
         // Pure pursuit with monotonic arclength: project the mover onto
         // the polyline, clamp progress forward, then steer toward a
         // lookahead measured along the path.
@@ -2993,7 +3108,7 @@ impl World {
         {
             return;
         }
-        if !self.water.detours.contains_key(&key) && self.water.detours.len() >= 512 {
+        if !self.water.detours.contains_key(&key) && self.water.detours.len() >= 2048 {
             // Router saturated: a starving strander locked out of the A*
             // would re-pick the same unreachable target until it dies.
             // The advisory block expires, so a later open slot can still
@@ -3175,6 +3290,20 @@ impl World {
             self.water.progress.resize(i + 1, None);
         }
         let (x, y) = (self.agents.x[i], self.agents.y[i]);
+        // Route at trip start, not after the stall: a distant destination
+        // gets a staggered line check — clear lines store nothing and are
+        // rechecked ~64 ticks later, while a water-blocked trip walks dry
+        // waypoints from its first steps instead of grinding the shore
+        // until the probe fires. Entries therefore only exist for trips
+        // the router actually had to answer, so the detour map serves
+        // real demand instead of clear-shot lookups.
+        if dist(x, y, tx, ty) > 96.0
+            && !self.water.detours.contains_key(&(i as u32))
+            && (self.tick + i as u64) % 64 == 0
+            && !self.clear_shot(x, y, tx, ty)
+        {
+            self.compute_detour(i as u32, x, y, tx, ty);
+        }
         match self.water.progress[i] {
             Some((px, py, since)) if dist(x, y, px, py) >= 24.0 => {
                 // The mover covered ground — but sliding along a shore is
@@ -3258,8 +3387,8 @@ impl World {
             return;
         }
         // Evict detours whose mover is gone: a dead walker or a released
-        // convoy slot never consumes its route, and the 512-entry cap on
-        // the map would otherwise fill with orphans — after which every
+        // convoy slot never consumes its route, and the bounded map
+        // would otherwise fill with orphans — after which every
         // new strander silently fails compute_detour.
         self.water.detours.retain(|&key, _| {
             if key & 0x8000_0000 != 0 {

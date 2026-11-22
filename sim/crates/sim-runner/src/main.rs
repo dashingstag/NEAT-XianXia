@@ -312,6 +312,9 @@ fn soak(o: &Options) -> Result<(), String> {
 #[derive(Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 enum Command {
+    ForgetFootpaths {
+        segment: Option<[f32; 4]>,
+    },
     WatchWealth {
         enabled: bool,
     },
@@ -659,6 +662,10 @@ fn serve(mut world: World, o: &Options) -> Result<(), String> {
                         selected = Some(0);
                         selected_animal = None;
                         Ok("Restored checkpoint and rebuilt compiled brains".into())
+                    }
+                    Command::ForgetFootpaths { segment } => {
+                        let count = world.forget_cached_footpaths(segment);
+                        Ok(format!("Removed {count} cached route entries"))
                     }
                     Command::MapLayers { terrain } => {
                         layers = Some(map_layers(&mut world, terrain));

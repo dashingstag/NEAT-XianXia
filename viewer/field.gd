@@ -548,6 +548,11 @@ func _draw() -> void:
 	terrain.queue_redraw()
 	minimap.queue_redraw()
 	draw_set_transform(offset,0,Vector2(zoom,zoom))
+	for segment in world.get("cached_footpaths", []):
+		var start := Vector2(segment[0], segment[1])
+		var finish := Vector2(segment[2], segment[3])
+		if terrain.is_explored(start) and terrain.is_explored(finish):
+			draw_dashed_line(start, finish, Color("dec49abc"), maxf(1.0 / zoom, 1.0), 8.0, false)
 	var markets: Array = world.get("markets", [])
 	if show_zones:
 		for zone in world.get("urban",{}).get("zones",[]):

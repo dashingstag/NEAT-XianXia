@@ -15,4 +15,5 @@ wire = 2
 save = 34
 old_save = "fixtures/bank-v12.snapshot"
 dev_save = "fixtures/dev-v34.snapshot"
+release_save = "fixtures/release-v33.snapshot"
 town_frame = "fixtures/town-shop.json"

@@ -4025,6 +4025,29 @@ mod tests {
         }
         restored.check().unwrap();
     }
+    /// fixtures/release-v33.snapshot is real binary output: the sim-runner
+    /// built at 5c636c9 (the last XXSAVE33 writer) loaded bank-v12,
+    /// migrated it, stepped 75 ticks and re-saved. It is the only real
+    /// artifact of the release family (v19, v30-33), whose reader walks
+    /// the same tails but additionally remaps Action declaration indices.
+    /// A World serde drift that synthesized same-build bytes can't see
+    /// fails here.
+    #[test]
+    fn real_release_format_fixture_loads_and_checks() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/release-v33.snapshot"
+        );
+        let mut restored = World::load(Path::new(path)).unwrap();
+        // The remap ran on real bytes: the save must contain non-default
+        // actions that the declaration-index remap placed correctly.
+        assert!(restored.agents.action.iter().any(|a| *a != Action::Rest));
+        restored.check().unwrap();
+        for _ in 0..3 {
+            restored.step(false);
+        }
+        restored.check().unwrap();
+    }
     /// The development family (v20-29, 34) reads one base tuple then
     /// walks a version-dependent tail chain. No real pre-34 bytes
     /// survive (see fixtures/README.md), so this pins the per-version

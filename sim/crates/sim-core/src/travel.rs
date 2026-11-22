@@ -129,6 +129,9 @@ pub struct WaterState {
     retry_budget_tick: u64,
     #[serde(skip)]
     fast_retries: u8,
+    /// Derived land reachability for repeated ferry eligibility checks.
+    #[serde(skip)]
+    ferry_routes: FerryRouteCache,
     /// Convoy slot -> stall probe, same 24-unit rule as `progress`.
     pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
     /// (action, target) pairs a mover proved water-blocked, so a starving
@@ -145,6 +148,121 @@ pub struct WaterState {
     /// re-learn it. Entries decay after ~a day; soft state.
     #[serde(skip)]
     pub shared_unreachable: BTreeMap<(u8, u32), Vec<(f32, f32, u64)>>,
+}
+
+/// Keeps the most recently inserted endpoint pairs without affecting saves.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FerryRouteCache {
+    entries: BTreeMap<[u32; 4], (bool, u64)>,
+    reachable_regions: BTreeMap<[i32; 4], [u32; 4]>,
+    footpaths: BTreeMap<[i32; 4], ([f32; 4], usize)>,
+    route_segments: BTreeMap<[u32; 4], Vec<[i32; 4]>>,
+    order: std::collections::BTreeSet<(u64, [u32; 4])>,
+}
+
+impl FerryRouteCache {
+    const ENDPOINT_RANGE: f32 = 16.0;
+
+    fn region(key: [u32; 4]) -> [i32; 4] {
+        key.map(|bits| (f32::from_bits(bits) / Self::ENDPOINT_RANGE).floor() as i32)
+    }
+
+    fn record_footpath(&mut self, route: [u32; 4], path: &[(f32, f32)]) {
+        let mut segments = Vec::new();
+        const CHUNK: f32 = 48.0;
+        const LIMIT: usize = 1024;
+        for leg in path.windows(2) {
+            let (ax, ay) = leg[0];
+            let (bx, by) = leg[1];
+            let pieces = (dist(ax, ay, bx, by) / CHUNK).ceil() as usize;
+            for i in 0..pieces {
+                let from = i as f32 / pieces as f32;
+                let to = (i + 1) as f32 / pieces as f32;
+                let segment = [
+                    ax + (bx - ax) * from, ay + (by - ay) * from,
+                    ax + (bx - ax) * to, ay + (by - ay) * to,
+                ];
+                let key = Self::segment_key(segment);
+                if key[..2] == key[2..] {
+                    continue;
+                }
+                if segments.contains(&key) {
+                    continue;
+                }
+                if let Some((_, count)) = self.footpaths.get_mut(&key) {
+                    *count += 1;
+                } else if self.footpaths.len() < LIMIT {
+                    self.footpaths.insert(key, (segment, 1));
+                } else {
+                    continue;
+                }
+                segments.push(key);
+            }
+        }
+        if !segments.is_empty() {
+            self.route_segments.insert(route, segments);
+        }
+    }
+
+    fn remove_footpath(&mut self, route: [u32; 4]) {
+        if let Some(segments) = self.route_segments.remove(&route) {
+            for key in segments {
+                let (_, count) = self.footpaths.get_mut(&key).unwrap();
+                *count -= 1;
+                if *count == 0 {
+                    self.footpaths.remove(&key);
+                }
+            }
+        }
+    }
+
+    fn segment_key(segment: [f32; 4]) -> [i32; 4] {
+        let [x, y, tx, ty] = segment.map(|v| (v / 12.0).round() as i32);
+        [x, y, tx, ty].min([tx, ty, x, y])
+    }
+
+    fn remove(&mut self, key: [u32; 4]) {
+        let Some((_, last_used)) = self.entries.remove(&key) else { return };
+        self.order.remove(&(last_used, key));
+        self.remove_footpath(key);
+        let region = Self::region(key);
+        if self.reachable_regions.get(&region) == Some(&key) {
+            self.reachable_regions.remove(&region);
+        }
+    }
+
+    fn lookup(&mut self, key: [u32; 4], tick: u64) -> Option<bool> {
+        let (reachable, last_used) = self.entries.get_mut(&key)?;
+        if *last_used != tick {
+            self.order.remove(&(*last_used, key));
+            *last_used = tick;
+            self.order.insert((tick, key));
+        }
+        Some(*reachable)
+    }
+
+    fn expire(&mut self, tick: u64) {
+        while let Some(&(last_used, key)) = self.order.first() {
+            if tick.saturating_sub(last_used) <= 3 * rest::DAY_TICKS {
+                break;
+            }
+            self.remove(key);
+        }
+    }
+
+    fn insert(&mut self, key: [u32; 4], reachable: bool, tick: u64) {
+        const CAPACITY: usize = 65_536;
+        if self.entries.len() == CAPACITY {
+            let (_, oldest) = *self.order.first().unwrap();
+            self.remove(oldest);
+        }
+        if reachable {
+            self.reachable_regions.insert(Self::region(key), key);
+        }
+        self.entries.insert(key, (reachable, tick));
+        self.order.insert((tick, key));
+    }
+
 }
 
 /// Daytime traffic census. Mover-observations accumulate per unordered
@@ -1303,6 +1421,37 @@ mod tests {
         }
     }
     #[test]
+    fn unused_ferry_routes_expire_after_three_days() {
+        let mut cache = FerryRouteCache::default();
+        cache.insert([1; 4], true, 0);
+        cache.insert([2; 4], true, 0);
+        cache.record_footpath([1; 4], &[(0.0, 0.0), (48.0, 0.0)]);
+        cache.record_footpath([2; 4], &[(48.0, 0.0), (0.0, 0.0)]);
+        assert_eq!(cache.lookup([2; 4], rest::DAY_TICKS), Some(true));
+        cache.expire(3 * rest::DAY_TICKS);
+        assert_eq!(cache.entries.len(), 2);
+        cache.expire(3 * rest::DAY_TICKS + 1);
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.footpaths.len(), 1);
+        cache.expire(4 * rest::DAY_TICKS + 1);
+        assert!(cache.footpaths.is_empty());
+    }
+
+    #[test]
+    fn cached_footpaths_merge_nearby_segments_in_both_directions() {
+        let mut cache = FerryRouteCache::default();
+        cache.record_footpath([1; 4], &[(0.0, 0.0), (48.0, 0.0)]);
+        cache.record_footpath([2; 4], &[(48.0, 1.0), (0.0, 1.0)]);
+        assert_eq!(cache.footpaths.len(), 1);
+        cache.record_footpath([3; 4], &[(0.0, 36.0), (48.0, 36.0)]);
+        assert_eq!(cache.footpaths.len(), 2);
+        cache.remove_footpath([1; 4]);
+        assert_eq!(cache.footpaths.len(), 2);
+        cache.remove_footpath([2; 4]);
+        assert_eq!(cache.footpaths.len(), 1);
+    }
+
+    #[test]
     fn roads_detour_around_water_bodies() {
         let mut w = World::new_with_size(40, 7, Hill::default(), MapSize::X4).unwrap();
         // Find a horizontal land-water-land stretch wide enough for the
@@ -1331,6 +1480,14 @@ mod tests {
         let wet_x = ax + r.cell;
         assert_eq!(w.map.terrain_at(wet_x, ay), Terrain::Water);
         assert!(w.route_between(ax, ay, wet_x, ay).is_none());
+        for _ in 0..2 {
+            assert!(w.ferry_land_reachable(ax, ay, ax, ay));
+            assert!(!w.ferry_land_reachable(ax, ay, wet_x, ay));
+            assert_eq!(w.water.ferry_routes.entries.len(), 2);
+            assert_eq!(w.water.ferry_routes.order.len(), 2);
+        }
+        assert!(w.ferry_land_reachable(ax + 0.01, ay, ax + 0.02, ay));
+        assert_eq!(w.water.ferry_routes.entries.len(), 2, "nearby dry endpoints reuse the existing result");
         w.tick = 120;
         for i in 0..5u32 {
             w.agents.hunger[i as usize] = 60.0;
@@ -2346,6 +2503,66 @@ impl World {
         }
         None
     }
+    pub fn forget_cached_footpaths(&mut self, segment: Option<[f32; 4]>) -> usize {
+        let cache = &mut self.water.ferry_routes;
+        if let Some(segment) = segment {
+            if !segment.iter().all(|coordinate| coordinate.is_finite()) {
+                return 0;
+            }
+            let segment = FerryRouteCache::segment_key(segment);
+            let routes: Vec<_> = cache.route_segments.iter()
+                .filter(|(_, segments)| segments.contains(&segment))
+                .map(|(&key, _)| key)
+                .collect();
+            for &route in &routes {
+                cache.remove(route);
+            }
+            routes.len()
+        } else {
+            let count = cache.entries.len();
+            *cache = FerryRouteCache::default();
+            count
+        }
+    }
+
+    pub(super) fn cached_footpaths(&self) -> impl Iterator<Item = &[f32; 4]> {
+        self.water.ferry_routes.footpaths.values().map(|(segment, _)| segment)
+    }
+
+    fn ferry_land_reachable(&mut self, x: f32, y: f32, tx: f32, ty: f32) -> bool {
+        // Exact, directional endpoints preserve shoreline connectors.
+        let key = [x.to_bits(), y.to_bits(), tx.to_bits(), ty.to_bits()];
+        if let Some(reachable) = self.water.ferry_routes.lookup(key, self.tick) {
+            return reachable;
+        }
+        // Only a searched route can become a range anchor. Both endpoints
+        // need dry connectors so this shortcut cannot jump a water barrier.
+        let region = FerryRouteCache::region(key);
+        if let Some(anchor) = self.water.ferry_routes.reachable_regions.get(&region).copied() {
+            let [ax, ay, bx, by] = anchor.map(f32::from_bits);
+            let range = FerryRouteCache::ENDPOINT_RANGE;
+            if dist(x, y, ax, ay) <= range
+                && dist(tx, ty, bx, by) <= range
+                && self.clear_shot(x, y, ax, ay)
+                && self.clear_shot(bx, by, tx, ty)
+            {
+                self.water.ferry_routes.lookup(anchor, self.tick);
+                return true;
+            }
+        }
+        let route = self.route_between(x, y, tx, ty);
+        let reachable = route.is_some();
+        self.water.ferry_routes.insert(key, reachable, self.tick);
+        if let Some(path) = route {
+            if path.is_empty() {
+                self.water.ferry_routes.record_footpath(key, &[(x, y), (tx, ty)]);
+            } else {
+                self.water.ferry_routes.record_footpath(key, &path);
+            }
+        }
+        reachable
+    }
+
     /// A stranded agent joins the nearest port dock that can ferry it
     /// toward its blocked target: only when no dry route to the target
     /// exists but the partner shore can reach it. Returns true when the
@@ -2375,13 +2592,14 @@ impl World {
                     .any(|s| s.aboard.contains(&(i as u32)));
                 let queued = {
                     let p = &self.water.ports[pi];
-                    p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
+                    let queue = if side == 0 { &p.queue } else { &p.queue_far };
+                    queue.len() >= 100 || p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32))
                 };
                 if aboard_ship || queued {
                     continue;
                 }
-                if self.route_between(x, y, tx, ty).is_some()
-                    || self.route_between(partner.0, partner.1, tx, ty).is_none()
+                if self.ferry_land_reachable(x, y, tx, ty)
+                    || !self.ferry_land_reachable(partner.0, partner.1, tx, ty)
                 {
                     continue;
                 }
@@ -2995,6 +3213,10 @@ impl World {
         }
     }
     /// Deliver carried reports once their bearer reaches home ground.
+    pub(super) fn expire_ferry_routes(&mut self) {
+        self.water.ferry_routes.expire(self.tick);
+    }
+
     pub(super) fn update_water_reports(&mut self) {
         if self.map.spec.size == MapSize::Classic {
             return;

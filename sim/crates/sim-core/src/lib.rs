@@ -2020,6 +2020,7 @@ impl World {
     }
     pub fn step(&mut self, parallel: bool) {
         self.tick += 1;
+        self.expire_ferry_routes();
         self.sync_shelters();
         self.domestic_rules();
         for p in &mut self.patches {
@@ -3431,6 +3432,7 @@ impl World {
         let mut metadata = self.snapshot_metadata();
         // Animals travel as compact records after the people samples; the
         // viewer rebuilds wildlife.animals from them. Full reports keep JSON.
+        metadata["cached_footpaths"] = serde_json::json!(self.cached_footpaths().collect::<Vec<_>>());
         metadata["wildlife"]
             .as_object_mut()
             .map(|w| w.remove("animals"));

@@ -36,6 +36,9 @@ var board_focus := -1
 var site_selection: Dictionary = {}
 var follow_button: Button
 var inspector_tabs: TabContainer
+var footpath_panel: VBoxContainer
+var footpath_list: ItemList
+var footpath_rows: Array = []
 var vitals: VBoxContainer
 var resource_option: OptionButton
 var resource_quantity: SpinBox
@@ -254,6 +257,7 @@ func _ready() -> void:
 	detail.custom_minimum_size = Vector2(350,200)
 	detail.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	inspect_panel.add_child(detail)
+	_build_footpath_tab()
 	var village_panel := VBoxContainer.new()
 	village_panel.name = "Village"
 	inspector_tabs.add_child(village_panel)
@@ -335,6 +339,49 @@ func _connect() -> void:
 		return
 	tcp.connect_to_host("127.0.0.1",port)
 	last_connect = Time.get_ticks_msec() / 1000.0
+
+func _build_footpath_tab() -> void:
+	footpath_panel = VBoxContainer.new()
+	footpath_panel.name = "Footpaths"
+	inspector_tabs.add_child(footpath_panel)
+	var controls := HBoxContainer.new()
+	footpath_panel.add_child(controls)
+	controls.add_child(button("Centre", func():
+		var selected := footpath_list.get_selected_items()
+		if selected.is_empty():
+			return
+		var segment: Array = footpath_list.get_item_metadata(selected[0])
+		field.follow_selection = false
+		field.camera_center = Vector2(segment[0] + segment[2], segment[1] + segment[3]) * 0.5
+		field._resize()
+	))
+	controls.add_child(button("Remove selected", func():
+		var selected := footpath_list.get_selected_items()
+		if not selected.is_empty():
+			send({"command": "forget_footpaths", "segment": footpath_list.get_item_metadata(selected[0])})
+	))
+	controls.add_child(button("Clear cache", func(): send({"command": "forget_footpaths"})))
+	footpath_list = ItemList.new()
+	footpath_list.custom_minimum_size.y = 120
+	footpath_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	footpath_panel.add_child(footpath_list)
+	inspector_tabs.tab_changed.connect(func(_tab: int): _refresh_footpaths())
+
+func _refresh_footpaths() -> void:
+	if footpath_panel == null or inspector_tabs.get_current_tab_control() != footpath_panel:
+		return
+	var rows: Array = state.get("cached_footpaths", [])
+	if rows == footpath_rows:
+		return
+	var selected := footpath_list.get_selected_items()
+	var previous: Variant = null if selected.is_empty() else footpath_list.get_item_metadata(selected[0])
+	footpath_rows = rows
+	footpath_list.clear()
+	for segment in rows:
+		var index := footpath_list.add_item("(%.0f, %.0f) → (%.0f, %.0f)" % segment)
+		footpath_list.set_item_metadata(index, segment)
+		if segment == previous:
+			footpath_list.select(index)
 
 func send(command: Dictionary) -> void:
 	if command.get("command") in ["load","reset"]:
@@ -847,6 +894,7 @@ func _decode(data: PackedByteArray) -> void:
 		return
 	state = decoded
 	state["paused"] = paused
+	_refresh_footpaths()
 	# Animals arrive as compact records after the people samples.
 	var animals: Array = []
 	var at := 32+json_length+count*16

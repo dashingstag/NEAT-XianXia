@@ -15,3 +15,8 @@ zstd.workspace = true
 
 [features]
 experimental-restocking = []
+experimental-memory-pilot = []
+
+[[example]]
+name = "memory_pilot"
+required-features = ["experimental-memory-pilot"]

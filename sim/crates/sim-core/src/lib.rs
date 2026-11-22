@@ -2636,6 +2636,9 @@ impl World {
         }
     }
     pub fn checkpoint_payload(&self) -> Result<Vec<u8>, String> {
+        if self.watch.memory_trial.is_some() {
+            return Err("The developer memory pilot cannot be checkpointed. Finish the experiment without saving.".into());
+        }
         postcard::to_allocvec(&(
             self,
             &self.food_memory,

@@ -1,4 +1,9 @@
-//! Paired live-world coverage and an exploratory memory score pilot.
+//! Standalone developer experiment for comparing memory scoring modes.
+//! Run with `cargo run --manifest-path sim/Cargo.toml -p sim-core --release
+//! --features experimental-memory-pilot --example memory_pilot`.
+//!
+//! An optional checkpoint is a starting fixture. The active experiment
+//! reports results to stdout and cannot be checkpointed or resumed.
 use sim_core::World;
 use std::time::Instant;
 

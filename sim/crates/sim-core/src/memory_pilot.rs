@@ -109,7 +109,10 @@ struct Observable {
 }
 
 impl World {
-    /// Run a transient live-world pilot. Uses score adjustments and observable progress proxies.
+    /// Start a standalone developer experiment with transient scoring state.
+    /// An optional input checkpoint can seed the experiment before activation.
+    /// Active trials cannot be saved or resumed from a checkpoint.
+    #[cfg(feature = "experimental-memory-pilot")]
     pub fn enable_memory_pilot(&mut self, readouts: usize) {
         assert!(matches!(readouts, 0 | 1 | 3));
         self.watch.memory_trial = Some(Trial {
@@ -118,6 +121,8 @@ impl World {
         });
     }
 
+    /// Read coverage for an enabled developer experiment.
+    #[cfg(feature = "experimental-memory-pilot")]
     pub fn memory_pilot_coverage(&self) -> serde_json::Value {
         serde_json::to_value(
             &self
@@ -184,6 +189,23 @@ impl World {
             let trial = self.watch.memory_trial.as_mut().unwrap();
             trial.pending.remove(&i);
             trial.update(key, self.tick, [availability, 1.0, cost]);
+        }
+    }
+}
+
+#[cfg(all(test, feature = "experimental-memory-pilot"))]
+mod checkpoint_tests {
+    use crate::World;
+
+    #[test]
+    fn developer_experiment_cannot_silently_drop_trial_state() {
+        let mut world = World::new(32, 42).unwrap();
+        assert!(world.checkpoint_payload().is_ok());
+        for mode in [0, 1, 3] {
+            world.enable_memory_pilot(mode);
+            world.step(false);
+            let error = world.checkpoint_payload().unwrap_err();
+            assert!(error.contains("developer memory pilot"));
         }
     }
 }

@@ -1,4 +1,10 @@
 //! Read-only schema-4 migration; no simulation code.
+//! Live types this schema trusts: Compiled, Convoy, Genome, Innovations, Patch, Rng, Road
+//!   Shelter
+//! — all still shared with the live schema (agents and markets already
+//! have frozen twins). A serde-layout change to one reinterprets this
+//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
+//! first — freeze a Legacy twin before changing the type.
 use super::*;
 #[derive(Serialize, Deserialize)]
 pub struct LegacyAgents {

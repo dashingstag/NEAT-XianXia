@@ -1,4 +1,11 @@
 //! Explicit schema-10 reader, also reuses the old agent pool for earlier schemas.
+//! Live types this schema trusts: Compiled, Contract, Convoy, Corpse, Council, Education
+//!   Farm, FertileRegion, Genome, Graveyard, Innovations, Ledger, Patch, Person, Rng, Road
+//!   Shelter, Statistics, Tavern, Wildlife
+//! — all still shared with the live schema (agents and markets already
+//! have frozen twins). A serde-layout change to one reinterprets this
+//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
+//! first — freeze a Legacy twin before changing the type.
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LegacyAgents {

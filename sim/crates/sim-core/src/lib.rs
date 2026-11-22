@@ -4076,6 +4076,154 @@ mod tests {
         assert_eq!(w.markets[0].quotes[1].offered, 0);
         w.check().unwrap();
     }
+    /// The legacy readers (v4-13) deserialize old bytes through ~20 types
+    /// that are still shared with the live schema — only Agents and Market
+    /// got frozen twins. These pins make a serde-layout change in any of
+    /// them fail loudly instead of silently reinterpreting real old saves.
+    /// A failure means: freeze a legacy twin for the changed type (pattern:
+    /// legacy_v13::LegacyAgents / LegacyMarket) or update the pin only when
+    /// the byte change was intentional and understood. The `world` pin also
+    /// catches non-#[serde(skip)] fields added to the base struct.
+    #[test]
+    fn legacy_reader_schema_is_pinned() {
+        let w = World::new(4, 7).unwrap();
+        let pin = |name: &str, bytes: Vec<u8>, expected: usize| {
+            assert_eq!(
+                bytes.len(),
+                expected,
+                "{name}: serde layout changed — this type is embedded in \
+                 legacy save readers; freeze a legacy twin or update the pin"
+            );
+        };
+        pin("agents", postcard::to_allocvec(&w.agents).unwrap(), 387);
+        pin("genomes", postcard::to_allocvec(&w.genomes).unwrap(), 8505);
+        pin("innovations", postcard::to_allocvec(&w.innovations).unwrap(), 725);
+        pin("markets", postcard::to_allocvec(&w.markets).unwrap(), 546);
+        pin("patches", postcard::to_allocvec(&w.patches).unwrap(), 2117);
+        pin("roads", postcard::to_allocvec(&w.roads).unwrap(), 16);
+        pin("ledger", postcard::to_allocvec(&w.ledger).unwrap(), 105);
+        pin("stats", postcard::to_allocvec(&w.stats).unwrap(), 25);
+        pin(
+            "sales_profile_labels",
+            postcard::to_allocvec(&w.sales_profile_labels).unwrap(),
+            4,
+        );
+        pin("shelters", postcard::to_allocvec(&w.shelters).unwrap(), 37);
+        pin("councils", postcard::to_allocvec(&w.councils).unwrap(), 8071);
+        pin("people", postcard::to_allocvec(&w.people).unwrap(), 205);
+        pin("matches", postcard::to_allocvec(&w.matches).unwrap(), 21);
+        pin("fertility", postcard::to_allocvec(&w.fertility).unwrap(), 73);
+        pin("social", postcard::to_allocvec(&w.social).unwrap(), 17);
+        // Single-element pins: an empty Vec serializes to one byte whatever
+        // the element layout, so these types need an instance each.
+        pin(
+            "convoy",
+            postcard::to_allocvec(&vec![Some(travel::Convoy {
+                members: vec![7],
+                x: 1.0,
+                y: 2.0,
+                goal_x: 3.0,
+                goal_y: 4.0,
+                created: 5,
+                departed: true,
+            })])
+            .unwrap(),
+            22,
+        );
+        pin(
+            "corpse",
+            postcard::to_allocvec(&vec![civic::Corpse {
+                agent: 1,
+                market: 2,
+                x: 1.0,
+                y: 2.0,
+                death_tick: 3,
+                status: 4,
+                claim: 5,
+            }])
+            .unwrap(),
+            14,
+        );
+        pin(
+            "contract",
+            postcard::to_allocvec(&vec![Some(civic::Contract {
+                worker: 1,
+                market: 2,
+                kind: civic::JobKind::Haul,
+                corpse: 3,
+                graveyard: 4,
+                reward: 5,
+                phase: 6,
+                timer: 7.0,
+            })])
+            .unwrap(),
+            13,
+        );
+        pin(
+            "graveyard",
+            postcard::to_allocvec(&vec![civic::Graveyard {
+                market: 1,
+                x: 1.0,
+                y: 2.0,
+                progress: 3.0,
+                required: 4.0,
+                capacity: 5,
+                buried: vec![6],
+                ready: true,
+            }])
+            .unwrap(),
+            22,
+        );
+        pin(
+            "farm",
+            postcard::to_allocvec(&vec![agriculture::Farm {
+                market: 1,
+                x: 1.0,
+                y: 2.0,
+                fertility: 3.0,
+                moisture: 4.0,
+                planted: 5,
+                tended_days: 6,
+                last_tended: 7,
+                mature: true,
+                harvest_remaining: 8,
+                yield_per_crop: 9,
+                escrow: 10,
+            }])
+            .unwrap(),
+            25,
+        );
+        pin(
+            "tavern",
+            postcard::to_allocvec(&vec![social::Tavern {
+                market: 1,
+                x: 1.0,
+                y: 2.0,
+                ready: true,
+                progress: 3.0,
+                escrow: 4,
+                visitors: 5,
+                guests: vec![6],
+            }])
+            .unwrap(),
+            19,
+        );
+        pin(
+            "wildlife",
+            postcard::to_allocvec(&w.wildlife).unwrap(),
+            539731,
+        );
+        pin("education", postcard::to_allocvec(&w.education).unwrap(), 27);
+        pin("urban", postcard::to_allocvec(&w.urban).unwrap(), 54);
+        pin("banking", postcard::to_allocvec(&w.banking).unwrap(), 5);
+        pin(
+            "relationships",
+            postcard::to_allocvec(&w.relationships).unwrap(),
+            18,
+        );
+        pin("rng", postcard::to_allocvec(&w.rng).unwrap(), 10);
+        pin("world", postcard::to_allocvec(&w).unwrap(), 560721);
+    }
 }
 
 mod memory_pilot;

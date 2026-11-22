@@ -1,4 +1,11 @@
 //! Exact schema-6 reader.
+//! Live types this schema trusts: Compiled, Contract, Convoy, Corpse, Council, Farm
+//!   FertileRegion, Genome, Graveyard, Innovations, Ledger, Patch, Person, Rng, Road, Shelter
+//!   Statistics
+//! — all still shared with the live schema (agents and markets already
+//! have frozen twins). A serde-layout change to one reinterprets this
+//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
+//! first — freeze a Legacy twin before changing the type.
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LegacyWorld {

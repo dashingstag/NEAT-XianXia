@@ -36,6 +36,9 @@ var board_focus := -1
 var site_selection: Dictionary = {}
 var follow_button: Button
 var inspector_tabs: TabContainer
+const MAX_VIEWER_FRAME := 4 * 1024 * 1024
+var streamed_buildings: Array = []
+var pending_buildings: Array = []
 var footpath_panel: VBoxContainer
 var footpath_list: ItemList
 var footpath_rows: Array = []
@@ -328,6 +331,8 @@ func _watch_wealth(_tab: int) -> void:
 		send({"command":"watch_wealth","enabled":inspector_tabs.get_current_tab_control().name == "Wealth"})
 
 func _connect() -> void:
+	streamed_buildings.clear()
+	pending_buildings.clear()
 	purchase_buyer = -1
 	tcp.disconnect_from_host()
 	incoming.clear()
@@ -843,6 +848,7 @@ func _process(_delta: float) -> void:
 	if not connected:
 		connected = true
 		status.text = "CONNECTED / Rust on loopback TCP"
+		send({"command":"stream_buildings"})
 		send({"command":"select","agent":0})
 		_watch_wealth(inspector_tabs.current_tab)
 	var available := tcp.get_available_bytes()
@@ -853,7 +859,7 @@ func _process(_delta: float) -> void:
 	var newest_snapshot := PackedByteArray()
 	while incoming.size() >= 4:
 		var length := int(incoming.decode_u32(0))
-		if length < 4 or length > 4194304:
+		if length < 4 or length > MAX_VIEWER_FRAME:
 			notice.text = "Invalid native snapshot frame."
 			_connect()
 			return
@@ -872,6 +878,20 @@ func _decode(data: PackedByteArray) -> void:
 	var magic := data.slice(0,4).get_string_from_ascii()
 	if magic == "XNC1":
 		var reply: Variant = JSON.parse_string(data.slice(4).get_string_from_utf8())
+		if reply is Dictionary and reply.has("building_batch"):
+			var start := int(reply.building_offset)
+			var batch: Array = reply.building_batch
+			if pending_buildings.size() < start + batch.size():
+				pending_buildings.resize(start + batch.size())
+			for i in range(batch.size()):
+				pending_buildings[start + i] = batch[i]
+			return
+		if reply is Dictionary and reply.has("building_count"):
+			pending_buildings.resize(int(reply.building_count))
+			streamed_buildings = pending_buildings.duplicate()
+			return
+		if reply is Dictionary and reply.get("message") == "Building stream enabled":
+			return
 		if reply is Dictionary and reply.has("map_layers"):
 			field.terrain.set_map_layers(reply.map_layers)
 			return
@@ -893,6 +913,8 @@ func _decode(data: PackedByteArray) -> void:
 	if not decoded is Dictionary:
 		return
 	state = decoded
+	if state.get("building_stream", false):
+		state.get("urban", {})["buildings"] = streamed_buildings
 	state["paused"] = paused
 	_refresh_footpaths()
 	# Animals arrive as compact records after the people samples.

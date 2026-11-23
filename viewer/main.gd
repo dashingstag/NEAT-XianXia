@@ -1014,7 +1014,7 @@ func _decode(data: PackedByteArray) -> void:
 	for village_profile in urban.get("villages",[]):
 		if int(village_profile.market)==maxi(board_focus,0):
 			persona_option.select(int(village_profile.persona_id))
-	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at 500 copper. Lease review below 100.\nTown requires 3 completed homes, shops and workshops each.\nMarketplace remains the centre.\n"
+	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at %d copper. Lease review below %d.\n" % [int(urban.get("wealth_threshold",500)), int(urban.get("reserve_threshold",100))] + "Town requires 3 completed homes, shops and workshops each.\nMarketplace remains the centre.\n"
 	for village in urban.get("villages",[]):
 		if board_focus>=0 and int(village.market)!=board_focus:
 			continue

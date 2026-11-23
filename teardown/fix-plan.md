@@ -30,10 +30,9 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 - **Fix:** re-record any fixture that lacks `house_positions`, then delete the fallback. Otherwise add a parity check for a ring of indices.
 - **Verify:** `python tools/dev.py test viewer` and `test connection`.
 
-### R3 — `main_gd` / `urban_module`: render exported thresholds (#87)
-- **Class:** fragile seam. `main.gd:1017` prints "Gazette at 500 copper. Lease review below 100." The snapshot already exports `urban.wealth_threshold` and `reserve_threshold` (`urban.rs:2369`).
-- **Fix:** build the text from the exported fields.
-- **Verify:** `python tools/dev.py test viewer`.
+### R3 — `main_gd` / `urban_module`: render exported thresholds (#87) — done
+- `urban.rs` names `GAZETTE_THRESHOLD` and `LEASE_REVIEW_THRESHOLD`. The two rules, the snapshot export and the viewer text (`main.gd`) all read them, and `gazette_offer_and_viewer_export_use_the_threshold_constants` pins the boundary and the export.
+- Left over: the town promotion text ("3 completed homes, shops and workshops") is still literal in `main.gd`.
 
 ### Lower priority (no fix planned; watch on re-audit)
 - `urban_module` and `world_monolith` stay orange as fusion findings. They are mandates to keep moving logic out incrementally, not defects.

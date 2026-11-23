@@ -150,11 +150,12 @@
           "deps": {"step_orchestrator": "host", "economy_refresh": "data", "main_gd": "data", "check_protocol": "test"},
           "breaks": "The SKU packing `target = building*32 + sku` (urban.rs:345, 1115) is mirrored bare in lib.rs:1861 (`target % 32`) — an unnamed constant; wares ledger and goods ledger balance separately, so a ware-path bug that mints silently passes the goods check.",
           "score": "orange",
-          "whyScore": "2,464 impl lines with 15 comments and 11 panics; constants mirrored into viewer text (main.gd:1017 'Gazette at 500 copper' vs urban.rs:436 `coffers >= 500`) though the wire exports wealth_threshold/reserve_threshold (urban.rs:2369) that the viewer ignores.",
+          "whyScore": "2,464 impl lines with 15 comments and 11 panics. The district thresholds are now named constants (urban.rs GAZETTE_THRESHOLD, LEASE_REVIEW_THRESHOLD) that the rules, the snapshot export and the viewer text all read (#87); the SKU packing below is still an unnamed mirrored constant.",
           "metrics": {"loc": 2993, "testLines": 528, "comments": 15, "panics": 11, "todos": 0, "unsafe": 0},
           "excerpts": [
-            {"file": "sim/crates/sim-core/src/urban.rs", "s": 436, "e": 437, "text": "        if !s.zoned && self.coffers(m) >= 500 {\n            v.push((\"GazetteDistricts\", 0, 0.9));"},
-            {"file": "viewer/main.gd", "s": 1017, "e": 1017, "text": "    lines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at 500 copper. Lease review below 100.\\nTown requires 3 completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\""},
+            {"file": "sim/crates/sim-core/src/urban.rs", "s": 5, "e": 10, "text": "/// Town coffers at which a council may gazette districts. Exported to the\n/// viewer as `urban.wealth_threshold`.\npub const GAZETTE_THRESHOLD: u64 = 500;\n/// Town coffers below which a council reviews shop leases. Exported to the\n/// viewer as `urban.reserve_threshold`.\npub const LEASE_REVIEW_THRESHOLD: u64 = 100;"},
+            {"file": "sim/crates/sim-core/src/urban.rs", "s": 442, "e": 443, "text": "        if !s.zoned && self.coffers(m) >= GAZETTE_THRESHOLD {\n            v.push((\"GazetteDistricts\", 0, 0.9));"},
+            {"file": "viewer/main.gd", "s": 1017, "e": 1017, "text": "\tlines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at %d copper. Lease review below %d.\\n\" % [int(urban.get(\"wealth_threshold\",500)), int(urban.get(\"reserve_threshold\",100))] + \"Town requires 3 completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\""},
             {"file": "sim/crates/sim-core/src/lib.rs", "s": 1936, "e": 1940, "text": "            if c.action == Action::ShopGoods {\n                let shop = c.target as usize / 32;\n                decision[\"shop_id\"] = shop.into();\n                decision[\"product_id\"] = (c.target % 32).into();\n                decision[\"owner_id\"] ="}
           ]
         },
@@ -596,9 +597,9 @@
           "what": "991-line UI root: TCP client, snapshot header decode + animal record rebuild, person/site/animal inspector tabs, wealth leaderboard, village boards, command senders.",
           "why": "The player's window into the conduit — every snapshot field becomes text here.",
           "deps": {"viewer_tcp": "host", "snapshot_encoder": "data", "field_decoder": "data", "person_inspector": "data"},
-          "breaks": "Hardcodes game constants that the wire also exports ('Gazette at 500 copper. Lease review below 100.' at main.gd:1017 while urban.rs exports wealth_threshold/reserve_threshold) — text drifts when tuning moves.",
+          "breaks": "Text that the snapshot does not export is still literal (e.g. 'Town requires 3 completed homes, shops and workshops each.'); it drifts if the promotion rule changes.",
           "score": "yellow",
-          "whyScore": "Decode path verified (magic/version/size assertions, header layout matches); house picking now reads sim-supplied positions (main.gd:656 via field._house_position); display text still duplicates sim constants the metadata already exports.",
+          "whyScore": "Decode path verified (magic/version/size assertions, header layout matches); house picking reads sim-supplied positions (main.gd:656 via field._house_position); the gazette and lease thresholds render from the exported urban.wealth_threshold/reserve_threshold (main.gd:1017, #87).",
           "metrics": {"loc": 991, "testLines": 0, "comments": 1, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
             {"file": "viewer/main.gd", "s": 903, "e": 911, "text": "\tif magic != \"XNS1\" or data.size() < 32 or data.decode_u16(4) != 2:\n\t\treturn\n\tpaused = data.decode_u16(6) == 1\n\tvar count: int = data.decode_u32(20)\n\tvar json_length: int = data.decode_u32(24)\n\tvar animal_count: int = data.decode_u32(28)\n\tif 32+json_length+(count+animal_count)*16 != data.size():\n\t\tnotice.text = \"Snapshot size mismatch.\"\n\t\treturn"},
@@ -811,6 +812,6 @@
   "fixes": {
     "legacy_readers": "Freeze a bare-World twin for v14-18 saves the first time a type inside World must change shape, or ahead of time; the v14 entry in legacy_schema.json shows what it must match.",
     "house_origin_mirror": "Re-record any fixture without house_positions, then delete the _house_origin fallback, or pin it with a parity test against rest.rs output for a ring of indices.",
-    "main_gd": "Render the district/property thresholds from the exported urban.wealth_threshold and reserve_threshold instead of literal text."
+    "main_gd": "Export the town promotion requirement (3 homes, shops and workshops) and render it from the snapshot like the thresholds."
   }
 }

@@ -1,15 +1,15 @@
 //! Explicit schema-10 reader, also reuses the old agent pool for earlier schemas.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAnimal, LegacyAnimalPregnancy,
-//!   LegacyAspiration, LegacyContract, LegacyConvoy, LegacyCorpse, LegacyCouncil,
-//!   LegacyEcologyLedger, LegacyEducation, LegacyFarm, LegacyFertileRegion, LegacyForest,
-//!   LegacyGoal, LegacyGoalKind, LegacyGrass, LegacyGraveyard, LegacyJobKind, LegacyLedger,
-//!   LegacyLot, LegacyMarket, LegacyPatch, LegacyPerson, LegacyPolicyChoice, LegacyPregnancy,
-//!   LegacyProject, LegacyQuote, LegacyRoad, LegacySchool, LegacyShelter, LegacyStatistics,
-//!   LegacyTavern, LegacyWildlife.
-//! Live types it still trusts: Action, Gene, Genome, Innovations, Kind, Node, Rng.
-//! A serde-layout change to a live type reinterprets this version's saved
-//! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
-//! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
+//! Frozen layouts this schema decodes into: LegacyAction, LegacyAgents, LegacyAnimal,
+//!   LegacyAnimalPregnancy, LegacyAspiration, LegacyContract, LegacyConvoy, LegacyCorpse,
+//!   LegacyCouncil, LegacyEcologyLedger, LegacyEducation, LegacyFarm, LegacyFertileRegion,
+//!   LegacyForest, LegacyGene, LegacyGenome, LegacyGoal, LegacyGoalKind, LegacyGrass,
+//!   LegacyGraveyard, LegacyInnovations, LegacyJobKind, LegacyKind, LegacyLedger, LegacyLot,
+//!   LegacyMarket, LegacyNode, LegacyPatch, LegacyPerson, LegacyPolicyChoice, LegacyPregnancy,
+//!   LegacyProject, LegacyQuote, LegacyRng, LegacyRoad, LegacySchool, LegacyShelter,
+//!   LegacyStatistics, LegacyTavern, LegacyWildlife.
+//! It decodes into no live types, so live types can change freely;
+//! legacy_schema::legacy_reader_schemas_are_pinned fails if that stops
+//! being true. Never edit a Legacy* layout: old saves depend on it (#54).
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LegacyAgents {
@@ -26,7 +26,7 @@ pub struct LegacyAgents {
     pub cargo_kind: Vec<u8>,
     pub origin: Vec<u32>,
     pub home: Vec<u32>,
-    pub action: Vec<Action>,
+    pub action: Vec<legacy_types::LegacyAction>,
     pub target: Vec<u32>,
     pub timer: Vec<f32>,
     pub last_decision: Vec<u64>,
@@ -52,11 +52,11 @@ pub struct LegacyAgents {
 pub struct LegacyWorld {
     pub format: u32,
     pub seed: u64,
-    pub rng: Rng,
+    pub rng: legacy_types::LegacyRng,
     pub tick: u64,
     pub agents: LegacyAgents,
-    pub genomes: Vec<Genome>,
-    pub innovations: Innovations,
+    pub genomes: Vec<legacy_types::LegacyGenome>,
+    pub innovations: legacy_types::LegacyInnovations,
     #[serde(skip)]
     pub brains: Vec<Compiled>,
     pub markets: Vec<legacy_v13::LegacyMarket>,
@@ -98,7 +98,7 @@ impl From<LegacyAgents> for Agents {
             cargo_kind: old.cargo_kind,
             origin: old.origin,
             home: old.home,
-            action: old.action,
+            action: old.action.into_iter().map(Into::into).collect(),
             target: old.target,
             timer: old.timer,
             last_decision: old.last_decision,
@@ -139,7 +139,7 @@ impl From<Agents> for LegacyAgents {
             cargo_kind: a.cargo_kind,
             origin: a.origin,
             home: a.home,
-            action: a.action,
+            action: a.action.into_iter().map(Into::into).collect(),
             target: a.target,
             timer: a.timer,
             last_decision: a.last_decision,
@@ -168,11 +168,11 @@ impl From<LegacyWorld> for World {
         Self {
             format: old.format,
             seed: old.seed,
-            rng: old.rng,
+            rng: old.rng.into(),
             tick: old.tick,
             agents: old.agents.into(),
-            genomes: old.genomes,
-            innovations: old.innovations,
+            genomes: old.genomes.into_iter().map(Into::into).collect(),
+            innovations: old.innovations.into(),
             brains: old.brains,
             markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches.into_iter().map(Into::into).collect(),
@@ -228,11 +228,11 @@ mod tests {
         let old = LegacyWorld {
             format: w.format.clone(),
             seed: w.seed.clone(),
-            rng: w.rng.clone(),
+            rng: w.rng.clone().into(),
             tick: w.tick.clone(),
             agents: w.agents.clone().into(),
-            genomes: w.genomes.clone(),
-            innovations: w.innovations.clone(),
+            genomes: w.genomes.iter().cloned().map(Into::into).collect(),
+            innovations: w.innovations.clone().into(),
             brains: w.brains.clone(),
             markets: w.markets.iter().map(legacy_v13::to_legacy_market).collect(),
             patches: w.patches.iter().cloned().map(Into::into).collect(),

@@ -2,7 +2,7 @@
 
 Historical prototype notes. The save-format numbers, paths and command examples below describe an earlier implementation snapshot; they are not current compatibility claims or run instructions. Use the [root README](../README.md) for current commands and the [contract notes](../contracts/README.md) for supported save formats.
 
-The native Rust simulation owns all decisions, property, money, inventories and contracts. Godot displays snapshots and sends player commands. `crates/sim-core/src/urban.rs` contains the new system; the existing council and individual NEAT evaluators rank its feasible actions alongside previous activities.
+The native Rust simulation owns all decisions, property, money, inventories and contracts. Godot displays snapshots and sends player commands. `sim/crates/sim-core/src/urban.rs` contains the new system; the existing council and individual NEAT evaluators rank its feasible actions alongside previous activities.
 
 ## Rules in this prototype
 
@@ -36,7 +36,7 @@ Shop retail purchases pay one copper to the marketplace and the remainder to the
 
 ## Brains, aspirations and profiles
 
-New individual choices are `UrbanWork`, `LeaseBusiness`, `OperateBusiness`, `OrderGoods`, `BuyHome`, `RentHome`, `ShopGoods`, `Hunt` and `CollectEstate`. They use the existing stable 42-input contract (as of this brief — the sensor schema has since grown: `LEGACY_INPUTS` 42 → `FRONTIER_INPUTS` 48 → `INPUTS` 52 plus 4 memory inputs; see `crates/neat-core/src/lib.rs`): need, benefit, risk, distance, signed transaction value, continuity, funds, carrying capacity, traits, aspiration and goals. Costs are negative transaction values; earned contract rewards are positive. Infeasible choices are excluded before neural scoring. A mutated brain cannot spend missing money, create goods or skip delivery distance.
+New individual choices are `UrbanWork`, `LeaseBusiness`, `OperateBusiness`, `OrderGoods`, `BuyHome`, `RentHome`, `ShopGoods`, `Hunt` and `CollectEstate`. They use the existing stable 42-input contract (as of this brief — the sensor schema has since grown: `LEGACY_INPUTS` 42 → `FRONTIER_INPUTS` 48 → `INPUTS` 52 plus 4 memory inputs; see `sim/crates/neat-core/src/lib.rs`): need, benefit, risk, distance, signed transaction value, continuity, funds, carrying capacity, traits, aspiration and goals. Costs are negative transaction values; earned contract rewards are positive. Infeasible choices are excluded before neural scoring. A mutated brain cannot spend missing money, create goods or skip delivery distance.
 
 New aspirations are Homeowner, Shopkeeper, Artisan, Hunter and Haulier. Corresponding short goals track home ownership, leasing a business, production, deliveries and hunts. Existing saved aspirations are preserved; new births can receive the expanded set. Survival and dependent care can interrupt work. A carried contract parcel is dropped at the worker's actual position and can be recovered by another worker.
 
@@ -53,17 +53,23 @@ Save format **11** stores private property, jobs, cargo, wares, personas and urb
 For an isolated scenario, run:
 
 ```powershell
-target/release/sim-runner.exe urban-demo --agents 1000 --steps 18000 --threads 8 --out runs/urban-flow.json
+cargo run --release --locked --manifest-path sim/Cargo.toml -p sim-runner -- urban-demo --agents 1000 --steps 18000 --threads 8 --out runs/urban-flow.json
 ```
 
 This fixture transfers existing money from inhabitants and finite materials from resource patches into a funded hamlet. It does not manufacture initial assets, force district choices, pre-complete buildings or assign tenants. It writes `runs/urban-demo.snapshot`, separate from the user's world, and checks save/replay continuation. Use `serve --load --checkpoint runs/urban-demo.snapshot` to view that experiment separately.
 
 Focused tests cover wealth/material gates, the nine-building promotion condition, private beds, rent, one-time builder payment, real manufacture and wholesale purchase, funded retail furniture delivery, parcel recovery, eviction asset preservation and exact checkpoint continuation. The complete workspace suite also covers the previous family, wildlife, school, caravan and conservation behaviour.
 
-An isolated Godot interface check consumes the native report without connecting to the live backend:
+An isolated Godot interface check consumes a recorded frame without connecting to the live backend. The supported entry point runs it against the checked-in `fixtures/town-shop.json` and keeps the log in its run directory:
 
 ```powershell
-godot --headless --path viewer-godot --quit-after 120 --script res://bench/urban_ui_check.gd -- C:/absolute/path/to/runs/urban-flow.json
+python tools/dev.py test viewer
+```
+
+To check a report you generated yourself, point the same script at the `viewer` project directly:
+
+```powershell
+godot --headless --path viewer --quit-after 120 --script res://bench/urban_ui_check.gd -- C:/absolute/path/to/runs/urban-flow.json
 ```
 
 On 19 November 2026 this checked 47 property inspectors, building hit detection, camera centring, nine zone overlays, profile selection, the account display and all three fidelity levels. It finished without errors or warnings. A repeated completed-building drawing warning found during this check was corrected; an already running viewer loads that correction when reopened.
@@ -114,4 +120,4 @@ The individual inspector lists contacts, signed scores, family/shared-trait indi
 
 Shared-time checks are staggered across the game hour, contacts are stored sparsely, and an ordered due index processes only relationships whose monthly review is due. Relationship randomness has its own saved stream rather than consuming the existing evolutionary or family random stream. Neighbour and decay indices are rebuilt when loading; score history, cooldowns and random state survive replay exactly.
 
-The relationship tests cover combined probabilities, both limits, once-per-hour rolls, mutual scores, capacity on either side, zero removal, both signs of monthly drift, actual house grouping, caravan/tavern presence, retail encounters, death cleanup and exact save/replay. `experiments/check_relationships.py` additionally exercises the isolated TCP backend and writes an authentic inspector fixture for the Godot UI check.
+The relationship tests cover combined probabilities, both limits, once-per-hour rolls, mutual scores, capacity on either side, zero removal, both signs of monthly drift, actual house grouping, caravan/tavern presence, retail encounters, death cleanup and exact save/replay. `testing/protocol/check_relationships.py` additionally exercises the isolated TCP backend and writes an authentic inspector fixture for the Godot UI check.

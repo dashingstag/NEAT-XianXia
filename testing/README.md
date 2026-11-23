@@ -19,7 +19,7 @@ same runner and continue to work.
 
 ## Where the checks live
 
-- [Protocol, bank and relationship checks](protocol/) use runner-owned servers.
+- [Protocol, bank, relationship and streamed-building checks](protocol/) use runner-owned servers. The streaming check pads a copy of the v12 fixture to 300 buildings with the `stream_fixture` example so the stream needs two 256-row batches.
 - [Godot fixture and benchmark scripts](../viewer/bench/) use the viewer's
   `res://` paths. For a standalone render benchmark, run
   `godot --path viewer --script res://bench/render_bench.gd`.

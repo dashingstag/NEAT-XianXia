@@ -1,9 +1,10 @@
 //! Exact schema-7 reader.
 //! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyCouncil,
-//!   LegacyGoal, LegacyGoalKind, LegacyLedger, LegacyLot, LegacyMarket, LegacyPerson,
-//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProject, LegacyQuote, LegacyStatistics.
-//! Live types it still trusts: Action, Contract, Convoy, Corpse, Farm, FertileRegion, Gene,
-//!   Genome, Graveyard, Innovations, JobKind, Kind, Node, Patch, Rng, Road, Shelter, Tavern.
+//!   LegacyFarm, LegacyFertileRegion, LegacyGoal, LegacyGoalKind, LegacyLedger, LegacyLot,
+//!   LegacyMarket, LegacyPerson, LegacyPolicyChoice, LegacyPregnancy, LegacyProject,
+//!   LegacyQuote, LegacyStatistics, LegacyTavern.
+//! Live types it still trusts: Action, Contract, Convoy, Corpse, Gene, Genome, Graveyard,
+//!   Innovations, JobKind, Kind, Node, Patch, Rng, Road, Shelter.
 //! A serde-layout change to a live type reinterprets this version's saved
 //! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
 //! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
@@ -34,10 +35,10 @@ pub struct LegacyWorld {
     pub graveyards: Vec<Graveyard>,
     pub people: Vec<legacy_types::LegacyPerson>,
     pub matches: Vec<u32>,
-    pub farms: Vec<Farm>,
-    pub fertility: Vec<FertileRegion>,
+    pub farms: Vec<legacy_types::LegacyFarm>,
+    pub fertility: Vec<legacy_types::LegacyFertileRegion>,
     pub social: Vec<f32>,
-    pub taverns: Vec<Tavern>,
+    pub taverns: Vec<legacy_types::LegacyTavern>,
 }
 impl From<LegacyWorld> for World {
     fn from(old: LegacyWorld) -> Self {
@@ -65,10 +66,10 @@ impl From<LegacyWorld> for World {
             graveyards: old.graveyards,
             people: old.people.into_iter().map(Into::into).collect(),
             matches: old.matches,
-            farms: old.farms,
-            fertility: old.fertility,
+            farms: old.farms.into_iter().map(Into::into).collect(),
+            fertility: old.fertility.into_iter().map(Into::into).collect(),
             social: old.social,
-            taverns: old.taverns,
+            taverns: old.taverns.into_iter().map(Into::into).collect(),
             wildlife: Wildlife::default(),
             education: Education::default(),
             urban: Urban::default(),
@@ -125,10 +126,10 @@ mod tests {
             graveyards: w.graveyards.clone(),
             people: w.people.iter().cloned().map(Into::into).collect(),
             matches: w.matches.clone(),
-            farms: w.farms.clone(),
-            fertility: w.fertility.clone(),
+            farms: w.farms.iter().cloned().map(Into::into).collect(),
+            fertility: w.fertility.iter().cloned().map(Into::into).collect(),
             social: w.social.clone(),
-            taverns: w.taverns.clone(),
+            taverns: w.taverns.iter().cloned().map(Into::into).collect(),
         };
         let raw = postcard::to_allocvec(&old).unwrap();
         let mut bytes = b"XXSAVE07".to_vec();

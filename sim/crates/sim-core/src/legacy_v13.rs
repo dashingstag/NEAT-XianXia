@@ -1,12 +1,13 @@
 //! Explicit schema-13 reader: preserves learned relationships and restores the original hill.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyCouncil,
-//!   LegacyGoal, LegacyGoalKind, LegacyLedger, LegacyLot, LegacyMarket, LegacyPerson,
-//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProject, LegacyQuote, LegacyStatistics.
-//! Live types it still trusts: Action, Animal, AnimalPregnancy, Bank, Banking, Building,
-//!   Contract, Convoy, Corpse, EcologyLedger, Education, Estate, Farm, FertileRegion, Forest,
-//!   Gene, Genome, Grass, Graveyard, Innovations, Job, JobKind, Kind, Link, Loan, Node, Patch,
-//!   Progress, Relationships, Rng, Road, School, Shelter, Tavern, TownState, Urban, Wildlife,
-//!   Zone.
+//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyBank,
+//!   LegacyBanking, LegacyBuilding, LegacyCouncil, LegacyEducation, LegacyEstate, LegacyFarm,
+//!   LegacyFertileRegion, LegacyGoal, LegacyGoalKind, LegacyJob, LegacyLedger, LegacyLoan,
+//!   LegacyLot, LegacyMarket, LegacyPerson, LegacyPolicyChoice, LegacyPregnancy,
+//!   LegacyProgress, LegacyProject, LegacyQuote, LegacySchool, LegacyStatistics, LegacyTavern,
+//!   LegacyTownState, LegacyUrban, LegacyZone.
+//! Live types it still trusts: Action, Animal, AnimalPregnancy, Contract, Convoy, Corpse,
+//!   EcologyLedger, Forest, Gene, Genome, Grass, Graveyard, Innovations, JobKind, Kind, Link,
+//!   Node, Patch, Relationships, Rng, Road, Shelter, Wildlife.
 //! A serde-layout change to a live type reinterprets this version's saved
 //! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
 //! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
@@ -293,14 +294,14 @@ pub struct LegacyWorld {
     pub graveyards: Vec<Graveyard>,
     pub people: Vec<legacy_types::LegacyPerson>,
     pub matches: Vec<u32>,
-    pub farms: Vec<Farm>,
-    pub fertility: Vec<FertileRegion>,
+    pub farms: Vec<legacy_types::LegacyFarm>,
+    pub fertility: Vec<legacy_types::LegacyFertileRegion>,
     pub social: Vec<f32>,
-    pub taverns: Vec<Tavern>,
+    pub taverns: Vec<legacy_types::LegacyTavern>,
     pub wildlife: Wildlife,
-    pub education: Education,
-    pub urban: Urban,
-    pub banking: Banking,
+    pub education: legacy_types::LegacyEducation,
+    pub urban: legacy_types::LegacyUrban,
+    pub banking: legacy_types::LegacyBanking,
     pub relationships: Relationships,
 }
 impl From<LegacyWorld> for World {
@@ -329,14 +330,14 @@ impl From<LegacyWorld> for World {
             graveyards: old.graveyards,
             people: old.people.into_iter().map(Into::into).collect(),
             matches: old.matches,
-            farms: old.farms,
-            fertility: old.fertility,
+            farms: old.farms.into_iter().map(Into::into).collect(),
+            fertility: old.fertility.into_iter().map(Into::into).collect(),
             social: old.social,
-            taverns: old.taverns,
+            taverns: old.taverns.into_iter().map(Into::into).collect(),
             wildlife: old.wildlife,
-            education: old.education,
-            urban: old.urban,
-            banking: old.banking,
+            education: old.education.into(),
+            urban: old.urban.into(),
+            banking: old.banking.into(),
             relationships: old.relationships,
             watch: Default::default(),
             food_memory: Default::default(),

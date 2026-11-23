@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trail Lab — slime mold routing on real walks</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Trail Lab</h1>
+  <p id="status">loading…</p>
+</header>
+<main>
+  <section id="stage">
+    <canvas id="map" width="1536" height="960"></canvas>
+    <canvas id="map-raw" width="1536" height="960" style="display:none"></canvas>
+  </section>
+  <aside id="panel">
+    <div class="row">
+      <button id="play">Play</button>
+      <button id="reset">Reset</button>
+      <label>speed <input id="speed" type="range" min="1" max="60" value="8"></label>
+    </div>
+    <div class="row" id="day">day 0</div>
+    <div class="row" id="stats"></div>
+    <fieldset>
+      <legend>slime mold parameters</legend>
+      <label>deposit <input id="deposit" type="range" min="0.1" max="2" step="0.1" value="0.5"><span id="deposit-v">0.5</span></label>
+      <label>splat <input id="splat" type="range" min="0" max="1" step="0.05" value="0.25"><span id="splat-v">0.25</span></label>
+      <label>decay <input id="decay" type="range" min="0.8" max="1" step="0.005" value="0.96"><span id="decay-v">0.96</span></label>
+      <label>promote bar <input id="promote" type="range" min="1" max="20" step="1" value="6"><span id="promote-v">6</span></label>
+      <label>min trip <input id="minTrip" type="range" min="0" max="320" step="8" value="200"><span id="minTrip-v">200</span></label>
+      <label>trail pull <input id="trailPull" type="range" min="0" max="1" step="0.05" value="0.6"><span id="trailPull-v">0.6</span></label>
+    </fieldset>
+    <fieldset>
+      <legend>view</legend>
+      <label><input type="radio" name="view" value="mold" checked> trail network</label>
+      <label><input type="radio" name="view" value="raw"> raw walked cells</label>
+      <label><input type="radio" name="view" value="split"> side by side</label>
+      <label><input id="agents-toggle" type="checkbox" checked> agents</label>
+      <label><input id="probes-toggle" type="checkbox" checked> probe walkers</label>
+    </fieldset>
+    <canvas id="chart" width="300" height="120"></canvas>
+    <p class="hint">
+      Gold = mold network with decay; grey line = raw accumulated cells.
+      Cyan probes join the trail mid-path via 3-sensor steering.
+    </p>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

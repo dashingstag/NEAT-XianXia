@@ -1,0 +1,8 @@
+{
+  "name": "path-network-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

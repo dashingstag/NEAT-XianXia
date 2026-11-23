@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Path Cover Lab — minimum footpath set</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Path Cover Lab</h1>
+  <p id="status">loading…</p>
+</header>
+<main>
+  <section id="stage"><canvas id="map" width="1536" height="960"></canvas></section>
+  <aside id="panel">
+    <div class="row">
+      <button id="solve">Re-solve</button>
+      <button id="daily">Sim daily</button>
+      <button id="sweep-btn">Sweep</button>
+      <label><input id="trips-toggle" type="checkbox" checked> show all trips</label>
+      <label><input id="baseline-net" type="checkbox"> game-rule net</label>
+      <label><input id="rolling" type="checkbox"> rolling cache</label>
+    </div>
+    <div class="row" id="solve-status">ready</div>
+    <div class="row" id="stats"></div>
+    <fieldset>
+      <legend>problem</legend>
+      <label>window (days) <input id="window" type="range" min="1" max="20" step="1" value="3"><span id="window-v">3</span></label>
+      <label>min trip len <input id="minLen" type="range" min="64" max="512" step="32" value="192"><span id="minLen-v">192</span></label>
+      <label>join radius <input id="radius" type="range" min="8" max="256" step="4" value="24"><span id="radius-v">24</span></label>
+      <label>coverage θ <input id="theta" type="range" min="0.5" max="0.99" step="0.01" value="0.95"><span id="theta-v">0.95</span></label>
+      <label>min gain % <input id="minGain" type="range" min="0" max="2" step="0.05" value="0.2"><span id="minGain-v">0.2</span></label>
+      <label>path appeal % <input id="follow" type="range" min="0" max="100" step="5" value="60"><span id="follow-v">60</span></label>
+    </fieldset>
+    <canvas id="chart" width="300" height="120"></canvas>
+    <div class="row" id="sweep-out"></div>
+    <p class="hint">
+      Grey = observed trips (the demand). Gold = selected footpaths in
+      greedy order — brightest are the core trunks. A traveller is served
+      by a path anywhere along it: mid-path join/leave is the coverage
+      rule, not a special case.
+    </p>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

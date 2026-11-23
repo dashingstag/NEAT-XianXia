@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Path Network Lab</title>
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; background: #10151c; color: #dde5ee; height: 100vh; display: flex; flex-direction: column; }
+  nav { display: flex; gap: 4px; padding: 6px 10px; border-bottom: 1px solid #2a3542; align-items: baseline; }
+  nav b { font-size: 13px; margin-right: 8px; color: #8fa1b5; font-weight: normal; }
+  nav a { padding: 5px 14px; border-radius: 4px; color: #8fa1b5; text-decoration: none; font-size: 13px; }
+  nav a.on { background: #243447; color: #ffd166; }
+  iframe { flex: 1; border: 0; width: 100%; }
+</style>
+</head>
+<body>
+<nav>
+  <b>path network lab</b>
+  <a href="/cover/" target="view" class="on">path cover (min set)</a>
+  <a href="/trail/" target="view">trail replay (slime mold)</a>
+</nav>
+<iframe name="view" src="/cover/"></iframe>
+<script>
+  const links = [...document.querySelectorAll('nav a')];
+  links.forEach((a) => (a.onclick = () => links.forEach((x) => x.classList.toggle('on', x === a))));
+</script>
+</body>
+</html>

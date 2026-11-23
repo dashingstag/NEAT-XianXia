@@ -1102,3 +1102,602 @@ impl From<social::Tavern> for LegacyTavern {
         }
     }
 }
+
+// Batch 3: wildlife, world fixtures, civic records and relationships
+// (generated from the traced v13 schema; each field list matched the live
+// struct, serde-skipped runtime fields are rebuilt as defaults on load).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LegacyJobKind {
+    Build,
+    Haul,
+}
+same_variants!(LegacyJobKind, civic::JobKind, [Build, Haul]);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyWildlife {
+    pub forests: Vec<LegacyForest>,
+    pub grass: Vec<LegacyGrass>,
+    pub animals: Vec<LegacyAnimal>,
+    pub innovations: Innovations,
+    pub rng: Rng,
+    pub ledger: LegacyEcologyLedger,
+}
+impl From<LegacyWildlife> for wildlife::Wildlife {
+    fn from(old: LegacyWildlife) -> Self {
+        Self {
+            forests: old.forests.into_iter().map(Into::into).collect(),
+            grass: old.grass.into_iter().map(Into::into).collect(),
+            animals: old.animals.into_iter().map(Into::into).collect(),
+            innovations: old.innovations,
+            rng: old.rng,
+            ledger: old.ledger.into(),
+            spawns: Default::default(),
+            spears: Default::default(),
+            bows: Default::default(),
+            hunting_stats: Default::default(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::Wildlife> for LegacyWildlife {
+    fn from(live: wildlife::Wildlife) -> Self {
+        Self {
+            forests: live.forests.into_iter().map(Into::into).collect(),
+            grass: live.grass.into_iter().map(Into::into).collect(),
+            animals: live.animals.into_iter().map(Into::into).collect(),
+            innovations: live.innovations,
+            rng: live.rng,
+            ledger: live.ledger.into(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyAnimal {
+    pub species: u8,
+    pub female: bool,
+    pub forest: u32,
+    pub x: f32,
+    pub y: f32,
+    pub heading: f32,
+    pub alive: bool,
+    pub health: f32,
+    pub hunger: f32,
+    pub energy: f32,
+    pub born: u64,
+    pub initial_age: u32,
+    pub mother: u32,
+    pub father: u32,
+    pub pregnancy: Option<LegacyAnimalPregnancy>,
+    pub last_mated: u64,
+    pub action: u8,
+    pub target: u32,
+    pub goal_x: f32,
+    pub goal_y: f32,
+    pub timer: f32,
+    pub threat: f32,
+    pub threat_x: f32,
+    pub threat_y: f32,
+    pub genome: Genome,
+}
+impl From<LegacyAnimal> for wildlife::Animal {
+    fn from(old: LegacyAnimal) -> Self {
+        Self {
+            species: old.species,
+            female: old.female,
+            forest: old.forest,
+            x: old.x,
+            y: old.y,
+            heading: old.heading,
+            alive: old.alive,
+            health: old.health,
+            hunger: old.hunger,
+            energy: old.energy,
+            born: old.born,
+            initial_age: old.initial_age,
+            mother: old.mother,
+            father: old.father,
+            pregnancy: old.pregnancy.map(Into::into),
+            last_mated: old.last_mated,
+            action: old.action,
+            target: old.target,
+            goal_x: old.goal_x,
+            goal_y: old.goal_y,
+            timer: old.timer,
+            threat: old.threat,
+            threat_x: old.threat_x,
+            threat_y: old.threat_y,
+            genome: old.genome,
+            brain: Default::default(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::Animal> for LegacyAnimal {
+    fn from(live: wildlife::Animal) -> Self {
+        Self {
+            species: live.species,
+            female: live.female,
+            forest: live.forest,
+            x: live.x,
+            y: live.y,
+            heading: live.heading,
+            alive: live.alive,
+            health: live.health,
+            hunger: live.hunger,
+            energy: live.energy,
+            born: live.born,
+            initial_age: live.initial_age,
+            mother: live.mother,
+            father: live.father,
+            pregnancy: live.pregnancy.map(Into::into),
+            last_mated: live.last_mated,
+            action: live.action,
+            target: live.target,
+            goal_x: live.goal_x,
+            goal_y: live.goal_y,
+            timer: live.timer,
+            threat: live.threat,
+            threat_x: live.threat_x,
+            threat_y: live.threat_y,
+            genome: live.genome,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyAnimalPregnancy {
+    pub father: u32,
+    pub due: u64,
+}
+impl From<LegacyAnimalPregnancy> for wildlife::AnimalPregnancy {
+    fn from(old: LegacyAnimalPregnancy) -> Self {
+        Self {
+            father: old.father,
+            due: old.due,
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::AnimalPregnancy> for LegacyAnimalPregnancy {
+    fn from(live: wildlife::AnimalPregnancy) -> Self {
+        Self {
+            father: live.father,
+            due: live.due,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LegacyEcologyLedger {
+    pub initial_grass: u64,
+    pub grown_grass: u64,
+    pub eaten_grass: u64,
+    pub eaten_berries: u64,
+    pub initial_animals: u64,
+    pub births: u64,
+    pub deaths: u64,
+    pub conceptions: u64,
+    pub lost_pregnancies: u64,
+}
+impl From<LegacyEcologyLedger> for wildlife::EcologyLedger {
+    fn from(old: LegacyEcologyLedger) -> Self {
+        Self {
+            initial_grass: old.initial_grass,
+            grown_grass: old.grown_grass,
+            eaten_grass: old.eaten_grass,
+            eaten_berries: old.eaten_berries,
+            initial_animals: old.initial_animals,
+            births: old.births,
+            deaths: old.deaths,
+            conceptions: old.conceptions,
+            lost_pregnancies: old.lost_pregnancies,
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::EcologyLedger> for LegacyEcologyLedger {
+    fn from(live: wildlife::EcologyLedger) -> Self {
+        Self {
+            initial_grass: live.initial_grass,
+            grown_grass: live.grown_grass,
+            eaten_grass: live.eaten_grass,
+            eaten_berries: live.eaten_berries,
+            initial_animals: live.initial_animals,
+            births: live.births,
+            deaths: live.deaths,
+            conceptions: live.conceptions,
+            lost_pregnancies: live.lost_pregnancies,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyForest {
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+}
+impl From<LegacyForest> for wildlife::Forest {
+    fn from(old: LegacyForest) -> Self {
+        Self {
+            x: old.x,
+            y: old.y,
+            radius: old.radius,
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::Forest> for LegacyForest {
+    fn from(live: wildlife::Forest) -> Self {
+        Self {
+            x: live.x,
+            y: live.y,
+            radius: live.radius,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyGrass {
+    pub forest: u32,
+    pub x: f32,
+    pub y: f32,
+    pub stock: u64,
+    pub capacity: u64,
+    pub growth: f64,
+}
+impl From<LegacyGrass> for wildlife::Grass {
+    fn from(old: LegacyGrass) -> Self {
+        Self {
+            forest: old.forest,
+            x: old.x,
+            y: old.y,
+            stock: old.stock,
+            capacity: old.capacity,
+            growth: old.growth,
+        }
+    }
+}
+#[cfg(test)]
+impl From<wildlife::Grass> for LegacyGrass {
+    fn from(live: wildlife::Grass) -> Self {
+        Self {
+            forest: live.forest,
+            x: live.x,
+            y: live.y,
+            stock: live.stock,
+            capacity: live.capacity,
+            growth: live.growth,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyPatch {
+    pub id: u32,
+    pub kind: usize,
+    pub x: f32,
+    pub y: f32,
+    pub stock: u64,
+    pub capacity: u64,
+    pub renewal: f64,
+    pub growth: f64,
+    pub age: f32,
+}
+impl From<LegacyPatch> for crate::Patch {
+    fn from(old: LegacyPatch) -> Self {
+        Self {
+            id: old.id,
+            kind: old.kind,
+            x: old.x,
+            y: old.y,
+            stock: old.stock,
+            capacity: old.capacity,
+            renewal: old.renewal,
+            growth: old.growth,
+            age: old.age,
+        }
+    }
+}
+#[cfg(test)]
+impl From<crate::Patch> for LegacyPatch {
+    fn from(live: crate::Patch) -> Self {
+        Self {
+            id: live.id,
+            kind: live.kind,
+            x: live.x,
+            y: live.y,
+            stock: live.stock,
+            capacity: live.capacity,
+            renewal: live.renewal,
+            growth: live.growth,
+            age: live.age,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyRoad {
+    pub a: u32,
+    pub b: u32,
+    pub built: bool,
+    pub under_construction: bool,
+    pub traffic: u64,
+}
+impl From<LegacyRoad> for crate::Road {
+    fn from(old: LegacyRoad) -> Self {
+        Self {
+            a: old.a,
+            b: old.b,
+            built: old.built,
+            under_construction: old.under_construction,
+            traffic: old.traffic,
+        }
+    }
+}
+#[cfg(test)]
+impl From<crate::Road> for LegacyRoad {
+    fn from(live: crate::Road) -> Self {
+        Self {
+            a: live.a,
+            b: live.b,
+            built: live.built,
+            under_construction: live.under_construction,
+            traffic: live.traffic,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyShelter {
+    pub x: f32,
+    pub y: f32,
+    pub settlement: Option<u32>,
+    pub beds: Vec<u32>,
+    pub free: Vec<u32>,
+}
+impl From<LegacyShelter> for rest::Shelter {
+    fn from(old: LegacyShelter) -> Self {
+        Self {
+            x: old.x,
+            y: old.y,
+            settlement: old.settlement,
+            beds: old.beds,
+            free: old.free,
+        }
+    }
+}
+#[cfg(test)]
+impl From<rest::Shelter> for LegacyShelter {
+    fn from(live: rest::Shelter) -> Self {
+        Self {
+            x: live.x,
+            y: live.y,
+            settlement: live.settlement,
+            beds: live.beds,
+            free: live.free,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyConvoy {
+    pub members: Vec<u32>,
+    pub x: f32,
+    pub y: f32,
+    pub goal_x: f32,
+    pub goal_y: f32,
+    pub created: u64,
+    pub departed: bool,
+}
+impl From<LegacyConvoy> for travel::Convoy {
+    fn from(old: LegacyConvoy) -> Self {
+        Self {
+            members: old.members,
+            x: old.x,
+            y: old.y,
+            goal_x: old.goal_x,
+            goal_y: old.goal_y,
+            created: old.created,
+            departed: old.departed,
+        }
+    }
+}
+#[cfg(test)]
+impl From<travel::Convoy> for LegacyConvoy {
+    fn from(live: travel::Convoy) -> Self {
+        Self {
+            members: live.members,
+            x: live.x,
+            y: live.y,
+            goal_x: live.goal_x,
+            goal_y: live.goal_y,
+            created: live.created,
+            departed: live.departed,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyCorpse {
+    pub agent: u32,
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub death_tick: u64,
+    pub status: u8,
+    pub claim: u32,
+}
+impl From<LegacyCorpse> for civic::Corpse {
+    fn from(old: LegacyCorpse) -> Self {
+        Self {
+            agent: old.agent,
+            market: old.market,
+            x: old.x,
+            y: old.y,
+            death_tick: old.death_tick,
+            status: old.status,
+            claim: old.claim,
+        }
+    }
+}
+#[cfg(test)]
+impl From<civic::Corpse> for LegacyCorpse {
+    fn from(live: civic::Corpse) -> Self {
+        Self {
+            agent: live.agent,
+            market: live.market,
+            x: live.x,
+            y: live.y,
+            death_tick: live.death_tick,
+            status: live.status,
+            claim: live.claim,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyContract {
+    pub worker: u32,
+    pub market: u32,
+    pub kind: LegacyJobKind,
+    pub corpse: u32,
+    pub graveyard: u32,
+    pub reward: u64,
+    pub phase: u8,
+    pub timer: f32,
+}
+impl From<LegacyContract> for civic::Contract {
+    fn from(old: LegacyContract) -> Self {
+        Self {
+            worker: old.worker,
+            market: old.market,
+            kind: old.kind.into(),
+            corpse: old.corpse,
+            graveyard: old.graveyard,
+            reward: old.reward,
+            phase: old.phase,
+            timer: old.timer,
+        }
+    }
+}
+#[cfg(test)]
+impl From<civic::Contract> for LegacyContract {
+    fn from(live: civic::Contract) -> Self {
+        Self {
+            worker: live.worker,
+            market: live.market,
+            kind: live.kind.into(),
+            corpse: live.corpse,
+            graveyard: live.graveyard,
+            reward: live.reward,
+            phase: live.phase,
+            timer: live.timer,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyGraveyard {
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub progress: f32,
+    pub required: f32,
+    pub capacity: u32,
+    pub buried: Vec<u32>,
+    pub ready: bool,
+}
+impl From<LegacyGraveyard> for civic::Graveyard {
+    fn from(old: LegacyGraveyard) -> Self {
+        Self {
+            market: old.market,
+            x: old.x,
+            y: old.y,
+            progress: old.progress,
+            required: old.required,
+            capacity: old.capacity,
+            buried: old.buried,
+            ready: old.ready,
+        }
+    }
+}
+#[cfg(test)]
+impl From<civic::Graveyard> for LegacyGraveyard {
+    fn from(live: civic::Graveyard) -> Self {
+        Self {
+            market: live.market,
+            x: live.x,
+            y: live.y,
+            progress: live.progress,
+            required: live.required,
+            capacity: live.capacity,
+            buried: live.buried,
+            ready: live.ready,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyRelationships {
+    pub edges: BTreeMap<(u32, u32), LegacyLink>,
+    pub recent: BTreeMap<(u32, u32), u64>,
+    pub rng: Rng,
+    pub initialized: bool,
+    pub interactions: u64,
+    pub positive: u64,
+    pub negative: u64,
+    pub drift_steps: u64,
+    pub drift_checks: u64,
+    pub capacity_skips: u64,
+}
+impl From<LegacyRelationships> for relationships::Relationships {
+    fn from(old: LegacyRelationships) -> Self {
+        Self {
+            edges: old.edges.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            recent: old.recent,
+            rng: old.rng,
+            initialized: old.initialized,
+            interactions: old.interactions,
+            positive: old.positive,
+            negative: old.negative,
+            drift_steps: old.drift_steps,
+            drift_checks: old.drift_checks,
+            capacity_skips: old.capacity_skips,
+            neighbours: Default::default(),
+            due: Default::default(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<relationships::Relationships> for LegacyRelationships {
+    fn from(live: relationships::Relationships) -> Self {
+        Self {
+            edges: live.edges.into_iter().map(|(k, v)| (k, v.into())).collect(),
+            recent: live.recent,
+            rng: live.rng,
+            initialized: live.initialized,
+            interactions: live.interactions,
+            positive: live.positive,
+            negative: live.negative,
+            drift_steps: live.drift_steps,
+            drift_checks: live.drift_checks,
+            capacity_skips: live.capacity_skips,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyLink {
+    pub score: i16,
+    pub next_decay: u64,
+    pub last_contact: u64,
+    pub contexts: u8,
+}
+impl From<LegacyLink> for relationships::Link {
+    fn from(old: LegacyLink) -> Self {
+        Self {
+            score: old.score,
+            next_decay: old.next_decay,
+            last_contact: old.last_contact,
+            contexts: old.contexts,
+        }
+    }
+}
+#[cfg(test)]
+impl From<relationships::Link> for LegacyLink {
+    fn from(live: relationships::Link) -> Self {
+        Self {
+            score: live.score,
+            next_decay: live.next_decay,
+            last_contact: live.last_contact,
+            contexts: live.contexts,
+        }
+    }
+}

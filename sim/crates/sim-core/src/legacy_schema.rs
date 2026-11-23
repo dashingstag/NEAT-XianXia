@@ -38,6 +38,9 @@ fn trace_enum(tracer: &mut Tracer, name: &str) {
         "LegacyGoalKind" => tracer
             .trace_simple_type::<legacy_types::LegacyGoalKind>()
             .map(drop),
+        "LegacyJobKind" => tracer
+            .trace_simple_type::<legacy_types::LegacyJobKind>()
+            .map(drop),
         other => panic!("legacy_schema: add a tracer for enum {other}"),
     };
     result.unwrap();
@@ -139,31 +142,15 @@ fn legacy_reader_schemas_are_pinned() {
 /// This list shrinks as twins land; it must never grow.
 const STILL_LIVE: &[&str] = &[
     "Action",
-    "Animal",
-    "AnimalPregnancy",
-    "Contract",
-    "Convoy",
-    "Corpse",
-    "EcologyLedger",
-    "Forest",
     "Gene",
     "Genome",
-    "Grass",
-    "Graveyard",
     "Innovations",
-    "JobKind",
     "Kind",
-    "Link",
     "Lot",
     "Node",
-    "Patch",
     "Project",
     "Quote",
-    "Relationships",
     "Rng",
-    "Road",
-    "Shelter",
-    "Wildlife",
 ];
 
 #[test]

@@ -1,11 +1,12 @@
 //! Explicit schema-11 reader: adds empty town banking without changing existing assets.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyCouncil,
-//!   LegacyGoal, LegacyGoalKind, LegacyLedger, LegacyLot, LegacyMarket, LegacyPerson,
-//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProject, LegacyQuote, LegacyStatistics.
-//! Live types it still trusts: Action, Animal, AnimalPregnancy, Building, Contract, Convoy,
-//!   Corpse, EcologyLedger, Education, Estate, Farm, FertileRegion, Forest, Gene, Genome,
-//!   Grass, Graveyard, Innovations, Job, JobKind, Kind, Node, Patch, Progress, Rng, Road,
-//!   School, Shelter, Tavern, TownState, Urban, Wildlife, Zone.
+//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyBuilding,
+//!   LegacyCouncil, LegacyEducation, LegacyEstate, LegacyFarm, LegacyFertileRegion, LegacyGoal,
+//!   LegacyGoalKind, LegacyJob, LegacyLedger, LegacyLot, LegacyMarket, LegacyPerson,
+//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProgress, LegacyProject, LegacyQuote,
+//!   LegacySchool, LegacyStatistics, LegacyTavern, LegacyTownState, LegacyUrban, LegacyZone.
+//! Live types it still trusts: Action, Animal, AnimalPregnancy, Contract, Convoy, Corpse,
+//!   EcologyLedger, Forest, Gene, Genome, Grass, Graveyard, Innovations, JobKind, Kind, Node,
+//!   Patch, Rng, Road, Shelter, Wildlife.
 //! A serde-layout change to a live type reinterprets this version's saved
 //! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
 //! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
@@ -36,13 +37,13 @@ pub struct LegacyWorld {
     pub graveyards: Vec<Graveyard>,
     pub people: Vec<legacy_types::LegacyPerson>,
     pub matches: Vec<u32>,
-    pub farms: Vec<Farm>,
-    pub fertility: Vec<FertileRegion>,
+    pub farms: Vec<legacy_types::LegacyFarm>,
+    pub fertility: Vec<legacy_types::LegacyFertileRegion>,
     pub social: Vec<f32>,
-    pub taverns: Vec<Tavern>,
+    pub taverns: Vec<legacy_types::LegacyTavern>,
     pub wildlife: Wildlife,
-    pub education: Education,
-    pub urban: Urban,
+    pub education: legacy_types::LegacyEducation,
+    pub urban: legacy_types::LegacyUrban,
 }
 impl From<LegacyWorld> for World {
     fn from(old: LegacyWorld) -> Self {
@@ -70,13 +71,13 @@ impl From<LegacyWorld> for World {
             graveyards: old.graveyards,
             people: old.people.into_iter().map(Into::into).collect(),
             matches: old.matches,
-            farms: old.farms,
-            fertility: old.fertility,
+            farms: old.farms.into_iter().map(Into::into).collect(),
+            fertility: old.fertility.into_iter().map(Into::into).collect(),
             social: old.social,
-            taverns: old.taverns,
+            taverns: old.taverns.into_iter().map(Into::into).collect(),
             wildlife: old.wildlife,
-            education: old.education,
-            urban: old.urban,
+            education: old.education.into(),
+            urban: old.urban.into(),
             banking: Banking::default(),
             relationships: Relationships::default(),
             watch: Default::default(),
@@ -129,13 +130,13 @@ mod tests {
             graveyards: w.graveyards.clone(),
             people: w.people.iter().cloned().map(Into::into).collect(),
             matches: w.matches.clone(),
-            farms: w.farms.clone(),
-            fertility: w.fertility.clone(),
+            farms: w.farms.iter().cloned().map(Into::into).collect(),
+            fertility: w.fertility.iter().cloned().map(Into::into).collect(),
             social: w.social.clone(),
-            taverns: w.taverns.clone(),
+            taverns: w.taverns.iter().cloned().map(Into::into).collect(),
             wildlife: w.wildlife.clone(),
-            education: w.education.clone(),
-            urban: w.urban.clone(),
+            education: w.education.clone().into(),
+            urban: w.urban.clone().into(),
         };
         let raw = postcard::to_allocvec(&old).unwrap();
         let mut bytes = b"XXSAVE11".to_vec();

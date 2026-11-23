@@ -117,6 +117,19 @@ def protocol_suite(run):
                 check(stream, run / "town-shop.json")
             else:
                 check(stream)
+    # Streamed buildings need more than one 256-row batch; no recorded save has
+    # that many, so pad a copy of the old save with empty unowned shells.
+    import check_streaming
+    folder = run / "streaming"
+    folder.mkdir()
+    save = folder / "world.snapshot"
+    cargo("build", "--release", "-p", "sim-core", "--example", "stream_fixture")
+    target = Path(os.getenv("CARGO_TARGET_DIR", ROOT / "sim/target")).resolve()
+    tool = target / "release" / "examples" / ("stream_fixture.exe" if os.name == "nt" else "stream_fixture")
+    subprocess.run([tool, ROOT / CONTRACT["old_save"], save, "300"], check=True,
+                   stdout=(folder / "fixture.json").open("w"))
+    with server(binary, folder, save) as port, connect(port) as stream:
+        check_streaming.check(stream)
 
 
 def isolation(run):

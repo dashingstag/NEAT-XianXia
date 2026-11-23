@@ -1,10 +1,11 @@
 //! Explicit schema-5 reader; preserves state while upgrading content.
-//! Live types this schema trusts: Compiled, Contract, Convoy, Corpse, Genome, Graveyard
-//!   Innovations, Patch, Rng, Road, Shelter
-//! — all still shared with the live schema (agents and markets already
-//! have frozen twins). A serde-layout change to one reinterprets this
-//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
-//! first — freeze a Legacy twin before changing the type.
+//! Frozen layouts this schema decodes into: LegacyAgents, LegacyCouncil, LegacyLedger,
+//!   LegacyMarket, LegacyPolicyChoice, LegacyStatistics.
+//! Live types it still trusts: Action, Contract, Convoy, Corpse, Gene, Genome, Graveyard,
+//!   Innovations, JobKind, Kind, Lot, Node, Patch, Project, Quote, Rng, Road, Shelter.
+//! A serde-layout change to a live type reinterprets this version's saved
+//! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
+//! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
 use super::*;
 use crate::civic::PolicyChoice;
 #[derive(Serialize, Deserialize)]

@@ -20,3 +20,6 @@ experimental-memory-pilot = []
 [[example]]
 name = "memory_pilot"
 required-features = ["experimental-memory-pilot"]
+
+[dev-dependencies]
+serde-reflection = "0.7"

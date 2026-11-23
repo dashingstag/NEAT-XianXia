@@ -1,11 +1,12 @@
 //! Exact schema-6 reader.
-//! Live types this schema trusts: Compiled, Contract, Convoy, Corpse, Council, Farm
-//!   FertileRegion, Genome, Graveyard, Innovations, Ledger, Patch, Person, Rng, Road, Shelter
-//!   Statistics
-//! — all still shared with the live schema (agents and markets already
-//! have frozen twins). A serde-layout change to one reinterprets this
-//! version's saved bytes; tests::legacy_reader_schema_is_pinned fails
-//! first — freeze a Legacy twin before changing the type.
+//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAspiration, LegacyCouncil,
+//!   LegacyGoal, LegacyGoalKind, LegacyLedger, LegacyLot, LegacyMarket, LegacyPerson,
+//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProject, LegacyQuote, LegacyStatistics.
+//! Live types it still trusts: Action, Contract, Convoy, Corpse, Farm, FertileRegion, Gene,
+//!   Genome, Graveyard, Innovations, JobKind, Kind, Node, Patch, Rng, Road, Shelter.
+//! A serde-layout change to a live type reinterprets this version's saved
+//! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
+//! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LegacyWorld {
@@ -21,17 +22,17 @@ pub struct LegacyWorld {
     pub markets: Vec<legacy_v13::LegacyMarket>,
     pub patches: Vec<Patch>,
     pub roads: Vec<Road>,
-    pub ledger: Ledger,
-    pub stats: Statistics,
+    pub ledger: legacy_types::LegacyLedger,
+    pub stats: legacy_types::LegacyStatistics,
     pub sales_profile_labels: Vec<String>,
     pub convoys: Vec<Option<Convoy>>,
     pub shelters: Vec<Shelter>,
     pub clock_offset: u64,
-    pub councils: Vec<Council>,
+    pub councils: Vec<legacy_types::LegacyCouncil>,
     pub corpses: Vec<Corpse>,
     pub contracts: Vec<Option<Contract>>,
     pub graveyards: Vec<Graveyard>,
-    pub people: Vec<Person>,
+    pub people: Vec<legacy_types::LegacyPerson>,
     pub matches: Vec<u32>,
     pub farms: Vec<Farm>,
     pub fertility: Vec<FertileRegion>,
@@ -51,17 +52,17 @@ impl From<LegacyWorld> for World {
             markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches,
             roads: old.roads,
-            ledger: old.ledger,
-            stats: old.stats,
+            ledger: old.ledger.into(),
+            stats: old.stats.into(),
             sales_profile_labels: old.sales_profile_labels,
             convoys: old.convoys,
             shelters: old.shelters,
             clock_offset: old.clock_offset,
-            councils: old.councils,
+            councils: old.councils.into_iter().map(Into::into).collect(),
             corpses: old.corpses,
             contracts: old.contracts,
             graveyards: old.graveyards,
-            people: old.people,
+            people: old.people.into_iter().map(Into::into).collect(),
             matches: old.matches,
             farms: old.farms,
             fertility: old.fertility,
@@ -111,17 +112,17 @@ mod tests {
             markets: w.markets.iter().map(legacy_v13::to_legacy_market).collect(),
             patches: w.patches.clone(),
             roads: w.roads.clone(),
-            ledger: w.ledger.clone(),
-            stats: w.stats.clone(),
+            ledger: w.ledger.clone().into(),
+            stats: w.stats.clone().into(),
             sales_profile_labels: w.sales_profile_labels.clone(),
             convoys: w.convoys.clone(),
             shelters: w.shelters.clone(),
             clock_offset: w.clock_offset.clone(),
-            councils: w.councils.clone(),
+            councils: w.councils.iter().cloned().map(Into::into).collect(),
             corpses: w.corpses.clone(),
             contracts: w.contracts.clone(),
             graveyards: w.graveyards.clone(),
-            people: w.people.clone(),
+            people: w.people.iter().cloned().map(Into::into).collect(),
             matches: w.matches.clone(),
             farms: w.farms.clone(),
             fertility: w.fertility.clone(),

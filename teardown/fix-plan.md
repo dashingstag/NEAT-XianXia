@@ -9,7 +9,7 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 | P0 | `load_ladder` | Done. The header is parsed once into `SaveVersion` (`lib.rs:563-610`), and every gate reads a named capability. | #61 (`1401b6b`) |
 | P1 | `travel_module`, `validate_gate` | Done. Founding stops at `MAX_MARKETS`, the same constant the load gate uses, and `check()` runs `validate_schema()`. | #63 / #78 (`42e979a`) |
 | P2 | `action_enum` | Done. `every_action_remapped_below_the_six_bit_wire_budget` and `release_remap_declaration_indices_are_pinned`. | #64 (`fa2a3aa`) |
-| P3 | `legacy_readers` | **Partial.** Exact schema snapshot per reader; frozen twins landing in batches (1: Person, Council, Ledger, Statistics; 2: urban, banking, education, farms, taverns; 3: wildlife, world fixtures, civic records, relationships). 10 shared types remain. |
+| P3 | `legacy_readers` | **Done for v4-13.** Exact schema snapshot per reader, and 47 frozen twins in four batches; no reader v4-13 decodes a live type. v14-18 (bare `World`) are detected but not frozen; that is a follow-up issue. | #91 and the batch PRs after it |
 | P4 | `fixture_bank_v12` | Done. Real `dev-v34` and `release-v33` writer output is checked in and loaded by tests. | #79 (`0badb84`), #80 (`c11da31`) |
 | P5 | `house_origin_mirror` | **Mostly done.** `house_positions` ships on the wire. The GDScript fallback remains for frames recorded without it. | #67 (`179b191`) |
 | P6 | `viewer_tcp` | Done. `MAX_VIEWER_FRAME` is shared, and the server drops oversize snapshots with a diagnostic. | #57 / #77 (`191672e`) |
@@ -19,11 +19,11 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 
 ## Open work
 
-### R1 — `legacy_readers`: finish the freeze (#54)
-- **Status:** detection is exact and the first batch is frozen. `legacy_schema::legacy_reader_schemas_are_pinned` traces every reader's full serde schema with `serde-reflection` and compares it with `sim-core/src/legacy_schema.json`. This replaced the byte-length pins. `legacy_types.rs` freezes `Person`, `Council`, `Ledger`, `Statistics` and their nested types for readers 6-13.
-- **Remaining:** 10 shared types in `STILL_LIVE` (`legacy_schema.rs`): the neat-core brain types `Genome`, `Gene`, `Node`, `Kind`, `Innovations` and `Rng`; `Action`; and the v4/v5 `Lot`, `Project`, `Quote`. `legacy_readers_trust_no_new_live_types` stops the list from growing.
-- **Fix:** batch 4 freezes the neat-core brain types, `Action` (its declaration order is what old saves index) and the v4/v5 market lots. Each twin removes its name from `STILL_LIVE`; regenerate the snapshot with `UPDATE_LEGACY_SCHEMA=1` only after switching a reader to a twin. Close #54 when `STILL_LIVE` is empty.
-- **Verify:** `cargo test -p sim-core --lib legacy_`, plus `python tools/dev.py test replay` and `test protocol` on `bank-v12`. The replay digest must not change.
+### R1 — `legacy_readers`: v14-18 bare-World saves (follow-up to #54)
+- **Status:** readers v4-13 are fully frozen. `legacy_types.rs` holds 47 twins, `STILL_LIVE` is empty, and `legacy_schema.json` pins every reader's traced schema.
+- **Remaining:** v14 saves (and v15-18) decode the live `World` directly, so a change to a type inside `World` changes how they decode. The `v14-bare-world` entry in the snapshot fails on any such change.
+- **Fix:** when a type inside `World` first needs to change shape, freeze a `World` twin for v14-18 that matches the snapshot's `v14-bare-world` entry. Agents and Market need current-layout twins, and `map` needs its `default_checkpoint_map` default.
+- **Verify:** `cargo test -p sim-core --lib legacy_`, plus `python tools/dev.py test replay` and `test protocol` on `bank-v12`.
 
 ### R2 — `house_origin_mirror`: retire the fallback (#89)
 - **Class:** residual hand-mirror. `field.gd:447-457` prefers the sim's `house_positions`. Frames without them use `_house_origin`, which copies the `rest.rs:587` constants and has no parity test.

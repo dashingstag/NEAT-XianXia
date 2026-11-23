@@ -1,11 +1,11 @@
 //! Read-only schema-4 migration; no simulation code.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyConvoy, LegacyLedger,
-//!   LegacyMarket, LegacyPatch, LegacyRoad, LegacyShelter, LegacyStatistics.
-//! Live types it still trusts: Action, Gene, Genome, Innovations, Kind, Lot, Node, Project,
-//!   Quote, Rng.
-//! A serde-layout change to a live type reinterprets this version's saved
-//! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
-//! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
+//! Frozen layouts this schema decodes into: LegacyAction, LegacyAgents, LegacyConvoy,
+//!   LegacyGene, LegacyGenome, LegacyInnovations, LegacyKind, LegacyLedger, LegacyLot,
+//!   LegacyMarket, LegacyNode, LegacyPatch, LegacyProject, LegacyQuote, LegacyRng, LegacyRoad,
+//!   LegacyShelter, LegacyStatistics.
+//! It decodes into no live types, so live types can change freely;
+//! legacy_schema::legacy_reader_schemas_are_pinned fails if that stops
+//! being true. Never edit a Legacy* layout: old saves depend on it (#54).
 use super::*;
 #[derive(Serialize, Deserialize)]
 pub struct LegacyAgents {
@@ -22,7 +22,7 @@ pub struct LegacyAgents {
     pub cargo_kind: Vec<u8>,
     pub origin: Vec<u32>,
     pub home: Vec<u32>,
-    pub action: Vec<Action>,
+    pub action: Vec<legacy_types::LegacyAction>,
     pub target: Vec<u32>,
     pub timer: Vec<f32>,
     pub last_decision: Vec<u64>,
@@ -45,14 +45,14 @@ pub struct LegacyMarket {
     pub x: f32,
     pub y: f32,
     pub coins: u64,
-    pub goods: [VecDeque<Lot>; 7],
-    pub quotes: [Quote; 7],
+    pub goods: [VecDeque<legacy_v13::LegacyLot>; 7],
+    pub quotes: [legacy_v13::LegacyQuote; 7],
     pub nearest: [u32; 7],
     pub population: u32,
     pub housing_blocks: u32,
     pub stable_residents: u32,
     pub village: bool,
-    pub project: Option<Project>,
+    pub project: Option<legacy_v13::LegacyProject>,
     pub sales: [u64; 7],
     pub local_sales: [u64; 7],
     pub imported_sales: [u64; 7],
@@ -79,11 +79,11 @@ pub struct LegacyStatistics {
 pub struct LegacyWorld {
     pub format: u32,
     pub seed: u64,
-    pub rng: Rng,
+    pub rng: legacy_types::LegacyRng,
     pub tick: u64,
     pub agents: LegacyAgents,
-    pub genomes: Vec<Genome>,
-    pub innovations: Innovations,
+    pub genomes: Vec<legacy_types::LegacyGenome>,
+    pub innovations: legacy_types::LegacyInnovations,
     #[serde(skip)]
     pub brains: Vec<Compiled>,
     pub markets: Vec<LegacyMarket>,
@@ -114,7 +114,7 @@ impl From<LegacyAgents> for Agents {
             cargo_kind: old.cargo_kind,
             origin: old.origin,
             home: old.home,
-            action: old.action,
+            action: old.action.into_iter().map(Into::into).collect(),
             target: old.target,
             timer: old.timer,
             last_decision: old.last_decision,
@@ -148,14 +148,14 @@ impl From<LegacyMarket> for Market {
             x: old.x,
             y: old.y,
             coins: old.coins,
-            goods: legacy_v5::pad(old.goods),
-            quotes: legacy_v5::pad(old.quotes),
+            goods: legacy_v5::pad(old.goods.map(|q| q.into_iter().map(Into::into).collect())),
+            quotes: legacy_v5::pad(old.quotes.map(Into::into)),
             nearest: legacy_v5::nearest(old.nearest),
             population: old.population,
             housing_blocks: old.housing_blocks,
             stable_residents: old.stable_residents,
             village: old.village,
-            project: old.project,
+            project: old.project.map(Into::into),
             sales: legacy_v5::pad(old.sales),
             local_sales: legacy_v5::pad(old.local_sales),
             imported_sales: legacy_v5::pad(old.imported_sales),
@@ -202,11 +202,11 @@ impl From<LegacyWorld> for World {
         Self {
             format: 6,
             seed: old.seed,
-            rng: old.rng,
+            rng: old.rng.into(),
             tick: old.tick,
             agents: old.agents.into(),
-            genomes: old.genomes,
-            innovations: old.innovations,
+            genomes: old.genomes.into_iter().map(Into::into).collect(),
+            innovations: old.innovations.into(),
             brains: old.brains,
             markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches.into_iter().map(Into::into).collect(),

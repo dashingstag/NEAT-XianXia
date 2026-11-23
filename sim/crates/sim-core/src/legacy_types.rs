@@ -1,14 +1,20 @@
-//! Frozen serde layouts shared by the schema 6-13 readers (#54).
+//! Frozen serde layouts that the schema 4-13 readers decode old saves into (#54).
 //!
-//! Each `Legacy*` type below is a copy of the live type's layout as those
-//! saves wrote it. Field order, field types and enum variant order are what
-//! postcard decodes, so none of them may change. Live types can now evolve
-//! freely; the `From` impls are the only place that has to follow them.
-//! `legacy_schema` pins every reader's full traced schema, so a live type
-//! that a reader still embeds cannot change without a test failing.
+//! Each `Legacy*` type is a copy of a live type's layout as those saves wrote
+//! it. Postcard decodes by position, so field order, field types, array
+//! lengths and enum variant order must never change here. No reader decodes
+//! into a live type any more, so live types can evolve freely; only the `From`
+//! conversions below have to follow them, and they stop compiling until they
+//! do. `legacy_schema` pins every reader's traced schema against
+//! `legacy_schema.json`.
 //!
-//! The `From<live>` impls exist only for tests that synthesize old saves
-//! from a current world.
+//! Batches 2-4 were generated from the traced v13 schema: each live struct's
+//! field list had to match the trace exactly, and serde-skipped runtime
+//! fields are rebuilt as defaults on load, exactly as serde did before.
+//!
+//! The reverse `From<live>` conversions exist for tests that synthesize old
+//! saves from a current world; `LegacyAction`'s also serves
+//! `From<Agents> for LegacyAgents`.
 use super::*;
 use std::collections::BTreeMap;
 
@@ -97,8 +103,8 @@ pub struct LegacyPolicyChoice {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LegacyCouncil {
-    pub genome: Genome,
-    pub innovations: Innovations,
+    pub genome: LegacyGenome,
+    pub innovations: LegacyInnovations,
     pub graveyard: u32,
     pub near_dead: u32,
     pub remote_dead: u32,
@@ -161,16 +167,31 @@ pub struct LegacyStatistics {
 /// Maps between two enums whose variants share names, in both directions.
 macro_rules! same_variants {
     ($legacy:ident, $live:path, [$($v:ident),* $(,)?]) => {
+        same_variants!(@from $legacy, $live, [$($v),*]);
+        #[cfg(test)]
+        same_variants!(@back $legacy, $live, [$($v),*]);
+    };
+    // Reverse conversion outside tests too (a reader builds this from live data).
+    (both $legacy:ident, $live:path, [$($v:ident),* $(,)?]) => {
+        same_variants!(@from $legacy, $live, [$($v),*]);
+        same_variants!(@back $legacy, $live, [$($v),*]);
+    };
+    (@from $legacy:ident, $live:path, [$($v:ident),*]) => {
         impl From<$legacy> for $live {
             fn from(old: $legacy) -> Self {
-                match old { $($legacy::$v => Self::$v,)* }
+                match old {
+                    $($legacy::$v => Self::$v,)*
+                }
             }
         }
-        #[cfg(test)]
+    };
+    (@back $legacy:ident, $live:path, [$($v:ident),*]) => {
         impl From<$live> for $legacy {
             fn from(live: $live) -> Self {
                 use $live as Live;
-                match live { $(Live::$v => Self::$v,)* }
+                match live {
+                    $(Live::$v => Self::$v,)*
+                }
             }
         }
     };
@@ -299,8 +320,8 @@ twin!(
 impl From<LegacyCouncil> for Council {
     fn from(old: LegacyCouncil) -> Self {
         Self {
-            genome: old.genome,
-            innovations: old.innovations,
+            genome: old.genome.into(),
+            innovations: old.innovations.into(),
             brain: None,
             graveyard: old.graveyard,
             near_dead: old.near_dead,
@@ -326,8 +347,8 @@ impl From<LegacyCouncil> for Council {
 impl From<Council> for LegacyCouncil {
     fn from(c: Council) -> Self {
         Self {
-            genome: c.genome,
-            innovations: c.innovations,
+            genome: c.genome.into(),
+            innovations: c.innovations.into(),
             graveyard: c.graveyard,
             near_dead: c.near_dead,
             remote_dead: c.remote_dead,
@@ -1117,8 +1138,8 @@ pub struct LegacyWildlife {
     pub forests: Vec<LegacyForest>,
     pub grass: Vec<LegacyGrass>,
     pub animals: Vec<LegacyAnimal>,
-    pub innovations: Innovations,
-    pub rng: Rng,
+    pub innovations: LegacyInnovations,
+    pub rng: LegacyRng,
     pub ledger: LegacyEcologyLedger,
 }
 impl From<LegacyWildlife> for wildlife::Wildlife {
@@ -1127,8 +1148,8 @@ impl From<LegacyWildlife> for wildlife::Wildlife {
             forests: old.forests.into_iter().map(Into::into).collect(),
             grass: old.grass.into_iter().map(Into::into).collect(),
             animals: old.animals.into_iter().map(Into::into).collect(),
-            innovations: old.innovations,
-            rng: old.rng,
+            innovations: old.innovations.into(),
+            rng: old.rng.into(),
             ledger: old.ledger.into(),
             spawns: Default::default(),
             spears: Default::default(),
@@ -1144,8 +1165,8 @@ impl From<wildlife::Wildlife> for LegacyWildlife {
             forests: live.forests.into_iter().map(Into::into).collect(),
             grass: live.grass.into_iter().map(Into::into).collect(),
             animals: live.animals.into_iter().map(Into::into).collect(),
-            innovations: live.innovations,
-            rng: live.rng,
+            innovations: live.innovations.into(),
+            rng: live.rng.into(),
             ledger: live.ledger.into(),
         }
     }
@@ -1176,7 +1197,7 @@ pub struct LegacyAnimal {
     pub threat: f32,
     pub threat_x: f32,
     pub threat_y: f32,
-    pub genome: Genome,
+    pub genome: LegacyGenome,
 }
 impl From<LegacyAnimal> for wildlife::Animal {
     fn from(old: LegacyAnimal) -> Self {
@@ -1205,7 +1226,7 @@ impl From<LegacyAnimal> for wildlife::Animal {
             threat: old.threat,
             threat_x: old.threat_x,
             threat_y: old.threat_y,
-            genome: old.genome,
+            genome: old.genome.into(),
             brain: Default::default(),
         }
     }
@@ -1238,7 +1259,7 @@ impl From<wildlife::Animal> for LegacyAnimal {
             threat: live.threat,
             threat_x: live.threat_x,
             threat_y: live.threat_y,
-            genome: live.genome,
+            genome: live.genome.into(),
         }
     }
 }
@@ -1629,7 +1650,7 @@ impl From<civic::Graveyard> for LegacyGraveyard {
 pub struct LegacyRelationships {
     pub edges: BTreeMap<(u32, u32), LegacyLink>,
     pub recent: BTreeMap<(u32, u32), u64>,
-    pub rng: Rng,
+    pub rng: LegacyRng,
     pub initialized: bool,
     pub interactions: u64,
     pub positive: u64,
@@ -1643,7 +1664,7 @@ impl From<LegacyRelationships> for relationships::Relationships {
         Self {
             edges: old.edges.into_iter().map(|(k, v)| (k, v.into())).collect(),
             recent: old.recent,
-            rng: old.rng,
+            rng: old.rng.into(),
             initialized: old.initialized,
             interactions: old.interactions,
             positive: old.positive,
@@ -1662,7 +1683,7 @@ impl From<relationships::Relationships> for LegacyRelationships {
         Self {
             edges: live.edges.into_iter().map(|(k, v)| (k, v.into())).collect(),
             recent: live.recent,
-            rng: live.rng,
+            rng: live.rng.into(),
             initialized: live.initialized,
             interactions: live.interactions,
             positive: live.positive,
@@ -1698,6 +1719,181 @@ impl From<relationships::Link> for LegacyLink {
             next_decay: live.next_decay,
             last_contact: live.last_contact,
             contexts: live.contexts,
+        }
+    }
+}
+
+// Batch 4: neat-core brain types, Action, and the market lots v4/v5 embed.
+// Old saves store an Action as its declaration index, so LegacyAction keeps
+// the order (and repr values) it had when this freeze was taken; live
+// Action can now be reordered or extended without touching old saves.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LegacyAction {
+    Rest = 0,
+    Gather = 1,
+    Deliver = 2,
+    BuyFood = 3,
+    Build = 4,
+    Trade = 5,
+    Mint = 6,
+    Barter = 7,
+    WorkForFood = 8,
+    MakeCamp = 9,
+    Wait = 10,
+    BuildGraveyard = 11,
+    Gravedigger = 12,
+    Court = 13,
+    CareFamily = 14,
+    CraftTool = 15,
+    BuyTool = 16,
+    Farm = 17,
+    HarvestRice = 18,
+    EquipTool = 19,
+    ForageMeal = 20,
+    StoreCargo = 21,
+    Socialize = 22,
+    BuildTavern = 23,
+    BuildSchool = 24,
+    Teach = 25,
+    AttendSchool = 26,
+    UrbanWork = 27,
+    LeaseBusiness = 28,
+    OperateBusiness = 29,
+    OrderGoods = 30,
+    BuyHome = 31,
+    RentHome = 32,
+    ShopGoods = 33,
+    Hunt = 34,
+    CollectEstate = 35,
+    BuildBank = 36,
+    BorrowBusiness = 37,
+    RepayLoan = 38,
+    HuntWildlife = 39,
+    EatCarcass = 40,
+    CraftSpear = 41,
+    CraftBow = 58,
+    Recover = 59,
+    Play = 60,
+    CollectMeat = 61,
+    SellMeat = 62,
+    BuyMeat = 63,
+    BuyInformation = 64,
+    SellInformation = 65,
+    NominateSelf = 66,
+    DiscussCamp = 67,
+    MigrateToCamp = 68,
+    DeliverWaterReport = 69,
+}
+same_variants!(both LegacyAction, Action, [
+    Rest, Gather, Deliver, BuyFood, Build, Trade, Mint, Barter, WorkForFood, MakeCamp, Wait, BuildGraveyard, Gravedigger, Court, CareFamily, CraftTool, BuyTool, Farm, HarvestRice, EquipTool, ForageMeal, StoreCargo, Socialize, BuildTavern, BuildSchool, Teach, AttendSchool, UrbanWork, LeaseBusiness, OperateBusiness, OrderGoods, BuyHome, RentHome, ShopGoods, Hunt, CollectEstate, BuildBank, BorrowBusiness, RepayLoan, HuntWildlife, EatCarcass, CraftSpear, CraftBow, Recover, Play, CollectMeat, SellMeat, BuyMeat, BuyInformation, SellInformation, NominateSelf, DiscussCamp, MigrateToCamp, DeliverWaterReport,
+]);
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum LegacyKind {
+    Input,
+    Tanh,
+    Identity,
+    Output,
+}
+same_variants!(LegacyKind, neat_core::Kind, [Input, Tanh, Identity, Output]);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyNode {
+    pub id: u32,
+    pub kind: LegacyKind,
+    pub bias: f32,
+}
+twin!(LegacyNode, neat_core::Node, [id, kind, bias]);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyGene {
+    pub innovation: u64,
+    pub from: u32,
+    pub to: u32,
+    pub weight: f32,
+    pub enabled: bool,
+}
+twin!(
+    LegacyGene,
+    neat_core::Gene,
+    [innovation, from, to, weight, enabled]
+);
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyGenome {
+    pub generation: u32,
+    pub nodes: Vec<LegacyNode>,
+    pub genes: Vec<LegacyGene>,
+}
+impl From<LegacyGenome> for Genome {
+    fn from(old: LegacyGenome) -> Self {
+        Self {
+            generation: old.generation,
+            nodes: old.nodes.into_iter().map(Into::into).collect(),
+            genes: old.genes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<Genome> for LegacyGenome {
+    fn from(live: Genome) -> Self {
+        Self {
+            generation: live.generation,
+            nodes: live.nodes.into_iter().map(Into::into).collect(),
+            genes: live.genes.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyInnovations {
+    pub next_node: u32,
+    pub next_gene: u64,
+    pub edges: BTreeMap<(u32, u32), u64>,
+    pub splits: BTreeMap<u64, u32>,
+}
+twin!(
+    LegacyInnovations,
+    Innovations,
+    [next_node, next_gene, edges, splits]
+);
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LegacyRng(pub u64);
+impl From<LegacyRng> for Rng {
+    fn from(old: LegacyRng) -> Self {
+        Self(old.0)
+    }
+}
+#[cfg(test)]
+impl From<Rng> for LegacyRng {
+    fn from(live: Rng) -> Self {
+        Self(live.0)
+    }
+}
+// legacy_v13 already froze Lot, Quote and Project with the layout v4 and v5
+// wrote; those readers reuse its twins.
+impl From<legacy_v13::LegacyLot> for Lot {
+    fn from(old: legacy_v13::LegacyLot) -> Self {
+        Self {
+            quantity: old.quantity,
+            origin: old.origin,
+        }
+    }
+}
+impl From<legacy_v13::LegacyQuote> for Quote {
+    fn from(old: legacy_v13::LegacyQuote) -> Self {
+        Self {
+            bid: old.bid,
+            remaining: old.remaining,
+            escrow: old.escrow,
+            ask: old.ask,
+            offered: old.offered,
+        }
+    }
+}
+impl From<legacy_v13::LegacyProject> for Project {
+    fn from(old: legacy_v13::LegacyProject) -> Self {
+        Self {
+            kind: old.kind,
+            progress: old.progress,
+            required: old.required,
+            destination: old.destination,
         }
     }
 }

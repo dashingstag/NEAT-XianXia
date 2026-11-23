@@ -1,26 +1,26 @@
 //! Explicit schema-11 reader: adds empty town banking without changing existing assets.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyAnimal, LegacyAnimalPregnancy,
-//!   LegacyAspiration, LegacyBuilding, LegacyContract, LegacyConvoy, LegacyCorpse,
-//!   LegacyCouncil, LegacyEcologyLedger, LegacyEducation, LegacyEstate, LegacyFarm,
-//!   LegacyFertileRegion, LegacyForest, LegacyGoal, LegacyGoalKind, LegacyGrass,
-//!   LegacyGraveyard, LegacyJob, LegacyJobKind, LegacyLedger, LegacyLot, LegacyMarket,
-//!   LegacyPatch, LegacyPerson, LegacyPolicyChoice, LegacyPregnancy, LegacyProgress,
-//!   LegacyProject, LegacyQuote, LegacyRoad, LegacySchool, LegacyShelter, LegacyStatistics,
-//!   LegacyTavern, LegacyTownState, LegacyUrban, LegacyWildlife, LegacyZone.
-//! Live types it still trusts: Action, Gene, Genome, Innovations, Kind, Node, Rng.
-//! A serde-layout change to a live type reinterprets this version's saved
-//! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
-//! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
+//! Frozen layouts this schema decodes into: LegacyAction, LegacyAgents, LegacyAnimal,
+//!   LegacyAnimalPregnancy, LegacyAspiration, LegacyBuilding, LegacyContract, LegacyConvoy,
+//!   LegacyCorpse, LegacyCouncil, LegacyEcologyLedger, LegacyEducation, LegacyEstate,
+//!   LegacyFarm, LegacyFertileRegion, LegacyForest, LegacyGene, LegacyGenome, LegacyGoal,
+//!   LegacyGoalKind, LegacyGrass, LegacyGraveyard, LegacyInnovations, LegacyJob, LegacyJobKind,
+//!   LegacyKind, LegacyLedger, LegacyLot, LegacyMarket, LegacyNode, LegacyPatch, LegacyPerson,
+//!   LegacyPolicyChoice, LegacyPregnancy, LegacyProgress, LegacyProject, LegacyQuote,
+//!   LegacyRng, LegacyRoad, LegacySchool, LegacyShelter, LegacyStatistics, LegacyTavern,
+//!   LegacyTownState, LegacyUrban, LegacyWildlife, LegacyZone.
+//! It decodes into no live types, so live types can change freely;
+//! legacy_schema::legacy_reader_schemas_are_pinned fails if that stops
+//! being true. Never edit a Legacy* layout: old saves depend on it (#54).
 use super::*;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LegacyWorld {
     pub format: u32,
     pub seed: u64,
-    pub rng: Rng,
+    pub rng: legacy_types::LegacyRng,
     pub tick: u64,
     pub agents: legacy_v13::LegacyAgents,
-    pub genomes: Vec<Genome>,
-    pub innovations: Innovations,
+    pub genomes: Vec<legacy_types::LegacyGenome>,
+    pub innovations: legacy_types::LegacyInnovations,
     #[serde(skip)]
     pub brains: Vec<Compiled>,
     pub markets: Vec<legacy_v13::LegacyMarket>,
@@ -51,11 +51,11 @@ impl From<LegacyWorld> for World {
         Self {
             format: old.format,
             seed: old.seed,
-            rng: old.rng,
+            rng: old.rng.into(),
             tick: old.tick,
             agents: old.agents.into(),
-            genomes: old.genomes,
-            innovations: old.innovations,
+            genomes: old.genomes.into_iter().map(Into::into).collect(),
+            innovations: old.innovations.into(),
             brains: old.brains,
             markets: old.markets.into_iter().map(Into::into).collect(),
             patches: old.patches.into_iter().map(Into::into).collect(),
@@ -110,11 +110,11 @@ mod tests {
         let old = LegacyWorld {
             format: w.format.clone(),
             seed: w.seed.clone(),
-            rng: w.rng.clone(),
+            rng: w.rng.clone().into(),
             tick: w.tick.clone(),
             agents: legacy_v13::to_legacy_agents(&w.agents),
-            genomes: w.genomes.clone(),
-            innovations: w.innovations.clone(),
+            genomes: w.genomes.iter().cloned().map(Into::into).collect(),
+            innovations: w.innovations.clone().into(),
             brains: w.brains.clone(),
             markets: w.markets.iter().map(legacy_v13::to_legacy_market).collect(),
             patches: w.patches.iter().cloned().map(Into::into).collect(),

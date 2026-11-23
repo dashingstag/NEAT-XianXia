@@ -41,6 +41,12 @@ fn trace_enum(tracer: &mut Tracer, name: &str) {
         "LegacyJobKind" => tracer
             .trace_simple_type::<legacy_types::LegacyJobKind>()
             .map(drop),
+        "LegacyAction" => tracer
+            .trace_simple_type::<legacy_types::LegacyAction>()
+            .map(drop),
+        "LegacyKind" => tracer
+            .trace_simple_type::<legacy_types::LegacyKind>()
+            .map(drop),
         other => panic!("legacy_schema: add a tracer for enum {other}"),
     };
     result.unwrap();
@@ -138,20 +144,10 @@ fn legacy_reader_schemas_are_pinned() {
     );
 }
 
-/// The freeze is done when no reader decodes into a live sim-core struct.
-/// This list shrinks as twins land; it must never grow.
-const STILL_LIVE: &[&str] = &[
-    "Action",
-    "Gene",
-    "Genome",
-    "Innovations",
-    "Kind",
-    "Lot",
-    "Node",
-    "Project",
-    "Quote",
-    "Rng",
-];
+/// Live types a legacy reader may still decode into. Empty since the #54
+/// freeze finished: every reader decodes only frozen `Legacy*` layouts. Do
+/// not add to it; freeze a twin instead.
+const STILL_LIVE: &[&str] = &[];
 
 #[test]
 fn legacy_readers_trust_no_new_live_types() {

@@ -11,7 +11,7 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 | P2 | `action_enum` | Done. `every_action_remapped_below_the_six_bit_wire_budget` and `release_remap_declaration_indices_are_pinned`. | #64 (`fa2a3aa`) |
 | P3 | `legacy_readers` | **Done for v4-13.** Exact schema snapshot per reader, and 47 frozen twins in four batches; no reader v4-13 decodes a live type. v14-18 (bare `World`) are detected but not frozen; that is a follow-up issue. | #91 and the batch PRs after it |
 | P4 | `fixture_bank_v12` | Done. Real `dev-v34` and `release-v33` writer output is checked in and loaded by tests. | #79 (`0badb84`), #80 (`c11da31`) |
-| P5 | `house_origin_mirror` | **Mostly done.** `house_positions` ships on the wire. The GDScript fallback remains for frames recorded without it. | #67 (`179b191`) |
+| P5 | `house_origin_mirror` | Done. `house_positions` ships on the wire, and the GDScript fallback is removed. | #67 (`179b191`), #89 |
 | P6 | `viewer_tcp` | Done. `MAX_VIEWER_FRAME` is shared, and the server drops oversize snapshots with a diagnostic. | #57 / #77 (`191672e`) |
 | P7 | `memory_pilot` | Done for save/load: `checkpoint_payload` refuses to save during a trial, and the example is feature-gated. | #75 (`c7d1aaa`) |
 | P8 | `world_monolith` | Done. The append-tails rule is documented on `struct World` (`lib.rs:388-392`). | #61 |
@@ -25,10 +25,8 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 - **Fix:** when a type inside `World` first needs to change shape, freeze a `World` twin for v14-18 that matches the snapshot's `v14-bare-world` entry. Agents and Market need current-layout twins, and `map` needs its `default_checkpoint_map` default.
 - **Verify:** `cargo test -p sim-core --lib legacy_`, plus `python tools/dev.py test replay` and `test protocol` on `bank-v12`.
 
-### R2 — `house_origin_mirror`: retire the fallback (#89)
-- **Class:** residual hand-mirror. `field.gd:447-457` prefers the sim's `house_positions`. Frames without them use `_house_origin`, which copies the `rest.rs:587` constants and has no parity test.
-- **Fix:** re-record any fixture that lacks `house_positions`, then delete the fallback. Otherwise add a parity check for a ring of indices.
-- **Verify:** `python tools/dev.py test viewer` and `test connection`.
+### R2 — `house_origin_mirror`: retire the fallback (#89) — done
+- `field.gd` now reads only the sim's `house_positions`; the hand copy of `rest.rs` `house_origin` is deleted, and a missing entry draws at the town centre. `urban_ui_check.gd` asserts every fixture house position and click target against `house_positions` (33 houses).
 
 ### R3 — `main_gd` / `urban_module`: render exported thresholds (#87) — done
 - `urban.rs` names `GAZETTE_THRESHOLD` and `LEASE_REVIEW_THRESHOLD`. The two rules, the snapshot export and the viewer text (`main.gd`) all read them, and `gazette_offer_and_viewer_export_use_the_threshold_constants` pins the boundary and the export.

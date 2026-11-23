@@ -155,7 +155,7 @@
           "excerpts": [
             {"file": "sim/crates/sim-core/src/urban.rs", "s": 5, "e": 10, "text": "/// Town coffers at which a council may gazette districts. Exported to the\n/// viewer as `urban.wealth_threshold`.\npub const GAZETTE_THRESHOLD: u64 = 500;\n/// Town coffers below which a council reviews shop leases. Exported to the\n/// viewer as `urban.reserve_threshold`.\npub const LEASE_REVIEW_THRESHOLD: u64 = 100;"},
             {"file": "sim/crates/sim-core/src/urban.rs", "s": 442, "e": 443, "text": "        if !s.zoned && self.coffers(m) >= GAZETTE_THRESHOLD {\n            v.push((\"GazetteDistricts\", 0, 0.9));"},
-            {"file": "viewer/main.gd", "s": 1017, "e": 1017, "text": "\tlines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at %d copper. Lease review below %d.\\n\" % [int(urban.get(\"wealth_threshold\",500)), int(urban.get(\"reserve_threshold\",100))] + \"Town requires 3 completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\""},
+            {"file": "viewer/main.gd", "s": 1036, "e": 1036, "text": "\tlines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at %d copper. Lease review below %d.\\n\" % [int(urban.get(\"wealth_threshold\",500)), int(urban.get(\"reserve_threshold\",100))] + \"Town requires 3 completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\""},
             {"file": "sim/crates/sim-core/src/lib.rs", "s": 1936, "e": 1940, "text": "            if c.action == Action::ShopGoods {\n                let shop = c.target as usize / 32;\n                decision[\"shop_id\"] = shop.into();\n                decision[\"product_id\"] = (c.target % 32).into();\n                decision[\"owner_id\"] ="}
           ]
         },
@@ -565,7 +565,7 @@
           "verify": false,
           "metrics": {"loc": 60, "testLines": 0, "comments": 0, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
-            {"file": "viewer/main.gd", "s": 859, "e": 866, "text": "\tvar newest_snapshot := PackedByteArray()\n\twhile incoming.size() >= 4:\n\t\tvar length := int(incoming.decode_u32(0))\n\t\tif length < 4 or length > MAX_VIEWER_FRAME:\n\t\t\tnotice.text = \"Invalid native snapshot frame.\"\n\t\t\t_connect()\n\t\t\treturn\n\t\tif incoming.size() < length+4:"},
+            {"file": "viewer/main.gd", "s": 871, "e": 878, "text": "\tvar newest_snapshot := PackedByteArray()\n\twhile incoming.size() >= 4:\n\t\tvar length := int(incoming.decode_u32(0))\n\t\tif length < 4 or length > MAX_VIEWER_FRAME:\n\t\t\tnotice.text = \"Invalid native snapshot frame.\"\n\t\t\t_connect()\n\t\t\treturn\n\t\tif incoming.size() < length+4:"},
             {"file": "sim/crates/sim-runner/src/main.rs", "s": 541, "e": 553, "text": "    fn send(&mut self, snapshot: Option<Vec<u8>>) -> Result<(), String> {\n        let snapshot = snapshot.filter(|bytes| {\n            if bytes.len() <= MAX_VIEWER_FRAME {\n                self.oversize_reported = false;\n                true\n            } else {\n                if !self.oversize_reported {\n                    self.reply(\"World snapshot exceeds the 4 MiB viewer limit.\", false);\n                    self.oversize_reported = true;\n                }\n                false\n            }\n        });"}
           ]
         }
@@ -602,26 +602,25 @@
           "whyScore": "Decode path verified (magic/version/size assertions, header layout matches); house picking reads sim-supplied positions (main.gd:656 via field._house_position); the gazette and lease thresholds render from the exported urban.wealth_threshold/reserve_threshold (main.gd:1017, #87).",
           "metrics": {"loc": 991, "testLines": 0, "comments": 1, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
-            {"file": "viewer/main.gd", "s": 903, "e": 911, "text": "\tif magic != \"XNS1\" or data.size() < 32 or data.decode_u16(4) != 2:\n\t\treturn\n\tpaused = data.decode_u16(6) == 1\n\tvar count: int = data.decode_u32(20)\n\tvar json_length: int = data.decode_u32(24)\n\tvar animal_count: int = data.decode_u32(28)\n\tif 32+json_length+(count+animal_count)*16 != data.size():\n\t\tnotice.text = \"Snapshot size mismatch.\"\n\t\treturn"},
-            {"file": "viewer/main.gd", "s": 650, "e": 657, "text": "\tif kind==\"house\":\n\t\tvar towns: Array = state.get(\"markets\",[])\n\t\tvar market := int(site_selection.market)\n\t\tif market<0 or market>=towns.size() or id>=int(towns[market].housing_blocks):\n\t\t\treturn {}\n\t\tvar town: Dictionary = towns[market]\n\t\tvar at: Vector2 = field._house_position(town, id)\n\t\treturn {\"x\":at.x+10,\"y\":at.y+7.5,\"town\":town.name,\"capacity\":32}"}
+            {"file": "viewer/main.gd", "s": 922, "e": 930, "text": "\tif magic != \"XNS1\" or data.size() < 32 or data.decode_u16(4) != 2:\n\t\treturn\n\tpaused = data.decode_u16(6) == 1\n\tvar count: int = data.decode_u32(20)\n\tvar json_length: int = data.decode_u32(24)\n\tvar animal_count: int = data.decode_u32(28)\n\tif 32+json_length+(count+animal_count)*16 != data.size():\n\t\tnotice.text = \"Snapshot size mismatch.\"\n\t\treturn"},
+            {"file": "viewer/main.gd", "s": 662, "e": 669, "text": "\tif kind==\"house\":\n\t\tvar towns: Array = state.get(\"markets\",[])\n\t\tvar market := int(site_selection.market)\n\t\tif market<0 or market>=towns.size() or id>=int(towns[market].housing_blocks):\n\t\t\treturn {}\n\t\tvar town: Dictionary = towns[market]\n\t\tvar at: Vector2 = field._house_position(town, id)\n\t\treturn {\"x\":at.x+10,\"y\":at.y+7.5,\"town\":town.name,\"capacity\":32}"}
           ]
         },
         {
           "id": "house_origin_mirror",
-          "label": "house_origin — cross-language geometry mirror",
+          "label": "house positions — sim-supplied, no viewer copy",
           "file": "viewer/field.gd",
-          "what": "field.gd _house_position: reads the sim's house_positions for each market from snapshot metadata, and falls back to a GDScript re-implementation of rest.rs house_origin only for frames that lack them.",
+          "what": "field.gd _house_position reads each market's house_positions from snapshot metadata (one per housing block, computed by rest::house_site); the GDScript re-implementation of rest.rs house_origin is gone.",
           "why": "Determines where the sim puts house beds vs where the viewer draws and hit-tests them — the same function written twice in two languages.",
           "deps": {"field_decoder": "host", "main_gd": "data", "map_layers": "data"},
-          "breaks": "Only frames recorded before #67 (no house_positions) take the mirrored fallback; there the constants must still match rest.rs and generated maps use a different dry-ground nudge.",
-          "score": "yellow",
-          "whyScore": "The cross-language mirror is no longer the live path (#67): lib.rs:3242 ships house_positions and field.gd:447-457 prefers them. The fallback remains untested against Rust, so a stale recording can still mis-place picks.",
+          "breaks": "Nothing mirrors the layout any more. A malformed frame missing an entry draws that house at the town centre instead of guessing.",
+          "score": "green",
+          "whyScore": "Single source of truth (#67, #89): lib.rs:3243 ships house_positions and the viewer only reads them. urban_ui_check asserts every fixture house position and pick against house_positions (33 houses), and fails if the viewer stops reading them.",
           "metrics": {"loc": 8, "testLines": 0, "comments": 0, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
-            {"file": "viewer/field.gd", "s": 447, "e": 457, "text": "func _house_position(town: Dictionary, index: int) -> Vector2:\n\tvar positions: Array = town.get(\"house_positions\", [])\n\tif index >= 0 and index < positions.size():\n\t\tvar p: Array = positions[index]\n\t\treturn Vector2(p[0], p[1])\n\tvar center := Vector2(town.x, town.y)\n\tvar limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)\n\tvar q := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)\n\tif not _classic_terrain() and terrain != null:\n\t\tq = terrain.dry_point(center, q)\n\treturn q"},
+            {"file": "viewer/field.gd", "s": 447, "e": 455, "text": "## House sites come from the simulation's `house_positions` (one per housing\n## block, rest::house_site). A missing entry means a malformed frame; it is\n## drawn at the town centre rather than re-deriving the layout here (#89).\nfunc _house_position(town: Dictionary, index: int) -> Vector2:\n\tvar positions: Array = town.get(\"house_positions\", [])\n\tif index >= 0 and index < positions.size():\n\t\tvar p: Array = positions[index]\n\t\treturn Vector2(p[0], p[1])\n\treturn Vector2(town.x, town.y)"},
             {"file": "sim/crates/sim-core/src/lib.rs", "s": 3243, "e": 3243, "text": "                serde_json::json!({\"id\":m.id,\"name\":m.name,\"x\":m.x,\"y\":m.y,\"population\":m.population,\"housing_blocks\":m.housing_blocks,\"house_positions\":houses[i],\"stable_residents\":m.stable_residents,\"stage\":self.settlement_stage(m.id as usize),\"coins\":m.coins,\"stock\":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),\"quotes\":m.quotes,\"sales\":m.sales,\"local_sales\":m.local_sales,\"imported_sales\":m.imported_sales,\"profile\":self.observed_market_profile(m.id as usize),\"project\":m.project})"},
-            {"file": "viewer/field.gd", "s": 975, "e": 982, "text": "func _house_origin(house: int) -> Vector2:\n\tvar original := house\n\tvar ring := 0\n\twhile house >= 12+ring*6:\n\t\thouse -= 12+ring*6\n\t\tring += 1\n\tvar angle := float(house)*TAU/float(12+ring*6)+float(ring)*0.47+(float(original*53%17)-8.0)*0.008\n\treturn Vector2(cos(angle),sin(angle))*(140.0+float(ring)*42.0+float(original*37%19)-9.0)"},
-            {"file": "sim/crates/sim-core/src/rest.rs", "s": 587, "e": 599, "text": "pub(super) fn house_origin(mut house: u32) -> (f32, f32) {\n    let original = house;\n    let mut ring = 0;\n    while house >= 12 + ring * 6 {\n        house -= 12 + ring * 6;\n        ring += 1;\n    }\n    let angle = house as f32 * std::f32::consts::TAU / (12 + ring * 6) as f32\n        + ring as f32 * 0.47\n        + ((original * 53 % 17) as f32 - 8.0) * 0.008;\n    let radius = 140.0 + ring as f32 * 42.0 + (original * 37 % 19) as f32 - 9.0;\n    (angle.cos() * radius, angle.sin() * radius)\n}"}
+            {"file": "viewer/bench/urban_ui_check.gd", "s": 245, "e": 258, "text": "\t# Houses come only from the sim's house_positions; nothing re-derives them (#89).\n\tvar houses_checked := 0\n\tvar previous_mode: String = ui.field.pick_mode\n\tui.field.pick_mode = \"Buildings\"\n\tfor town in ui.field.world.markets:\n\t\tvar positions: Array = town.house_positions\n\t\tassert(positions.size() == int(town.housing_blocks))\n\t\tfor j in range(positions.size()):\n\t\t\tvar expected := Vector2(positions[j][0], positions[j][1])\n\t\t\tassert(ui.field._house_position(town, j) == expected)\n\t\t\tvar pick: Dictionary = ui.field._pick_site(expected + Vector2(10, 7))\n\t\t\tassert(pick.get(\"kind\") == \"house\" and int(pick.market) == int(town.id))\n\t\t\thouses_checked += 1\n\tui.field.pick_mode = previous_mode"}
           ],
           "fix": "house_origin_mirror"
         },
@@ -638,7 +637,7 @@
           "metrics": {"loc": 42, "testLines": 0, "comments": 2, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
             {"file": "viewer/people.gdshader", "s": 9, "e": 20, "text": "void vertex() {\n    float packed = INSTANCE_CUSTOM.r;\n    float mode_flags = floor(packed / 16.0);\n    float mode = mod(mode_flags,8.0);\n    rested_badge = mod(floor(mode_flags/8.0),2.0);\n    carrying_body = mod(floor(mode_flags/16.0),2.0);\n    float variant = mod(packed, 16.0);\n    float pose = 0.0;\n    float frame = floor(mod(clock * 10.0 + INSTANCE_CUSTOM.a, 8.0));\n    if (mode == 1.0) { pose = 1.0 + frame; }\n    else if (mode == 2.0) { pose = 9.0 + frame; }\n    else if (mode == 3.0) { pose = 17.0; }"},
-            {"file": "viewer/field.gd", "s": 916, "e": 919, "text": "\t\tdetail_buffer[at+8] = float(ids[i]%16+(mode+8*rested_flags[i]+16*carrying_flags[i])*16)\n\t\tdetail_buffer[at+9] = previous_delta.x/body_scale\n\t\tdetail_buffer[at+10] = previous_delta.y/body_scale\n\t\tdetail_buffer[at+11] = float(ids[i]%31)*0.2"}
+            {"file": "viewer/field.gd", "s": 914, "e": 917, "text": "\t\tdetail_buffer[at+8] = float(ids[i]%16+(mode+8*rested_flags[i]+16*carrying_flags[i])*16)\n\t\tdetail_buffer[at+9] = previous_delta.x/body_scale\n\t\tdetail_buffer[at+10] = previous_delta.y/body_scale\n\t\tdetail_buffer[at+11] = float(ids[i]%31)*0.2"}
           ]
         },
         {
@@ -811,7 +810,6 @@
   },
   "fixes": {
     "legacy_readers": "Freeze a bare-World twin for v14-18 saves the first time a type inside World must change shape, or ahead of time; the v14 entry in legacy_schema.json shows what it must match.",
-    "house_origin_mirror": "Re-record any fixture without house_positions, then delete the _house_origin fallback, or pin it with a parity test against rest.rs output for a ring of indices.",
     "main_gd": "Export the town promotion requirement (3 homes, shops and workshops) and render it from the snapshot like the thresholds."
   }
 }

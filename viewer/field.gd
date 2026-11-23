@@ -444,17 +444,15 @@ func hill_footprint() -> Rect2:
 func _classic_terrain() -> bool:
 	return str(world.get("map", {}).get("size", "Classic")) == "Classic"
 
+## House sites come from the simulation's `house_positions` (one per housing
+## block, rest::house_site). A missing entry means a malformed frame; it is
+## drawn at the town centre rather than re-deriving the layout here (#89).
 func _house_position(town: Dictionary, index: int) -> Vector2:
 	var positions: Array = town.get("house_positions", [])
 	if index >= 0 and index < positions.size():
 		var p: Array = positions[index]
 		return Vector2(p[0], p[1])
-	var center := Vector2(town.x, town.y)
-	var limit := Vector2(2670, 1900) if _classic_terrain() else Vector2(map_width - 25, map_height - 25)
-	var q := (center + _house_origin(index)).clamp(Vector2(5, 5), limit)
-	if not _classic_terrain() and terrain != null:
-		q = terrain.dry_point(center, q)
-	return q
+	return Vector2(town.x, town.y)
 
 
 func _update_label_hover(point: Vector2) -> void:
@@ -971,12 +969,3 @@ func _build_detail_renderer() -> void:
 	detail_material.shader = preload("res://people.gdshader")
 	detail_mesh.material = detail_material
 	add_child(detail_mesh)
-
-func _house_origin(house: int) -> Vector2:
-	var original := house
-	var ring := 0
-	while house >= 12+ring*6:
-		house -= 12+ring*6
-		ring += 1
-	var angle := float(house)*TAU/float(12+ring*6)+float(ring)*0.47+(float(original*53%17)-8.0)*0.008
-	return Vector2(cos(angle),sin(angle))*(140.0+float(ring)*42.0+float(original*37%19)-9.0)

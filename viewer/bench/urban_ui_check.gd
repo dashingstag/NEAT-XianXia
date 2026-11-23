@@ -242,5 +242,20 @@ func check_ui() -> void:
 	if not probe.choices.is_empty():
 		probe.choices[0].action = "ForageMeal"
 		assert(ui.PersonInspector.describe(probe, world).contains("▶ ForageMeal"))
-	print(JSON.stringify({"urban_ui":"passed","buildings_inspected":checked,"zones":world.urban.zones.size(),"fidelity_levels":3,"connected_to_live_backend":false}))
+	# Houses come only from the sim's house_positions; nothing re-derives them (#89).
+	var houses_checked := 0
+	var previous_mode: String = ui.field.pick_mode
+	ui.field.pick_mode = "Buildings"
+	for town in ui.field.world.markets:
+		var positions: Array = town.house_positions
+		assert(positions.size() == int(town.housing_blocks))
+		for j in range(positions.size()):
+			var expected := Vector2(positions[j][0], positions[j][1])
+			assert(ui.field._house_position(town, j) == expected)
+			var pick: Dictionary = ui.field._pick_site(expected + Vector2(10, 7))
+			assert(pick.get("kind") == "house" and int(pick.market) == int(town.id))
+			houses_checked += 1
+	ui.field.pick_mode = previous_mode
+	assert(houses_checked > 0)
+	print(JSON.stringify({"urban_ui":"passed","houses_checked":houses_checked,"buildings_inspected":checked,"zones":world.urban.zones.size(),"fidelity_levels":3,"connected_to_live_backend":false}))
 	quit()

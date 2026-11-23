@@ -8,13 +8,13 @@ Fork the repository, clone your fork and create a branch from the latest upstrea
 
 | If you change | Start with |
 |---|---|
-| NPC choices, resources, transactions or family rules | `python tools/dev.py test sim`. Add a deterministic case for the behavior you changed. |
-| Save fields, tick order or randomness | `python tools/dev.py test replay` and `python tools/dev.py test protocol`. State the default for people loaded from an old save. |
-| Inspectors, drawing, animation or picking | `python tools/dev.py test viewer`. Include a screenshot or short recording for visible changes. |
-| Terrain or settlement placement | `python tools/dev.py test world`. Record the seed and check that drawing and placement agree. |
-| Launchers or server lifetime | `python tools/dev.py test isolation` and `python tools/dev.py test connection`. |
+| NPC choices, resources, transactions or family rules | Add a deterministic case for the changed behavior and check account conservation. |
+| Save fields, tick order or randomness | Verify defaults for old saves and deterministic continuation. |
+| Inspectors, drawing, animation or picking | Exercise fixture-backed UI behavior and include a screenshot or short recording for visible changes. |
+| Terrain or settlement placement | Record the seed and check that drawing and placement agree. |
+| Launchers or server lifetime | Verify concurrent runs keep separate backends and saves, and that the viewer connects to its own backend. |
 
-For independent agent work, use separate branches and worktrees. Agree on the example fixture and an owner for shared protocol or save-format edits. The [agent guide](AGENTS.md) lists the entry points.
+Use the [testing guide](testing/README.md) for current command syntax. For independent agent work, use separate branches and worktrees. Agree on the example fixture and an owner for shared protocol or save-format edits. The [agent guide](AGENTS.md) lists the entry points.
 
 ## Issues and pull requests
 

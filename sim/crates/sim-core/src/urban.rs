@@ -2,6 +2,12 @@
 use super::*;
 use std::collections::BTreeMap;
 pub const WARES: usize = 5;
+/// Town coffers at which a council may gazette districts. Exported to the
+/// viewer as `urban.wealth_threshold`.
+pub const GAZETTE_THRESHOLD: u64 = 500;
+/// Town coffers below which a council reviews shop leases. Exported to the
+/// viewer as `urban.reserve_threshold`.
+pub const LEASE_REVIEW_THRESHOLD: u64 = 100;
 pub const WARE_NAMES: [&str; WARES] = ["hides", "leather clothes", "shoes", "furniture", "meat"];
 const WARE_WEIGHT: [u32; WARES] = [3, 2, 2, 8, 1];
 const RETAIL: [u64; WARES] = [9, 18, 16, 30, 4];
@@ -433,7 +439,7 @@ impl World {
         if !t.village {
             return v;
         }
-        if !s.zoned && self.coffers(m) >= 500 {
+        if !s.zoned && self.coffers(m) >= GAZETTE_THRESHOLD {
             v.push(("GazetteDistricts", 0, 0.9));
         }
         if s.zoned {
@@ -496,7 +502,7 @@ impl World {
             {
                 v.push(("ClearForDistrict", 8, 0.75));
             }
-            if self.coffers(m) < 100
+            if self.coffers(m) < LEASE_REVIEW_THRESHOLD
                 && self.tick.saturating_sub(s.last_eviction) > rest::DAY_TICKS
                 && self.urban.buildings.iter().enumerate().any(|(id, b)| {
                     b.market as usize == m
@@ -517,7 +523,7 @@ impl World {
     pub(super) fn apply_urban_policy(&mut self, m: usize, action: &str) {
         match action {
             "GazetteDistricts" => {
-                if self.coffers(m) < 500 || self.urban.states[m].zoned {
+                if self.coffers(m) < GAZETTE_THRESHOLD || self.urban.states[m].zoned {
                     return;
                 }
                 self.urban.states[m].zoned = true;
@@ -564,7 +570,7 @@ impl World {
                 }
             }
             "ReviewShopLeases" => {
-                if self.coffers(m) < 100 {
+                if self.coffers(m) < LEASE_REVIEW_THRESHOLD {
                     if let Some(id) = self
                         .urban
                         .buildings
@@ -2366,7 +2372,7 @@ impl World {
 
     pub(super) fn urban_snapshot(&self, include_buildings: bool) -> serde_json::Value {
         let wares = self.ware_stocks();
-        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":500,"reserve_threshold":100,"zones":self.urban.zones,"buildings":if include_buildings { self.viewer_buildings() } else { Vec::new() },"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal","Shipwright"].get(j.kind as usize).copied().unwrap_or("Contract")),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
+        serde_json::json!({"operator_jobs":self.operator_job_postings(),"wealth_threshold":GAZETTE_THRESHOLD,"reserve_threshold":LEASE_REVIEW_THRESHOLD,"zones":self.urban.zones,"buildings":if include_buildings { self.viewer_buildings() } else { Vec::new() },"villages":self.urban.states.iter().enumerate().map(|(m,s)|serde_json::json!({"market":m,"zoned":s.zoned,"persona":(["Balanced","Forest","Coastal","Rocky"][s.persona as usize]),"persona_id":s.persona,"coffers":self.coffers(m),"free_cash":self.markets[m].coins,"biases":PERSONA_BIAS[s.persona as usize],"town":self.is_town(m),"completed":(0..3).map(|kind|self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.kind==kind&&b.ready).count()).collect::<Vec<_>>(),"vacant_commercial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==1&&b.owner==NONE).count(),"vacant_industrial":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.ready&&b.kind==2&&b.owner==NONE).count(),"operator_vacancy_pressure":self.operator_vacancy_pressure(m),"lease_openings":self.urban.buildings.iter().filter(|b|b.market as usize==m&&b.owner==NONE&&b.advertised).count()})).collect::<Vec<_>>(),"jobs":self.urban.jobs.iter().enumerate().filter_map(|(id,j)|j.as_ref().map(|j|serde_json::json!({"id":id,"market":j.market,"kind":(["Builder","Haulier","Forester","Shelter removal","Shipwright"].get(j.kind as usize).copied().unwrap_or("Contract")),"reward":j.reward,"private":j.payer!=NONE,"worker":if j.worker==NONE{None}else{Some(j.worker)},"x":j.x,"y":j.y,"phase":j.phase,"raw":j.raw,"wares":j.wares}))).take(1024).collect::<Vec<_>>(),"ware_names":WARE_NAMES,"ware_weights":WARE_WEIGHT,"ware_accounts":(0..WARES).map(|k|serde_json::json!({"name":WARE_NAMES[k],"produced":self.urban.produced[k],"consumed":self.urban.consumed[k],"stock":wares[k],"error":self.urban.produced[k] as i128-self.urban.consumed[k] as i128-wares[k] as i128})).collect::<Vec<_>>(),"posted_private":self.urban.posted_private,"posted_public":self.urban.posted_public,"completed_jobs":self.urban.completed,"evictions":self.urban.evictions,"cleared":self.urban.cleared,"estates":self.urban.estates})
     }
     pub(super) fn validate_urban(&self) -> Result<(), String> {
         if self.urban.assigned.len() != self.agents.len()
@@ -2475,6 +2481,26 @@ mod tests {
         let mut w = World::new(256, 42).unwrap();
         w.prepare_urban_demo().unwrap();
         w
+    }
+    #[test]
+    fn gazette_offer_and_viewer_export_use_the_threshold_constants() {
+        let mut w = funded();
+        assert!(w.markets[0].village && !w.urban.states[0].zoned);
+        for q in &mut w.markets[0].quotes {
+            q.escrow = 0;
+        }
+        let offered = |w: &World| {
+            w.urban_council_candidates(0)
+                .iter()
+                .any(|c| c.0 == "GazetteDistricts")
+        };
+        w.markets[0].coins = GAZETTE_THRESHOLD - 1;
+        assert!(!offered(&w), "offered below the gazette threshold");
+        w.markets[0].coins = GAZETTE_THRESHOLD;
+        assert!(offered(&w), "not offered at the gazette threshold");
+        let summary = w.urban_summary();
+        assert_eq!(summary["wealth_threshold"], GAZETTE_THRESHOLD);
+        assert_eq!(summary["reserve_threshold"], LEASE_REVIEW_THRESHOLD);
     }
     fn construct(w: &mut World, kind: u8) -> usize {
         w.apply_urban_policy(0, "GazetteDistricts");

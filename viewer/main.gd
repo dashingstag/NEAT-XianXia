@@ -5,6 +5,8 @@ const Field = preload("res://field.gd")
 var tcp := StreamPeerTCP.new()
 var incoming := PackedByteArray()
 var connected := false
+## True until the backend answers the selection sent on connect.
+var restoring_selection := false
 var paused := true
 var state: Dictionary = {}
 var field: Control
@@ -574,6 +576,16 @@ func _select_agent(id: int, keep_buyer := false) -> void:
 	last_inspector_ms = 0
 	send({"command":"select","agent":id})
 
+## After (re)connecting, re-send whoever the player was inspecting. The
+## backend keeps its own selection, so a fixed "select agent 0" here would
+## silently discard the player's choice on every reconnect (#88).
+func _restore_selection() -> void:
+	restoring_selection = true
+	if field.selected_animal >= 0:
+		send({"command":"select_animal","animal":field.selected_animal})
+	else:
+		send({"command":"select","agent":maxi(field.selected, 0)})
+
 func _select_animal(id: int) -> void:
 	purchase_buyer = -1
 	site_selection.clear()
@@ -849,7 +861,7 @@ func _process(_delta: float) -> void:
 		connected = true
 		status.text = "CONNECTED / Rust on loopback TCP"
 		send({"command":"stream_buildings"})
-		send({"command":"select","agent":0})
+		_restore_selection()
 		_watch_wealth(inspector_tabs.current_tab)
 	var available := tcp.get_available_bytes()
 	if available > 0:
@@ -895,6 +907,13 @@ func _decode(data: PackedByteArray) -> void:
 		if reply is Dictionary and reply.has("map_layers"):
 			field.terrain.set_map_layers(reply.map_layers)
 			return
+		if reply is Dictionary and restoring_selection:
+			restoring_selection = false
+			if not reply.get("ok", false):
+				# The inspected person or animal does not exist on this backend
+				# (for example a different world); fall back to agent 0.
+				_select_agent(0)
+				return
 		if reply is Dictionary:
 			notice.text = str(reply.get("message",""))
 			if reply.get("ok",false) and notice.text.begins_with("Added resource site #"):
@@ -1014,7 +1033,7 @@ func _decode(data: PackedByteArray) -> void:
 	for village_profile in urban.get("villages",[]):
 		if int(village_profile.market)==maxi(board_focus,0):
 			persona_option.select(int(village_profile.persona_id))
-	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at 500 copper. Lease review below 100.\nTown requires 3 completed homes, shops and workshops each.\nMarketplace remains the centre.\n"
+	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at %d copper. Lease review below %d.\n" % [int(urban.get("wealth_threshold",500)), int(urban.get("reserve_threshold",100))] + "Town requires 3 completed homes, shops and workshops each.\nMarketplace remains the centre.\n"
 	for village in urban.get("villages",[]):
 		if board_focus>=0 and int(village.market)!=board_focus:
 			continue

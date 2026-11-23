@@ -6,13 +6,13 @@ As of 2026-11-23, verified against `main` @ `ade4894`. There are eight open issu
 
 | # | Title | Verdict | Notes |
 |---|---|---|---|
-| 81 | Water-blocked trips grind shorelines | **Partly fixed on main; rest is in open PR #83** | `main` has only the first increment (`213c204`: >96u gate, stale-entry eviction, 2048 cap). The short-hop gate (>24u), convoy trip-start routing and stalled-caravan dissolution are on PR #83 (`98c2554`). That PR is not merged and none of its 5 tests exist on `main`. |
+| 81 | Water-blocked trips grind shorelines | **Fixed and closed** | PR #82 (`d5a8299`) plus PR #83, merged as `24604f0` on 2026-11-23. Checked on the merged revision: 213 lib tests pass and replay digests match. |
 | 85 | Teardown audit artifacts are stale | **Confirmed** | `teardown/audit.json:555` still says "server has NO snapshot size cap", but `sim-runner/src/main.rs:440,548` enforces `MAX_VIEWER_FRAME = 4 MiB`. `audit.json:756-761` and `fix-plan.md:56` still describe URBAN_ECONOMY as unlabeled, but `docs/URBAN_ECONOMY.md:39` is labeled now. `audit.json:62` still treats `bank-v12.snapshot` as the only real fixture, while `fixtures/README.md` lists real `dev-v34` and `release-v33`. |
 | 84 | Protocol coverage for streamed buildings | **Confirmed** | `testing/protocol/check_protocol.py` (138 lines) has no mention of `stream_buildings`, `building_batch`, `building_offset` or `building_count`. The server side is at `sim-runner/src/main.rs:509-537`. |
 | 71 | URBAN_ECONOMY stale paths | **Confirmed, and wider than reported** | The line numbers moved after PR #86: `crates/sim-core/src/urban.rs` is now at line 5 and `--path viewer-godot` at line 66. A third stale path, `crates/neat-core/src/lib.rs`, was added at line 39. `viewer/bench/urban_ui_check.gd` exists. |
 | 54 | Legacy readers embed ~18 live types | **Confirmed (detection landed, freezing not done)** | PR #65 added `legacy_reader_schema_is_pinned` (`lib.rs:4268`) and per-reader doc blocks. Readers still embed live `Patch`, `Road`, `Person`, `Council`, `Farm`, `Tavern`, `Urban`, `Banking` and others (e.g. `legacy_v12.rs:11-44`). The pin test compares **byte lengths only**: a field reorder or a type swap of the same size passes it. |
 | 48 | Teacher-aligned opportunities in aspiration fixture | **Blocked: harness not in repo** | The `mortal_immortal_refinement` example and the `aspiration_*` JSONL fields are not on `main` or on any remote branch, and the history search found nothing. The Teacher → `GoalKind::Teach` mapping exists (`life.rs:897`, sensor `x[32]` at `life.rs:1093`), and so does `Education::prepare_school_demo` (`education.rs:34`). |
-| 62 | Countries, diplomacy, armies | **Valid feature request; nothing exists yet** | No `Country` type exists. Settlement governance is `civic::Council`. Only 5 spare Action IDs remain: byte 12 packs `action` into its low 6 bits, so IDs 59-63 are free and 46-49 are reserved for guild quests. |
+| 62 | Countries, diplomacy, armies | **Valid feature request; nothing exists yet** | No `Country` type exists. Settlement governance is `civic::Council`. Action IDs 0-69 are in use or reserved. New actions take IDs 70 and up, and each one must be mapped down to an existing activity by `Action::wire()` so it fits the wire's 6-bit action field (see the Action ID note under Phase 3). |
 | 60 | Adventurer Guild | **Valid feature request; hooks reserved** | Action IDs 46-49 are reserved for guild quests (`lib.rs:83`). Council sensors `quest_backlog` and `guild_ready` exist (`civic.rs:48-49`). There is no guild building, roster or ration item. |
 
 ## Implementation plan
@@ -71,7 +71,7 @@ The work is ordered by risk and cost. Each item ends with the evidence its closi
 ### Phase 3: features (multi-week; build in the order each issue specifies)
 
 These two items share infrastructure, so do the shared groundwork once:
-- **Action ID budget.** #60 uses the reserved IDs 46-49. #62 needs at least four orders (`MusterMilitia`, `EscortConvoy`, `GuardCrossing`, `Disband`) plus villager choices, and only 59-63 are left before byte 12's 6-bit action field overflows (`audit.json:408`). Either model militia orders as *council/country* decisions, not villager `Action`s (preferred, since villagers only "accept service"), or widen the packed frame first. Widening is a wire and save change, so coordinate it with the integration owner.
+- **Action IDs.** #60 uses the reserved IDs 46-49. Every other ID up to 69 is taken (`lib.rs:120-141`). New actions get IDs 70 and up, and the viewer will show them as whatever existing activity `Action::wire()` (`lib.rs:148`) maps them to, because the snapshot packs actions into 6 bits; `every_action_remapped_below_the_six_bit_wire_budget` enforces the mapping, and its variant count must be bumped. That is acceptable for background choices but loses detail for headline ones. #62's militia orders (`MusterMilitia`, `EscortConvoy`, `GuardCrossing`, `Disband`) fit better as *council/country* decisions, with villagers only choosing to accept service. Showing new actions distinctly in the viewer means widening the packed frame, which is a wire and save change to coordinate with the integration owner.
 - **Save format bump.** Each feature adds world state. Plan one `XXSAVE35`/`36` per feature. Do #54's freezing of the touched types first, so the new fields do not shift legacy readers.
 - **Ledger-backed reservations** (rations, militia pay and supplies, treaty contributions) all need "reserve once, consume or return, idempotent across save/load". Build one reservation primitive on `Ledger` and reuse it.
 
@@ -88,6 +88,13 @@ These two items share infrastructure, so do the shared groundwork once:
 3. Pairwise treaties, starting with the shared-ferry contribution. Record events with stable IDs, and spread knowledge of them through the tavern report system.
 4. Militia, modeled as country orders plus villager acceptance (see the Action budget above), reusing convoys, ferries and the reservation primitive.
 5. The milestone: on several seeds including X4, reach accession, independence under a treaty, and a third-country outcome from the same rules.
+
+## Issues raised while verifying (2026-11-23)
+
+- #87: urban zoning thresholds (500 / 100 copper) are literals in four places, including viewer text.
+- #88: a viewer reconnect silently resets the selection to agent 0.
+- #89: retire the GDScript `house_origin` fallback left after #56.
+- Comments added to #54 (the length-only schema pin misses same-size reorders) and #48 (the experiment harness is not in the repository).
 
 ## Suggested sequencing
 

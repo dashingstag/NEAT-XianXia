@@ -28,12 +28,12 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
   3. Add a check that no `legacy_*` module imports a live type outside a shrinking allowlist.
 - **Verify:** `cargo test -p sim-core -- legacy_reader`, `python tools/dev.py test replay` and `test protocol` on `bank-v12`. Record source and target format plus both hashes (`review-save-migration`).
 
-### R2 — `house_origin_mirror`: retire the fallback
+### R2 — `house_origin_mirror`: retire the fallback (#89)
 - **Class:** residual hand-mirror. `field.gd:447-457` prefers the sim's `house_positions`. Frames without them use `_house_origin`, which copies the `rest.rs:587` constants and has no parity test.
 - **Fix:** re-record any fixture that lacks `house_positions`, then delete the fallback. Otherwise add a parity check for a ring of indices.
 - **Verify:** `python tools/dev.py test viewer` and `test connection`.
 
-### R3 — `main_gd` / `urban_module`: render exported thresholds
+### R3 — `main_gd` / `urban_module`: render exported thresholds (#87)
 - **Class:** fragile seam. `main.gd:1017` prints "Gazette at 500 copper. Lease review below 100." The snapshot already exports `urban.wealth_threshold` and `reserve_threshold` (`urban.rs:2369`).
 - **Fix:** build the text from the exported fields.
 - **Verify:** `python tools/dev.py test viewer`.

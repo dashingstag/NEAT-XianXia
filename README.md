@@ -36,18 +36,7 @@ The viewer shows the latest merged PR and the running commit in its header and w
 
 ## Check a change
 
-Start in the [testing folder](testing/README.md) for checks, benchmarks, replay, and queued runs.
-
-| Command after `python tools/dev.py` | Evidence |
-|---|---|
-| `test isolation` | Two distinct backends reset and save their worlds. An intentional interruption closes one while the other loads and advances. |
-| `test replay` | Load the old town, save a midpoint, compare full checkpoint SHA-256 digests after two 50-tick continuations. |
-| `test protocol` | Fresh-world command exercise, bank replay, relationship reciprocity and regenerated town frame. |
-| `test sim`, `test world`, `test labs` | Rust workspace suite, focused terrain checks or all three JavaScript suites. |
-| `test viewer`, `preview --fixture town-shop` | Headless inspector and picking assertions, or interactive read-only town preview. |
-| `test connection` | Launch an actual headless Godot viewer against its own backend and require a decoded, balanced world. Also works from the extracted runtime ZIP. |
-| `bench --scenario mature-town` | Headless step timings on a populated town. Viewer frame time requires a separate graphics run. |
-| `package` | Runtime ZIP containing the backend, Godot project, launcher and release metadata. Requires Python and Godot on the target machine. |
+Use the [testing guide](testing/README.md) for the current verification commands, suite coverage, benchmarks, replay and queued runs. Viewer frame time requires a separate graphics run.
 
 Every command prints its own evidence directory under `.work/`. Override with `XIANXIA_RUNS`. Build artifacts follow Cargo's normal target-directory settings. See [agent instructions](AGENTS.md), [compatibility contract](contracts/README.md), and the [historical import handoff](docs/HANDOFF.md). Earlier plans and prototype notes in docs are historical context.
 

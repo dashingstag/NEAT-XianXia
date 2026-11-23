@@ -387,10 +387,16 @@ pub struct Statistics {
     pub rice_harvested: u64,
 }
 /// Authoritative world state. Checkpoint schema: fields through
-/// `relationships` serialize inside the base postcard struct; anything added
-/// after them MUST be `#[serde(skip)]` and appended to `checkpoint_payload`'s
-/// tail tuples instead — adding a normal field here breaks deserialization
-/// of every save >= v19.
+/// `relationships` (plus `hill`) serialize inside the base postcard struct;
+/// anything added after them MUST be `#[serde(skip)]` and appended to
+/// `checkpoint_payload`'s tail tuples instead.
+///
+/// Only the current format decodes this struct directly. Saves v14-v33 read
+/// their base through the frozen `legacy_types::LegacyWorldBase` (#96), so a
+/// change to any serialized type in here is a save format change: bump
+/// `SaveVersion::CURRENT` and the writer's header, and switch the version
+/// being replaced to `LegacyWorldBase` in `World::take_world_base`.
+/// `legacy_schema`'s `current-world` entry fails until that is done.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct World {
     pub format: u32,
@@ -2736,6 +2742,25 @@ impl World {
         fs::write(&tmp, data).map_err(|e| e.to_string())?;
         fs::rename(&tmp, path).map_err(|e| e.to_string())
     }
+    /// Decodes the serialized World base struct at the start of a v14+
+    /// payload and returns the bytes after it. Only the current format
+    /// decodes the live `World`; every older version decodes the frozen
+    /// `legacy_types::LegacyWorldBase` (#96), so changing a type inside
+    /// `World` cannot change how historical saves read. Postcard encodes a
+    /// tuple as its fields back to back, so decoding the base first and the
+    /// rest of a tuple afterwards reads exactly the same bytes.
+    fn take_world_base<'a>(
+        version: &SaveVersion,
+        raw: &'a [u8],
+    ) -> Result<(Self, &'a [u8]), String> {
+        if version.0 == SaveVersion::CURRENT {
+            postcard::take_from_bytes::<Self>(raw).map_err(|e| e.to_string())
+        } else {
+            let (base, rest) = postcard::take_from_bytes::<legacy_types::LegacyWorldBase>(raw)
+                .map_err(|e| e.to_string())?;
+            Ok((base.into(), rest))
+        }
+    }
     pub fn load(path: &Path) -> Result<Self, String> {
         let data = fs::read(path).map_err(|e| e.to_string())?;
         if data.starts_with(b"XXSAVE01")
@@ -2759,12 +2784,9 @@ impl World {
             return Err("Checkpoint length mismatch".into());
         }
         let mut world: Self = if version.dev_family() {
-            let (
-                (mut world, purchases, foraging, work, commitments, map, (explored, carcasses)),
-                tail,
-            ): (
+            let (mut world, rest) = Self::take_world_base(&version, &raw)?;
+            let ((purchases, foraging, work, commitments, map, (explored, carcasses)), tail): (
                 (
-                    Self,
                     food_memory::FoodMemory,
                     food_memory::FoodMemory,
                     work_memory::WorkMemory,
@@ -2773,7 +2795,7 @@ impl World {
                     (Exploration, std::collections::BTreeMap<u32, u64>),
                 ),
                 &[u8],
-            ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
+            ) = postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
@@ -2841,9 +2863,9 @@ impl World {
             }
             world
         } else if version.release_family() {
-            let ((mut world, purchases, foraging, work, commitments, map, explored), tail): (
+            let (mut world, rest) = Self::take_world_base(&version, &raw)?;
+            let ((purchases, foraging, work, commitments, map, explored), tail): (
                 (
-                    Self,
                     food_memory::FoodMemory,
                     food_memory::FoodMemory,
                     work_memory::WorkMemory,
@@ -2852,7 +2874,7 @@ impl World {
                     Exploration,
                 ),
                 &[u8],
-            ) = postcard::take_from_bytes(&raw).map_err(|e| e.to_string())?;
+            ) = postcard::take_from_bytes(rest).map_err(|e| e.to_string())?;
             if version.0 >= 30 {
                 let (governance, trailing) =
                     postcard::take_from_bytes(tail).map_err(|e| e.to_string())?;
@@ -2906,41 +2928,38 @@ impl World {
             world.explored = explored;
             world
         } else if version.0 == 18 {
-            let (mut world, purchases, foraging, work, commitments): (
-                Self,
+            let (mut world, rest) = Self::take_world_base(&version, &raw)?;
+            let (purchases, foraging, work, commitments): (
                 food_memory::FoodMemory,
                 food_memory::FoodMemory,
                 work_memory::WorkMemory,
                 commitment_memory::Commitments,
-            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            ) = postcard::from_bytes(rest).map_err(|e| e.to_string())?;
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
             world.commitments = commitments;
             world
         } else if version.0 == 17 {
-            let (mut world, purchases, foraging, work): (
-                Self,
+            let (mut world, rest) = Self::take_world_base(&version, &raw)?;
+            let (purchases, foraging, work): (
                 food_memory::FoodMemory,
                 food_memory::FoodMemory,
                 work_memory::WorkMemory,
-            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            ) = postcard::from_bytes(rest).map_err(|e| e.to_string())?;
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world.work_memory = work;
             world
         } else if version.0 == 16 {
-            let (mut world, purchases, foraging): (
-                Self,
-                food_memory::FoodMemory,
-                food_memory::FoodMemory,
-            ) = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+            let (mut world, rest) = Self::take_world_base(&version, &raw)?;
+            let (purchases, foraging): (food_memory::FoodMemory, food_memory::FoodMemory) =
+                postcard::from_bytes(rest).map_err(|e| e.to_string())?;
             world.food_memory = purchases;
             world.forage_memory = foraging;
             world
         } else if version.0 == 15 {
-            let (mut world, memory) =
-                postcard::take_from_bytes::<Self>(&raw).map_err(|e| e.to_string())?;
+            let (mut world, memory) = Self::take_world_base(&version, &raw)?;
             // Main used v15 for the widened genome. Early memory builds also used v15
             // and appended a purchase-memory payload to the same serialized world.
             world.map = WorldMap::classic(world.seed);
@@ -3006,7 +3025,7 @@ impl World {
             old.into()
         } else {
             // v14: bare serialized World, no memories or tails.
-            postcard::from_bytes(&raw).map_err(|e| e.to_string())?
+            Self::take_world_base(&version, &raw)?.0
         };
         if version.0 <= 5 {
             world.upgrade_content()?;
@@ -4230,6 +4249,55 @@ mod tests {
             restored.step(false);
         }
         restored.check().unwrap();
+    }
+    /// Saves v14 and v16-v18 have no real fixtures. Write each one exactly as
+    /// its writer did (the base World, then that version's memory payloads)
+    /// and load it back through the frozen LegacyWorldBase path (#96).
+    #[test]
+    fn bare_world_formats_load_through_the_frozen_base() {
+        let mut world = World::new(64, 9).unwrap();
+        for _ in 0..30 {
+            world.step(false);
+        }
+        let m = (&world.food_memory, &world.forage_memory);
+        let payloads: [(&[u8; 8], Vec<u8>); 4] = [
+            (b"XXSAVE14", postcard::to_allocvec(&world).unwrap()),
+            (
+                b"XXSAVE16",
+                postcard::to_allocvec(&(&world, m.0, m.1)).unwrap(),
+            ),
+            (
+                b"XXSAVE17",
+                postcard::to_allocvec(&(&world, m.0, m.1, &world.work_memory)).unwrap(),
+            ),
+            (
+                b"XXSAVE18",
+                postcard::to_allocvec(&(&world, m.0, m.1, &world.work_memory, &world.commitments))
+                    .unwrap(),
+            ),
+        ];
+        let path = std::env::temp_dir().join(format!(
+            "xianxia-bare-world-{}.snapshot",
+            std::process::id()
+        ));
+        for (header, payload) in payloads {
+            let mut bytes = header.to_vec();
+            bytes.extend((payload.len() as u64).to_le_bytes());
+            bytes.extend(zstd::stream::encode_all(payload.as_slice(), 1).unwrap());
+            fs::write(&path, bytes).unwrap();
+            let restored = World::load(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", String::from_utf8_lossy(header)));
+            let name = String::from_utf8_lossy(header);
+            assert_eq!(restored.tick, world.tick, "{name}");
+            assert_eq!(restored.seed, world.seed, "{name}");
+            assert_eq!(restored.agents.x, world.agents.x, "{name}");
+            assert_eq!(restored.agents.coins, world.agents.coins, "{name}");
+            assert_eq!(restored.people, world.people, "{name}");
+            assert_eq!(restored.genomes.len(), world.genomes.len(), "{name}");
+            assert_eq!(restored.stats, world.stats, "{name}");
+            assert_eq!(restored.hill, world.hill, "{name}");
+        }
+        fs::remove_file(path).unwrap();
     }
     /// fixtures/release-v33.snapshot is real binary output: the sim-runner
     /// built at 5c636c9 (the last XXSAVE33 writer) loaded bank-v12,

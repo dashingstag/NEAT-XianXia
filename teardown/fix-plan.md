@@ -9,7 +9,7 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 | P0 | `load_ladder` | Done. The header is parsed once into `SaveVersion` (`lib.rs:563-610`), and every gate reads a named capability. | #61 (`1401b6b`) |
 | P1 | `travel_module`, `validate_gate` | Done. Founding stops at `MAX_MARKETS`, the same constant the load gate uses, and `check()` runs `validate_schema()`. | #63 / #78 (`42e979a`) |
 | P2 | `action_enum` | Done. `every_action_remapped_below_the_six_bit_wire_budget` and `release_remap_declaration_indices_are_pinned`. | #64 (`fa2a3aa`) |
-| P3 | `legacy_readers` | **Done for v4-13.** Exact schema snapshot per reader, and 47 frozen twins in four batches; no reader v4-13 decodes a live type. v14-18 (bare `World`) are detected but not frozen; that is a follow-up issue. | #91 and the batch PRs after it |
+| P3 | `legacy_readers` | **Base done for v4-v33.** 47 reader twins (#54) plus `LegacyWorldBase` for v14-v33 (#96). Tail payloads of v15-v33 are still live (R1, #97). | #91-#94, #96 |
 | P4 | `fixture_bank_v12` | Done. Real `dev-v34` and `release-v33` writer output is checked in and loaded by tests. | #79 (`0badb84`), #80 (`c11da31`) |
 | P5 | `house_origin_mirror` | Done. `house_positions` ships on the wire, and the GDScript fallback is removed. | #67 (`179b191`), #89 |
 | P6 | `viewer_tcp` | Done. `MAX_VIEWER_FRAME` is shared, and the server drops oversize snapshots with a diagnostic. | #57 / #77 (`191672e`) |
@@ -19,11 +19,11 @@ Refreshed 2026-11-23 against the revision that carries this file. The original p
 
 ## Open work
 
-### R1 — `legacy_readers`: v14-18 bare-World saves (follow-up to #54)
-- **Status:** readers v4-13 are fully frozen. `legacy_types.rs` holds 47 twins, `STILL_LIVE` is empty, and `legacy_schema.json` pins every reader's traced schema.
-- **Remaining:** v14 saves (and v15-18) decode the live `World` directly, so a change to a type inside `World` changes how they decode. The `v14-bare-world` entry in the snapshot fails on any such change.
-- **Fix:** when a type inside `World` first needs to change shape, freeze a `World` twin for v14-18 that matches the snapshot's `v14-bare-world` entry. Agents and Market need current-layout twins, and `map` needs its `default_checkpoint_map` default.
-- **Verify:** `cargo test -p sim-core --lib legacy_`, plus `python tools/dev.py test replay` and `test protocol` on `bank-v12`.
+### R1 — `legacy_readers`: tail payloads of v15-v33 (#97)
+- **Status:** base layouts are frozen for every historical save. Readers v4-v13 use 47 twins (#54), and v14-v33 decode the `World` base struct through `LegacyWorldBase` (#96). Only the current format decodes the live `World`, and changing its layout fails `legacy_schema`'s `current-world` entry until the format is bumped.
+- **Remaining:** the payloads that v15-v33 append after the base still decode into live types and are not traced: food and work memories, commitments, `WorldMap`, `Exploration`, governance, campsite rumours, water, traffic, hunting and the meat trade. A change to one of them could reinterpret historical tails silently.
+- **Fix:** trace each family's tail tuple in `legacy_schema` (one entry per tail shape), then freeze twins the same way.
+- **Verify:** `cargo test -p sim-core --lib legacy_`, `real_dev_format_fixture_loads_and_checks`, `real_release_format_fixture_loads_and_checks`, `dev_format_tail_walk_is_pinned`, plus `test replay` and `test protocol`.
 
 ### R2 — `house_origin_mirror`: retire the fallback (#89) — done
 - `field.gd` now reads only the sim's `house_positions`; the hand copy of `rest.rs` `house_origin` is deleted, and a missing entry draws at the town centre. `urban_ui_check.gd` asserts every fixture house position and click target against `house_positions` (33 houses).

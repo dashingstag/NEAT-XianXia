@@ -1,8 +1,8 @@
 //! Read-only schema-4 migration; no simulation code.
-//! Frozen layouts this schema decodes into: LegacyAgents, LegacyLedger, LegacyMarket,
-//!   LegacyStatistics.
-//! Live types it still trusts: Action, Convoy, Gene, Genome, Innovations, Kind, Lot, Node,
-//!   Patch, Project, Quote, Rng, Road, Shelter.
+//! Frozen layouts this schema decodes into: LegacyAgents, LegacyConvoy, LegacyLedger,
+//!   LegacyMarket, LegacyPatch, LegacyRoad, LegacyShelter, LegacyStatistics.
+//! Live types it still trusts: Action, Gene, Genome, Innovations, Kind, Lot, Node, Project,
+//!   Quote, Rng.
 //! A serde-layout change to a live type reinterprets this version's saved
 //! bytes; legacy_schema::legacy_reader_schemas_are_pinned fails first —
 //! freeze a Legacy twin in legacy_types.rs before changing the type (#54).
@@ -87,13 +87,13 @@ pub struct LegacyWorld {
     #[serde(skip)]
     pub brains: Vec<Compiled>,
     pub markets: Vec<LegacyMarket>,
-    pub patches: Vec<Patch>,
-    pub roads: Vec<Road>,
+    pub patches: Vec<legacy_types::LegacyPatch>,
+    pub roads: Vec<legacy_types::LegacyRoad>,
     pub ledger: legacy_v5::LegacyLedger,
     pub stats: LegacyStatistics,
     pub sales_profile_labels: Vec<String>,
-    pub convoys: Vec<Option<Convoy>>,
-    pub shelters: Vec<Shelter>,
+    pub convoys: Vec<Option<legacy_types::LegacyConvoy>>,
+    pub shelters: Vec<legacy_types::LegacyShelter>,
     pub clock_offset: u64,
 }
 
@@ -209,13 +209,13 @@ impl From<LegacyWorld> for World {
             innovations: old.innovations,
             brains: old.brains,
             markets: old.markets.into_iter().map(Into::into).collect(),
-            patches: old.patches,
-            roads: old.roads,
+            patches: old.patches.into_iter().map(Into::into).collect(),
+            roads: old.roads.into_iter().map(Into::into).collect(),
             ledger: old.ledger.into(),
             stats: old.stats.into(),
             sales_profile_labels: old.sales_profile_labels,
-            convoys: old.convoys,
-            shelters: old.shelters,
+            convoys: old.convoys.into_iter().map(|o| o.map(Into::into)).collect(),
+            shelters: old.shelters.into_iter().map(Into::into).collect(),
             clock_offset: old.clock_offset,
             councils: vec![],
             corpses: vec![],

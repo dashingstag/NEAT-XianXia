@@ -290,13 +290,13 @@ pub struct Link {
 pub struct Relationships {
     pub edges: BTreeMap<Pair, Link>,
     #[serde(skip)]
-    neighbours: BTreeMap<u32, Vec<u32>>,
+    pub(super) neighbours: BTreeMap<u32, Vec<u32>>,
     #[serde(skip)]
-    due: BTreeSet<(u64, u32, u32)>,
+    pub(super) due: BTreeSet<(u64, u32, u32)>,
     // Brief cooldowns for pairs which just reached zero; these are not relationships.
-    recent: BTreeMap<Pair, u64>,
-    rng: Rng,
-    initialized: bool,
+    pub(super) recent: BTreeMap<Pair, u64>,
+    pub(super) rng: Rng,
+    pub(super) initialized: bool,
     pub interactions: u64,
     pub positive: u64,
     pub negative: u64,

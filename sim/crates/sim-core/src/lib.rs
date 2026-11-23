@@ -3621,6 +3621,209 @@ mod tests {
             }
         }
     }
+    /// Buckets every unmoved agent standing near water, then tracks the
+    /// genuinely-blocked travelers across the run to separate stalls
+    /// from intended standers (rally, forage, rest, queue, idle Wait).
+    #[test]
+    #[ignore]
+    fn diag_shore_trace() {
+        let mut w = World::new_with_size(3000, 42, Hill::default(), MapSize::X4).unwrap();
+        let mut prev: Vec<(f32, f32)> = (0..w.agents.len())
+            .map(|i| (w.agents.x[i], w.agents.y[i]))
+            .collect();
+        let mut tracked: std::collections::BTreeMap<usize, (u64, Action)> =
+            std::collections::BTreeMap::new();
+        let mut prev_convoys: std::collections::BTreeMap<u32, (f32, f32)> =
+            std::collections::BTreeMap::new();
+        for t in 1..=4000u64 {
+            w.step(true);
+            if t % 1000 != 0 {
+                continue;
+            }
+            let mut counts: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            let mut convoy_unmoved: std::collections::BTreeMap<u32, usize> =
+                std::collections::BTreeMap::new();
+            let mut blocked: Vec<String> = Vec::new();
+            let mut waits: Vec<String> = Vec::new();
+            for i in 0..w.agents.len() {
+                if !w.agents.alive[i] {
+                    continue;
+                }
+                let (x, y) = (w.agents.x[i], w.agents.y[i]);
+                let unmoved = dist(x, y, prev[i].0, prev[i].1) < 4.0;
+                let near_water = [(-16.0f32, 0.0f32), (16.0, 0.0), (0.0, -16.0), (0.0, 16.0)]
+                    .iter()
+                    .any(|&(ox, oy)| {
+                        w.map.terrain_at(x + ox, y + oy) == Terrain::Water
+                    });
+                if !unmoved || !near_water {
+                    continue;
+                }
+                let c = w.agents.convoy[i];
+                let bucket = if c != NONE {
+                    match w.convoys.get(c as usize) {
+                        Some(Some(cv)) if cv.departed => {
+                            *convoy_unmoved.entry(c).or_insert(0) += 1;
+                            "convoy_member"
+                        }
+                        _ => "rallying",
+                    }
+                } else if w
+                    .water
+                    .ports
+                    .iter()
+                    .any(|p| p.queue.contains(&(i as u32)) || p.queue_far.contains(&(i as u32)))
+                {
+                    "ferry_queue"
+                } else {
+                    match w.agents.action[i] {
+                        Action::Rest => "resting",
+                        Action::ForageMeal => "foraging",
+                        Action::Wait => {
+                            let m = &w.markets[w.agents.home[i] as usize];
+                            if dist(x, y, m.x, m.y)
+                                < rest::settlement_radius(m.housing_blocks)
+                            {
+                                "wait_home"
+                            } else {
+                                "wait_wild"
+                            }
+                        }
+                        _ => match w.personal_destination(i) {
+                            Some((dx, dy)) if dist(x, y, dx, dy) > 12.0 => "blocked",
+                            Some(_) => "arrived",
+                            None => "no_dest",
+                        },
+                    }
+                };
+                *counts.entry(bucket).or_default() += 1;
+                if bucket == "blocked" && blocked.len() < 24 {
+                    tracked.entry(i).or_insert((t, w.agents.action[i]));
+                    let (act, kind, tgt, hun, en, solo, home) = {
+                        let a = &w.agents;
+                        (
+                            a.action[i],
+                            a.cargo_kind[i],
+                            a.target[i],
+                            a.hunger[i],
+                            a.energy[i],
+                            a.solo_until[i].saturating_sub(t),
+                            a.home[i] as usize,
+                        )
+                    };
+                    let (dx, dy) = w.personal_destination(i).unwrap();
+                    let det = match w.water.detours.get(&(i as u32)) {
+                        None => "none".to_string(),
+                        Some(d) if d.path.len() >= 2 => "route".to_string(),
+                        Some(d) => format!("marker(a{})", d.attempt),
+                    };
+                    let shot = w.clear_shot(x, y, dx, dy);
+                    let routable = !shot
+                        && matches!(
+                            w.route_between(x, y, dx, dy),
+                            Some(p) if !p.is_empty()
+                        );
+                    let unrs = w
+                        .water
+                        .unreachable
+                        .get(&(i as u32))
+                        .map(|b| b.len())
+                        .unwrap_or(0);
+                    blocked.push(format!(
+                        "a{i} {act:?}@{kind} t{tgt} d={:.0} det={det} shot={shot} routable={routable} unr={unrs} hun={hun:.0} en={en:.0} solo={solo} home_d={:.0}",
+                        dist(x, y, dx, dy),
+                        dist(x, y, w.markets[home].x, w.markets[home].y),
+                    ));
+                }
+                if bucket == "wait_wild" && waits.len() < 12 {
+                    waits.push(format!(
+                        "a{i} t{} hun={:.0} en={:.0} solo={} home_d={:.0} tgt_m={:?}",
+                        w.agents.target[i],
+                        w.agents.hunger[i],
+                        w.agents.energy[i],
+                        w.agents.solo_until[i].saturating_sub(t),
+                        dist(x, y, w.markets[w.agents.home[i] as usize].x, w.markets[w.agents.home[i] as usize].y),
+                        w.markets.get(w.agents.target[i] as usize).map(|m| m.population),
+                    ));
+                }
+            }
+            // Per-convoy detail for any convoy with unmoved members: did
+            // the center itself move since the last check, and what does
+            // its route state look like?
+            let mut convoy_lines: Vec<String> = Vec::new();
+            for (slot, n) in &convoy_unmoved {
+                let Some(Some(cv)) = w.convoys.get(*slot as usize) else {
+                    continue;
+                };
+                let key = 0x8000_0000 | slot;
+                let det = match w.water.detours.get(&key) {
+                    None => "none".to_string(),
+                    Some(d) if d.path.len() >= 2 => "route".to_string(),
+                    Some(d) => format!("marker(a{})", d.attempt),
+                };
+                let goal_d = dist(cv.x, cv.y, cv.goal_x, cv.goal_y);
+                let center_moved = prev_convoys
+                    .get(slot)
+                    .map(|&(px, py)| dist(cv.x, cv.y, px, py))
+                    .unwrap_or(f32::NAN);
+                let probe_since = w
+                    .water
+                    .convoy_probe
+                    .get(slot)
+                    .map(|&(_, _, s)| t.saturating_sub(s))
+                    .unwrap_or(0);
+                convoy_lines.push(format!(
+                    "convoy{slot}: members_unmoved={n} size={} goal_d={goal_d:.0} center_Δ={center_moved:.1} det={det} probe_age={probe_since} pos=({:.0},{:.0}) goal=({:.0},{:.0})",
+                    cv.members.len(),
+                    cv.x,
+                    cv.y,
+                    cv.goal_x,
+                    cv.goal_y,
+                ));
+            }
+            for (slot, c) in w.convoys.iter().enumerate() {
+                if let Some(cv) = c {
+                    prev_convoys.insert(slot as u32, (cv.x, cv.y));
+                }
+            }
+            let summary: Vec<String> = counts
+                .iter()
+                .map(|(k, n)| format!("{k}:{n}"))
+                .collect();
+            // Outcomes for travelers tagged blocked at an earlier check.
+            let mut moved = 0;
+            let mut died = 0;
+            let mut rerouted = 0;
+            let mut still = 0;
+            for (&i, &(_, act)) in tracked.iter() {
+                if !w.agents.alive[i] {
+                    died += 1;
+                } else if w.agents.action[i] != act {
+                    moved += 1;
+                } else if w.water.detours.get(&(i as u32)).is_some_and(|d| d.path.len() >= 2) {
+                    rerouted += 1;
+                } else {
+                    still += 1;
+                }
+            }
+            eprintln!(
+                "tick {t}: shore_unmoved={} {}\n  convoys:\n  {}\n  blocked_samples:\n  {}\n  wait_wild_samples:\n  {}\n  tracked_blocked: still={} rerouted={} act_changed={} died={}",
+                counts.values().sum::<usize>(),
+                summary.join(" "),
+                convoy_lines.join("\n  "),
+                blocked.join("\n  "),
+                waits.join("\n  "),
+                still,
+                rerouted,
+                moved,
+                died,
+            );
+            for i in 0..w.agents.len() {
+                prev[i] = (w.agents.x[i], w.agents.y[i]);
+            }
+        }
+    }
     #[test]
     #[ignore]
     fn diag_shore_deaths() {

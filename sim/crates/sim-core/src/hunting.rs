@@ -535,3 +535,49 @@ mod tests {
         assert!(!w.carcasses.contains_key(&(target as u32)));
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LegacyHuntingStats {
+    pub spears_crafted: u64,
+    pub bows_crafted: u64,
+    pub spear_encounters: u64,
+    pub bow_encounters: u64,
+    pub kills: u64,
+    pub escapes: u64,
+    pub lost_trails: u64,
+    pub injuries: u64,
+    pub carcass_portions_eaten: u64,
+}
+impl From<LegacyHuntingStats> for HuntingStats {
+    fn from(old: LegacyHuntingStats) -> Self {
+        Self {
+            spears_crafted: old.spears_crafted,
+            bows_crafted: old.bows_crafted,
+            spear_encounters: old.spear_encounters,
+            bow_encounters: old.bow_encounters,
+            kills: old.kills,
+            escapes: old.escapes,
+            lost_trails: old.lost_trails,
+            injuries: old.injuries,
+            carcass_portions_eaten: old.carcass_portions_eaten,
+        }
+    }
+}
+#[cfg(test)]
+impl From<HuntingStats> for LegacyHuntingStats {
+    fn from(live: HuntingStats) -> Self {
+        Self {
+            spears_crafted: live.spears_crafted,
+            bows_crafted: live.bows_crafted,
+            spear_encounters: live.spear_encounters,
+            bow_encounters: live.bow_encounters,
+            kills: live.kills,
+            escapes: live.escapes,
+            lost_trails: live.lost_trails,
+            injuries: live.injuries,
+            carcass_portions_eaten: live.carcass_portions_eaten,
+        }
+    }
+}

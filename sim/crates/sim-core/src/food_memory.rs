@@ -316,3 +316,91 @@ mod tests {
         assert!(memory.inputs(0, 5, 2)[1] < memory.inputs(0, 4, 2)[1]);
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyEstimate {
+    pub tick: u64,
+    pub mean: [f32; 2],
+    pub evidence: [f32; 2],
+}
+impl From<LegacyEstimate> for Estimate {
+    fn from(old: LegacyEstimate) -> Self {
+        Self {
+            tick: old.tick,
+            mean: old.mean,
+            evidence: old.evidence,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Estimate> for LegacyEstimate {
+    fn from(live: Estimate) -> Self {
+        Self {
+            tick: live.tick,
+            mean: live.mean,
+            evidence: live.evidence,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyPersonMemory {
+    pub pending: Option<(u32, usize)>,
+    pub general: LegacyEstimate,
+    pub targets: BTreeMap<u32, LegacyEstimate>,
+}
+impl From<LegacyPersonMemory> for PersonMemory {
+    fn from(old: LegacyPersonMemory) -> Self {
+        Self {
+            pending: old.pending,
+            general: old.general.into(),
+            targets: old
+                .targets
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<PersonMemory> for LegacyPersonMemory {
+    fn from(live: PersonMemory) -> Self {
+        Self {
+            pending: live.pending,
+            general: live.general.into(),
+            targets: live
+                .targets
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyFoodMemory {
+    pub people: BTreeMap<usize, LegacyPersonMemory>,
+}
+impl From<LegacyFoodMemory> for FoodMemory {
+    fn from(old: LegacyFoodMemory) -> Self {
+        Self {
+            people: old
+                .people
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<FoodMemory> for LegacyFoodMemory {
+    fn from(live: FoodMemory) -> Self {
+        Self {
+            people: live
+                .people
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}

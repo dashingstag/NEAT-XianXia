@@ -174,3 +174,57 @@ mod tests {
         assert_eq!(state.inputs(1, Action::OrderGoods, 9, 15), Some([0.0; 4]));
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyCommitments {
+    pub actions: BTreeMap<u8, super::food_memory::LegacyFoodMemory>,
+    pub trades: BTreeMap<usize, (u32, usize)>,
+    pub deliveries: BTreeMap<usize, (crate::legacy_types::LegacyAction, usize, u32)>,
+}
+impl From<LegacyCommitments> for Commitments {
+    fn from(old: LegacyCommitments) -> Self {
+        Self {
+            actions: old
+                .actions
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            trades: old.trades,
+            deliveries: old
+                .deliveries
+                .into_iter()
+                .map(|(k1, x1)| {
+                    (k1, {
+                        let (x2_0, x2_1, x2_2) = x1;
+                        (x2_0.into(), x2_1, x2_2)
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<Commitments> for LegacyCommitments {
+    fn from(live: Commitments) -> Self {
+        Self {
+            actions: live
+                .actions
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            trades: live.trades,
+            deliveries: live
+                .deliveries
+                .into_iter()
+                .map(|(k1, x1)| {
+                    (k1, {
+                        let (x2_0, x2_1, x2_2) = x1;
+                        (x2_0.into(), x2_1, x2_2)
+                    })
+                })
+                .collect(),
+        }
+    }
+}

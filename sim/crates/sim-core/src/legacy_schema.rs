@@ -1,16 +1,17 @@
 //! Pins the exact serde schema each legacy save reader decodes (#54).
 //!
 //! `serde_reflection` traces every reader's `LegacyWorld`, the frozen
-//! `LegacyWorldBase` that v14-v33 decode their base into, and the live
-//! `World` of the current format to its full type registry: container
+//! `LegacyWorldBase` that v14-v33 decode their base into, the frozen
+//! payloads v15-v33 append after it, and the live `World` and payload types
+//! of the current format to its full type registry: container
 //! names, field names and order, field types, array lengths and enum variant
 //! order. The registries are checked in as `legacy_schema.json`. Postcard
 //! decodes by position, so any difference means historical bytes would be
 //! read differently.
 //!
-//! If a historical entry (v04..v13, v14-v33-world-base) fails, a frozen
+//! If a historical entry (v04..v13, v14-v33-world-base, v15-v33-tails) fails, a frozen
 //! `Legacy*` layout was edited: undo it, because old saves depend on it. If
-//! only `current-world` fails, the live World's serialized layout changed;
+//! only a `current-world*` entry fails, the current format's layout changed;
 //! that is a save format change (see the `World` doc comment). Regenerate
 //! only after a reader moves to a frozen twin, a new reader is added, or the
 //! format is bumped:
@@ -24,6 +25,47 @@ use std::collections::BTreeMap;
 
 const SNAPSHOT: &str = include_str!("legacy_schema.json");
 const CURRENT_WORLD: &str = "current-world";
+const CURRENT_TAILS: &str = "current-world-tails";
+
+/// The frozen types World::load decodes after the base of a v15-v33 save.
+type FrozenTails = (
+    food_memory::LegacyFoodMemory,
+    [food_memory::LegacyFoodMemory; 5],
+    commitment_memory::LegacyCommitments,
+    worldmap::LegacyMapSpec,
+    worldmap::LegacyExploration,
+    wildlife::LegacyWildlifeSpawns22,
+    hunting::LegacyHuntingStats,
+    meat::LegacyMeatTrade,
+    std::collections::BTreeMap<u32, meat::LegacyDailySales>,
+    market_information::LegacyMarketInformation,
+    governance::LegacyGovernance,
+    camp_rumours::LegacyCampRumours,
+    travel::LegacyWaterState,
+    travel::LegacyTrafficState,
+    // v27's discarded report payload.
+    (
+        u64,
+        Vec<([legacy_v13::LegacyQuote; 13], legacy_v13::LegacyQuote)>,
+    ),
+);
+/// The live types the current format writes after the base.
+type LiveTails = (
+    food_memory::FoodMemory,
+    work_memory::WorkMemory,
+    commitment_memory::Commitments,
+    WorldMap,
+    Exploration,
+    wildlife::WildlifeSpawns,
+    HuntingStats,
+    meat::MeatTrade,
+    std::collections::BTreeMap<u32, meat::DailySales>,
+    market_information::MarketInformation,
+    governance::Governance,
+    camp_rumours::CampRumours,
+    WaterState,
+    TrafficState,
+);
 const SNAPSHOT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/legacy_schema.json");
 
 /// Enums need tracing on their own before a container that holds them.
@@ -50,6 +92,15 @@ fn trace_enum(tracer: &mut Tracer, name: &str) {
             .map(drop),
         "LegacyKind" => tracer
             .trace_simple_type::<legacy_types::LegacyKind>()
+            .map(drop),
+        "SpawnAnchor" => tracer
+            .trace_simple_type::<wildlife::SpawnAnchor>()
+            .map(drop),
+        "LegacySpawnAnchor" => tracer
+            .trace_simple_type::<wildlife::LegacySpawnAnchor>()
+            .map(drop),
+        "LegacyMapSize" => tracer
+            .trace_simple_type::<worldmap::LegacyMapSize>()
             .map(drop),
         other => panic!("legacy_schema: add a tracer for enum {other}"),
     };
@@ -94,6 +145,11 @@ fn schemas() -> BTreeMap<&'static str, Registry> {
         // format change: bump SaveVersion::CURRENT, and the version it
         // replaces starts reading through LegacyWorldBase (#96).
         (CURRENT_WORLD, registry::<World>()),
+        // Every payload v15-v33 append after the base, frozen (#97).
+        ("v15-v33-tails", registry::<FrozenTails>()),
+        // The current format's tails decode live types; a change is a
+        // format change, like current-world.
+        (CURRENT_TAILS, registry::<LiveTails>()),
     ])
 }
 
@@ -146,9 +202,8 @@ fn legacy_reader_schemas_are_pinned() {
             drift.push(format!("{reader}: reader removed"));
         }
     }
-    let (current_world, historical): (Vec<_>, Vec<_>) = drift
-        .iter()
-        .partition(|line| line.starts_with(CURRENT_WORLD));
+    let (current_world, historical): (Vec<_>, Vec<_>) =
+        drift.iter().partition(|line| line.starts_with("current-"));
     assert!(
         historical.is_empty(),
         "legacy save schemas drifted:\n  {}\nA type that old saves decode into changed. Freeze a \
@@ -162,7 +217,7 @@ fn legacy_reader_schemas_are_pinned() {
     );
     assert!(
         current_world.is_empty(),
-        "the live World's serialized layout changed:\n  {}\nThat is a save format change. \
+        "the current format's serialized layout changed:\n  {}\nThat is a save format change. \
          Bump SaveVersion::CURRENT (and the writer's XXSAVE header), switch the version it \
          replaces to LegacyWorldBase in World::load, then regenerate the snapshot.",
         current_world
@@ -181,8 +236,8 @@ const STILL_LIVE: &[&str] = &[];
 #[test]
 fn legacy_readers_trust_no_new_live_types() {
     for (reader, registry) in schemas() {
-        if reader == CURRENT_WORLD {
-            continue; // the current format decodes the live World by design
+        if reader == CURRENT_WORLD || reader == CURRENT_TAILS {
+            continue; // the current format decodes live types by design
         }
         for name in registry.keys() {
             assert!(

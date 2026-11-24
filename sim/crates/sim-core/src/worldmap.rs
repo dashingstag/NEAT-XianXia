@@ -1058,3 +1058,88 @@ mod tests {
         assert_eq!((mask[0], mask[4 * 8 + 7]), (1, 1));
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyMapSpec {
+    pub size: LegacyMapSize,
+    pub seed: u64,
+    pub version: u32,
+    pub home_x: f32,
+    pub home_y: f32,
+}
+impl From<LegacyMapSpec> for MapSpec {
+    fn from(old: LegacyMapSpec) -> Self {
+        Self {
+            size: old.size.into(),
+            seed: old.seed,
+            version: old.version,
+            home_x: old.home_x,
+            home_y: old.home_y,
+        }
+    }
+}
+#[cfg(test)]
+impl From<MapSpec> for LegacyMapSpec {
+    fn from(live: MapSpec) -> Self {
+        Self {
+            size: live.size.into(),
+            seed: live.seed,
+            version: live.version,
+            home_x: live.home_x,
+            home_y: live.home_y,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyExploration {
+    pub chunks: Vec<BTreeSet<(u32, u32)>>,
+}
+impl From<LegacyExploration> for Exploration {
+    fn from(old: LegacyExploration) -> Self {
+        Self { chunks: old.chunks }
+    }
+}
+#[cfg(test)]
+impl From<Exploration> for LegacyExploration {
+    fn from(live: Exploration) -> Self {
+        Self {
+            chunks: live.chunks,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) enum LegacyMapSize {
+    Classic,
+    X4,
+    X25,
+    X100,
+}
+impl From<LegacyMapSize> for MapSize {
+    fn from(old: LegacyMapSize) -> Self {
+        match old {
+            LegacyMapSize::Classic => Self::Classic,
+            LegacyMapSize::X4 => Self::X4,
+            LegacyMapSize::X25 => Self::X25,
+            LegacyMapSize::X100 => Self::X100,
+        }
+    }
+}
+#[cfg(test)]
+impl From<MapSize> for LegacyMapSize {
+    fn from(live: MapSize) -> Self {
+        match live {
+            MapSize::Classic => Self::Classic,
+            MapSize::X4 => Self::X4,
+            MapSize::X25 => Self::X25,
+            MapSize::X100 => Self::X100,
+        }
+    }
+}
+/// A frozen `MapSpec` rebuilds the map exactly as `WorldMap`'s Deserialize does.
+impl From<LegacyMapSpec> for WorldMap {
+    fn from(old: LegacyMapSpec) -> Self {
+        WorldMap::new(old.into())
+    }
+}

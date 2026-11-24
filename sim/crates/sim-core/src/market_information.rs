@@ -394,3 +394,75 @@ impl World {
         Ok(())
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LegacyReport {
+    pub tick: u64,
+    pub quotes: [crate::legacy_v13::LegacyQuote; 13],
+    pub meat: crate::legacy_v13::LegacyQuote,
+}
+impl From<LegacyReport> for Report {
+    fn from(old: LegacyReport) -> Self {
+        Self {
+            tick: old.tick,
+            quotes: old.quotes.map(|x1| x1.into()),
+            meat: old.meat.into(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<Report> for LegacyReport {
+    fn from(live: Report) -> Self {
+        Self {
+            tick: live.tick,
+            quotes: live.quotes.map(|x1| x1.into()),
+            meat: live.meat.into(),
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct LegacyMarketInformation {
+    pub personal: BTreeMap<u32, BTreeMap<u32, LegacyReport>>,
+    pub taverns: BTreeMap<u32, BTreeMap<u32, LegacyReport>>,
+    pub bought: u64,
+    pub sold: u64,
+}
+impl From<LegacyMarketInformation> for MarketInformation {
+    fn from(old: LegacyMarketInformation) -> Self {
+        Self {
+            personal: old
+                .personal
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into_iter().map(|(k2, x2)| (k2, x2.into())).collect()))
+                .collect(),
+            taverns: old
+                .taverns
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into_iter().map(|(k2, x2)| (k2, x2.into())).collect()))
+                .collect(),
+            bought: old.bought,
+            sold: old.sold,
+        }
+    }
+}
+#[cfg(test)]
+impl From<MarketInformation> for LegacyMarketInformation {
+    fn from(live: MarketInformation) -> Self {
+        Self {
+            personal: live
+                .personal
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into_iter().map(|(k2, x2)| (k2, x2.into())).collect()))
+                .collect(),
+            taverns: live
+                .taverns
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into_iter().map(|(k2, x2)| (k2, x2.into())).collect()))
+                .collect(),
+            bought: live.bought,
+            sold: live.sold,
+        }
+    }
+}

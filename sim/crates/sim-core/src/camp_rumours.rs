@@ -407,3 +407,31 @@ mod tests {
         assert_eq!(restored.camp_rumours, CampRumours::default());
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyCampRumours {
+    pub camps: BTreeMap<u32, u64>,
+    pub people: BTreeSet<(u32, u32)>,
+    pub taverns: BTreeSet<(u32, u32)>,
+}
+impl From<LegacyCampRumours> for CampRumours {
+    fn from(old: LegacyCampRumours) -> Self {
+        Self {
+            camps: old.camps,
+            people: old.people,
+            taverns: old.taverns,
+        }
+    }
+}
+#[cfg(test)]
+impl From<CampRumours> for LegacyCampRumours {
+    fn from(live: CampRumours) -> Self {
+        Self {
+            camps: live.camps,
+            people: live.people,
+            taverns: live.taverns,
+        }
+    }
+}

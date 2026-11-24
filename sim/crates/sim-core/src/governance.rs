@@ -434,3 +434,150 @@ mod tests {
         assert_eq!(w.governance.offices[&0].leader, Some(1));
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyAward {
+    pub market: u32,
+    pub round: u64,
+    pub expires: u64,
+}
+impl From<LegacyAward> for Award {
+    fn from(old: LegacyAward) -> Self {
+        Self {
+            market: old.market,
+            round: old.round,
+            expires: old.expires,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Award> for LegacyAward {
+    fn from(live: Award) -> Self {
+        Self {
+            market: live.market,
+            round: live.round,
+            expires: live.expires,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyElection {
+    pub tick: u64,
+    pub winner: Option<u32>,
+    pub votes: BTreeMap<u32, u32>,
+    pub turnout: u32,
+}
+impl From<LegacyElection> for Election {
+    fn from(old: LegacyElection) -> Self {
+        Self {
+            tick: old.tick,
+            winner: old.winner,
+            votes: old.votes,
+            turnout: old.turnout,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Election> for LegacyElection {
+    fn from(live: Election) -> Self {
+        Self {
+            tick: live.tick,
+            winner: live.winner,
+            votes: live.votes,
+            turnout: live.turnout,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyNomination {
+    pub fee: u64,
+    pub candidates: Vec<u32>,
+}
+impl From<LegacyNomination> for Nomination {
+    fn from(old: LegacyNomination) -> Self {
+        Self {
+            fee: old.fee,
+            candidates: old.candidates,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Nomination> for LegacyNomination {
+    fn from(live: Nomination) -> Self {
+        Self {
+            fee: live.fee,
+            candidates: live.candidates,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyOffice {
+    pub leader: Option<u32>,
+    pub next_election: Option<u64>,
+    pub round: u64,
+    pub nomination: Option<LegacyNomination>,
+    pub result: Option<LegacyElection>,
+}
+impl From<LegacyOffice> for Office {
+    fn from(old: LegacyOffice) -> Self {
+        Self {
+            leader: old.leader,
+            next_election: old.next_election,
+            round: old.round,
+            nomination: old.nomination.map(|x1| x1.into()),
+            result: old.result.map(|x1| x1.into()),
+        }
+    }
+}
+#[cfg(test)]
+impl From<Office> for LegacyOffice {
+    fn from(live: Office) -> Self {
+        Self {
+            leader: live.leader,
+            next_election: live.next_election,
+            round: live.round,
+            nomination: live.nomination.map(|x1| x1.into()),
+            result: live.result.map(|x1| x1.into()),
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyGovernance {
+    pub offices: BTreeMap<u32, LegacyOffice>,
+    pub happiness: BTreeMap<u32, LegacyAward>,
+}
+impl From<LegacyGovernance> for Governance {
+    fn from(old: LegacyGovernance) -> Self {
+        Self {
+            offices: old
+                .offices
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            happiness: old
+                .happiness
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<Governance> for LegacyGovernance {
+    fn from(live: Governance) -> Self {
+        Self {
+            offices: live
+                .offices
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            happiness: live
+                .happiness
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+        }
+    }
+}

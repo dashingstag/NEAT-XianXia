@@ -95,6 +95,7 @@ These two items share infrastructure, so do the shared groundwork once:
 - #88: a viewer reconnect silently resets the selection to agent 0.
 - #89: retire the GDScript `house_origin` fallback left after #56.
 - #96: saves v14-v33 decode the live `World` base struct (follow-up to #54). Fixed by freezing `LegacyWorldBase`; only the current format decodes the live `World`.
+- #97: the payloads v15-v33 append after the base still decoded live types. Fixed with per-module `Legacy*` twins decoded through `World::take_as`.
 - Comments added to #54 (the length-only schema pin misses same-size reorders) and #48 (the experiment harness is not in the repository).
 
 ## Suggested sequencing

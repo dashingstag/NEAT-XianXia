@@ -1888,6 +1888,18 @@ impl From<legacy_v13::LegacyQuote> for Quote {
         }
     }
 }
+#[cfg(test)]
+impl From<Quote> for legacy_v13::LegacyQuote {
+    fn from(q: Quote) -> Self {
+        Self {
+            bid: q.bid,
+            remaining: q.remaining,
+            escrow: q.escrow,
+            ask: q.ask,
+            offered: q.offered,
+        }
+    }
+}
 impl From<legacy_v13::LegacyProject> for Project {
     fn from(old: legacy_v13::LegacyProject) -> Self {
         Self {

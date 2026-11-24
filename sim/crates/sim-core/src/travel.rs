@@ -4339,3 +4339,258 @@ impl World {
         self.sync_education();
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyPendingBlock {
+    pub agent: u32,
+    pub x: f32,
+    pub y: f32,
+    pub tx: f32,
+    pub ty: f32,
+    pub tick: u64,
+}
+impl From<LegacyPendingBlock> for PendingBlock {
+    fn from(old: LegacyPendingBlock) -> Self {
+        Self {
+            agent: old.agent,
+            x: old.x,
+            y: old.y,
+            tx: old.tx,
+            ty: old.ty,
+            tick: old.tick,
+        }
+    }
+}
+#[cfg(test)]
+impl From<PendingBlock> for LegacyPendingBlock {
+    fn from(live: PendingBlock) -> Self {
+        Self {
+            agent: live.agent,
+            x: live.x,
+            y: live.y,
+            tx: live.tx,
+            ty: live.ty,
+            tick: live.tick,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyWaterBlock {
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub tx: f32,
+    pub ty: f32,
+    pub tick: u64,
+    pub reports: u16,
+}
+impl From<LegacyWaterBlock> for WaterBlock {
+    fn from(old: LegacyWaterBlock) -> Self {
+        Self {
+            market: old.market,
+            x: old.x,
+            y: old.y,
+            tx: old.tx,
+            ty: old.ty,
+            tick: old.tick,
+            reports: old.reports,
+        }
+    }
+}
+#[cfg(test)]
+impl From<WaterBlock> for LegacyWaterBlock {
+    fn from(live: WaterBlock) -> Self {
+        Self {
+            market: live.market,
+            x: live.x,
+            y: live.y,
+            tx: live.tx,
+            ty: live.ty,
+            tick: live.tick,
+            reports: live.reports,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyPort {
+    pub market: u32,
+    pub x: f32,
+    pub y: f32,
+    pub lx: f32,
+    pub ly: f32,
+    pub near_done: bool,
+    pub far_done: bool,
+    pub ferry: bool,
+    pub queue: Vec<u32>,
+    pub queue_far: Vec<u32>,
+}
+impl From<LegacyPort> for Port {
+    fn from(old: LegacyPort) -> Self {
+        Self {
+            market: old.market,
+            x: old.x,
+            y: old.y,
+            lx: old.lx,
+            ly: old.ly,
+            near_done: old.near_done,
+            far_done: old.far_done,
+            ferry: old.ferry,
+            queue: old.queue,
+            queue_far: old.queue_far,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Port> for LegacyPort {
+    fn from(live: Port) -> Self {
+        Self {
+            market: live.market,
+            x: live.x,
+            y: live.y,
+            lx: live.lx,
+            ly: live.ly,
+            near_done: live.near_done,
+            far_done: live.far_done,
+            ferry: live.ferry,
+            queue: live.queue,
+            queue_far: live.queue_far,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyShip {
+    pub port: u32,
+    pub x: f32,
+    pub y: f32,
+    pub at_far: bool,
+    pub aboard: Vec<u32>,
+    pub departed: bool,
+    pub docked_since: u64,
+    pub path: Vec<(f32, f32)>,
+    pub leg: u16,
+}
+impl From<LegacyShip> for Ship {
+    fn from(old: LegacyShip) -> Self {
+        Self {
+            port: old.port,
+            x: old.x,
+            y: old.y,
+            at_far: old.at_far,
+            aboard: old.aboard,
+            departed: old.departed,
+            docked_since: old.docked_since,
+            path: old.path,
+            leg: old.leg,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Ship> for LegacyShip {
+    fn from(live: Ship) -> Self {
+        Self {
+            port: live.port,
+            x: live.x,
+            y: live.y,
+            at_far: live.at_far,
+            aboard: live.aboard,
+            departed: live.departed,
+            docked_since: live.docked_since,
+            path: live.path,
+            leg: live.leg,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyDetour {
+    pub path: Vec<(f32, f32)>,
+    pub progress: f32,
+    pub attempt: u64,
+}
+impl From<LegacyDetour> for Detour {
+    fn from(old: LegacyDetour) -> Self {
+        Self {
+            path: old.path,
+            progress: old.progress,
+            attempt: old.attempt,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Detour> for LegacyDetour {
+    fn from(live: Detour) -> Self {
+        Self {
+            path: live.path,
+            progress: live.progress,
+            attempt: live.attempt,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyWaterState {
+    pub progress: Vec<Option<(f32, f32, u64)>>,
+    pub pending: Vec<LegacyPendingBlock>,
+    pub blocks: Vec<LegacyWaterBlock>,
+    pub ports: Vec<LegacyPort>,
+    pub ships: Vec<LegacyShip>,
+    pub detours: BTreeMap<u32, LegacyDetour>,
+    pub convoy_probe: BTreeMap<u32, (f32, f32, u64)>,
+}
+impl From<LegacyWaterState> for WaterState {
+    fn from(old: LegacyWaterState) -> Self {
+        Self {
+            progress: old.progress,
+            pending: old.pending.into_iter().map(|x1| x1.into()).collect(),
+            blocks: old.blocks.into_iter().map(|x1| x1.into()).collect(),
+            ports: old.ports.into_iter().map(|x1| x1.into()).collect(),
+            ships: old.ships.into_iter().map(|x1| x1.into()).collect(),
+            detours: old
+                .detours
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            convoy_probe: old.convoy_probe,
+            retry_budget_tick: Default::default(),
+            fast_retries: Default::default(),
+            ferry_routes: Default::default(),
+            unreachable: Default::default(),
+            shared_unreachable: Default::default(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<WaterState> for LegacyWaterState {
+    fn from(live: WaterState) -> Self {
+        Self {
+            progress: live.progress,
+            pending: live.pending.into_iter().map(|x1| x1.into()).collect(),
+            blocks: live.blocks.into_iter().map(|x1| x1.into()).collect(),
+            ports: live.ports.into_iter().map(|x1| x1.into()).collect(),
+            ships: live.ships.into_iter().map(|x1| x1.into()).collect(),
+            detours: live
+                .detours
+                .into_iter()
+                .map(|(k1, x1)| (k1, x1.into()))
+                .collect(),
+            convoy_probe: live.convoy_probe,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub(crate) struct LegacyTrafficState {
+    pub counts: BTreeMap<(u32, u32), u64>,
+}
+impl From<LegacyTrafficState> for TrafficState {
+    fn from(old: LegacyTrafficState) -> Self {
+        Self { counts: old.counts }
+    }
+}
+#[cfg(test)]
+impl From<TrafficState> for LegacyTrafficState {
+    fn from(live: TrafficState) -> Self {
+        Self {
+            counts: live.counts,
+        }
+    }
+}

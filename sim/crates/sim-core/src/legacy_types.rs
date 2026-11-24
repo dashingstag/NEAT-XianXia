@@ -1,4 +1,5 @@
-//! Frozen serde layouts that the schema 4-13 readers decode old saves into (#54).
+//! Frozen serde layouts that old saves decode into: the schema 4-13 readers
+//! (#54) and the World base struct of formats v14-v33 (#96).
 //!
 //! Each `Legacy*` type is a copy of a live type's layout as those saves wrote
 //! it. Postcard decodes by position, so field order, field types, array
@@ -1887,6 +1888,18 @@ impl From<legacy_v13::LegacyQuote> for Quote {
         }
     }
 }
+#[cfg(test)]
+impl From<Quote> for legacy_v13::LegacyQuote {
+    fn from(q: Quote) -> Self {
+        Self {
+            bid: q.bid,
+            remaining: q.remaining,
+            escrow: q.escrow,
+            ask: q.ask,
+            offered: q.offered,
+        }
+    }
+}
 impl From<legacy_v13::LegacyProject> for Project {
     fn from(old: legacy_v13::LegacyProject) -> Self {
         Self {
@@ -1894,6 +1907,331 @@ impl From<legacy_v13::LegacyProject> for Project {
             progress: old.progress,
             required: old.required,
             destination: old.destination,
+        }
+    }
+}
+
+// Base formats (#96): saves v14-v33 serialize this World base struct
+// (fields `format`..`relationships` plus `hill`) ahead of their memory
+// payloads and tails. It is frozen here with the layout every one of those
+// versions wrote; only the current format (SaveVersion::CURRENT) decodes the
+// live World. When the World layout next changes, bump the format and the
+// previous current version starts reading through this twin too.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyBaseAgents {
+    pub x: Vec<f32>,
+    pub y: Vec<f32>,
+    pub health: Vec<f32>,
+    pub hunger: Vec<f32>,
+    pub energy: Vec<f32>,
+    pub alive: Vec<bool>,
+    pub coins: Vec<u64>,
+    pub berries: Vec<u32>,
+    pub fish: Vec<u32>,
+    pub cargo: Vec<u32>,
+    pub cargo_kind: Vec<u8>,
+    pub origin: Vec<u32>,
+    pub home: Vec<u32>,
+    pub action: Vec<LegacyAction>,
+    pub target: Vec<u32>,
+    pub timer: Vec<f32>,
+    pub last_decision: Vec<u64>,
+    pub convoy: Vec<u32>,
+    pub solo_until: Vec<u64>,
+    pub dwell_cell: Vec<u32>,
+    pub dwell_ticks: Vec<u32>,
+    pub residence: Vec<u32>,
+    pub capacity: Vec<u32>,
+    pub rested_meter: Vec<f32>,
+    pub rested: Vec<bool>,
+    pub sleeping: Vec<bool>,
+    pub rest_site: Vec<u32>,
+    pub bed_slot: Vec<u32>,
+    pub contract: Vec<u32>,
+    pub carried_body: Vec<u32>,
+    pub corpse: Vec<u32>,
+    pub rice: Vec<u32>,
+    pub traits: Vec<u16>,
+    pub tools: Vec<[u8; 4]>,
+    pub urban_weight: Vec<u32>,
+}
+impl From<LegacyBaseAgents> for crate::Agents {
+    fn from(old: LegacyBaseAgents) -> Self {
+        Self {
+            x: old.x,
+            y: old.y,
+            health: old.health,
+            hunger: old.hunger,
+            energy: old.energy,
+            alive: old.alive,
+            coins: old.coins,
+            berries: old.berries,
+            fish: old.fish,
+            cargo: old.cargo,
+            cargo_kind: old.cargo_kind,
+            origin: old.origin,
+            home: old.home,
+            action: old.action.into_iter().map(Into::into).collect(),
+            target: old.target,
+            timer: old.timer,
+            last_decision: old.last_decision,
+            convoy: old.convoy,
+            solo_until: old.solo_until,
+            dwell_cell: old.dwell_cell,
+            dwell_ticks: old.dwell_ticks,
+            residence: old.residence,
+            capacity: old.capacity,
+            rested_meter: old.rested_meter,
+            rested: old.rested,
+            sleeping: old.sleeping,
+            rest_site: old.rest_site,
+            bed_slot: old.bed_slot,
+            contract: old.contract,
+            carried_body: old.carried_body,
+            corpse: old.corpse,
+            rice: old.rice,
+            traits: old.traits,
+            tools: old.tools,
+            urban_weight: old.urban_weight,
+        }
+    }
+}
+#[cfg(test)]
+impl From<crate::Agents> for LegacyBaseAgents {
+    fn from(live: crate::Agents) -> Self {
+        Self {
+            x: live.x,
+            y: live.y,
+            health: live.health,
+            hunger: live.hunger,
+            energy: live.energy,
+            alive: live.alive,
+            coins: live.coins,
+            berries: live.berries,
+            fish: live.fish,
+            cargo: live.cargo,
+            cargo_kind: live.cargo_kind,
+            origin: live.origin,
+            home: live.home,
+            action: live.action.into_iter().map(Into::into).collect(),
+            target: live.target,
+            timer: live.timer,
+            last_decision: live.last_decision,
+            convoy: live.convoy,
+            solo_until: live.solo_until,
+            dwell_cell: live.dwell_cell,
+            dwell_ticks: live.dwell_ticks,
+            residence: live.residence,
+            capacity: live.capacity,
+            rested_meter: live.rested_meter,
+            rested: live.rested,
+            sleeping: live.sleeping,
+            rest_site: live.rest_site,
+            bed_slot: live.bed_slot,
+            contract: live.contract,
+            carried_body: live.carried_body,
+            corpse: live.corpse,
+            rice: live.rice,
+            traits: live.traits,
+            tools: live.tools,
+            urban_weight: live.urban_weight,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyBaseMarket {
+    pub id: u32,
+    pub name: String,
+    pub x: f32,
+    pub y: f32,
+    pub coins: u64,
+    pub goods: [VecDeque<legacy_v13::LegacyLot>; V13_GOODS],
+    pub quotes: [legacy_v13::LegacyQuote; V13_GOODS],
+    pub nearest: [u32; V13_GOODS],
+    pub population: u32,
+    pub housing_blocks: u32,
+    pub stable_residents: u32,
+    pub village: bool,
+    pub project: Option<legacy_v13::LegacyProject>,
+    pub sales: [u64; V13_GOODS],
+    pub local_sales: [u64; V13_GOODS],
+    pub imported_sales: [u64; V13_GOODS],
+    pub revenue_total: u64,
+    pub expenses_total: u64,
+}
+impl From<LegacyBaseMarket> for Market {
+    fn from(old: LegacyBaseMarket) -> Self {
+        Self {
+            id: old.id,
+            name: old.name,
+            x: old.x,
+            y: old.y,
+            coins: old.coins,
+            goods: legacy_v5::pad(old.goods.map(|q| q.into_iter().map(Into::into).collect())),
+            quotes: legacy_v5::pad(old.quotes.map(Into::into)),
+            nearest: std::array::from_fn(|k| old.nearest.get(k).copied().unwrap_or(NONE)),
+            population: old.population,
+            housing_blocks: old.housing_blocks,
+            stable_residents: old.stable_residents,
+            village: old.village,
+            project: old.project.map(Into::into),
+            sales: legacy_v5::pad(old.sales),
+            local_sales: legacy_v5::pad(old.local_sales),
+            imported_sales: legacy_v5::pad(old.imported_sales),
+            revenue_total: old.revenue_total,
+            expenses_total: old.expenses_total,
+        }
+    }
+}
+#[cfg(test)]
+impl From<Market> for LegacyBaseMarket {
+    fn from(m: Market) -> Self {
+        Self {
+            id: m.id,
+            name: m.name,
+            x: m.x,
+            y: m.y,
+            coins: m.coins,
+            goods: std::array::from_fn(|k| {
+                m.goods[k]
+                    .iter()
+                    .map(|l| legacy_v13::LegacyLot {
+                        quantity: l.quantity,
+                        origin: l.origin,
+                    })
+                    .collect()
+            }),
+            quotes: std::array::from_fn(|k| legacy_v13::LegacyQuote {
+                bid: m.quotes[k].bid,
+                remaining: m.quotes[k].remaining,
+                escrow: m.quotes[k].escrow,
+                ask: m.quotes[k].ask,
+                offered: m.quotes[k].offered,
+            }),
+            nearest: std::array::from_fn(|k| m.nearest[k]),
+            population: m.population,
+            housing_blocks: m.housing_blocks,
+            stable_residents: m.stable_residents,
+            village: m.village,
+            project: m.project.map(|p| legacy_v13::LegacyProject {
+                kind: p.kind,
+                progress: p.progress,
+                required: p.required,
+                destination: p.destination,
+            }),
+            sales: std::array::from_fn(|k| m.sales[k]),
+            local_sales: std::array::from_fn(|k| m.local_sales[k]),
+            imported_sales: std::array::from_fn(|k| m.imported_sales[k]),
+            revenue_total: m.revenue_total,
+            expenses_total: m.expenses_total,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LegacyHill {
+    pub x: f32,
+    pub y: f32,
+    pub radius: f32,
+}
+twin!(LegacyHill, Hill, [x, y, radius]);
+
+/// The serialized part of `World` in formats v14-v33, in field order.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LegacyWorldBase {
+    pub format: u32,
+    pub seed: u64,
+    pub rng: LegacyRng,
+    pub tick: u64,
+    pub agents: LegacyBaseAgents,
+    pub genomes: Vec<LegacyGenome>,
+    pub innovations: LegacyInnovations,
+    pub markets: Vec<LegacyBaseMarket>,
+    pub patches: Vec<LegacyPatch>,
+    pub roads: Vec<LegacyRoad>,
+    pub ledger: LegacyLedger,
+    pub stats: LegacyStatistics,
+    pub sales_profile_labels: Vec<String>,
+    pub convoys: Vec<Option<LegacyConvoy>>,
+    pub shelters: Vec<LegacyShelter>,
+    pub clock_offset: u64,
+    pub councils: Vec<LegacyCouncil>,
+    pub corpses: Vec<LegacyCorpse>,
+    pub contracts: Vec<Option<LegacyContract>>,
+    pub graveyards: Vec<LegacyGraveyard>,
+    pub people: Vec<LegacyPerson>,
+    pub matches: Vec<u32>,
+    pub farms: Vec<LegacyFarm>,
+    pub fertility: Vec<LegacyFertileRegion>,
+    pub social: Vec<f32>,
+    pub taverns: Vec<LegacyTavern>,
+    pub wildlife: LegacyWildlife,
+    pub education: LegacyEducation,
+    pub urban: LegacyUrban,
+    pub banking: LegacyBanking,
+    pub relationships: LegacyRelationships,
+    pub hill: LegacyHill,
+}
+/// Rebuilds a World from a frozen base. Skipped runtime fields get exactly
+/// what serde gave them when these versions decoded the live World.
+impl From<LegacyWorldBase> for World {
+    fn from(old: LegacyWorldBase) -> Self {
+        fn all<A: Into<B>, B>(v: Vec<A>) -> Vec<B> {
+            v.into_iter().map(Into::into).collect()
+        }
+        fn some<A: Into<B>, B>(v: Vec<Option<A>>) -> Vec<Option<B>> {
+            v.into_iter().map(|o| o.map(Into::into)).collect()
+        }
+        Self {
+            format: old.format,
+            seed: old.seed,
+            rng: old.rng.into(),
+            tick: old.tick,
+            agents: old.agents.into(),
+            genomes: all(old.genomes),
+            innovations: old.innovations.into(),
+            brains: Vec::new(),
+            markets: all(old.markets),
+            patches: all(old.patches),
+            roads: all(old.roads),
+            ledger: old.ledger.into(),
+            stats: old.stats.into(),
+            sales_profile_labels: old.sales_profile_labels,
+            convoys: some(old.convoys),
+            shelters: all(old.shelters),
+            clock_offset: old.clock_offset,
+            councils: all(old.councils),
+            corpses: all(old.corpses),
+            contracts: some(old.contracts),
+            graveyards: all(old.graveyards),
+            people: all(old.people),
+            matches: old.matches,
+            farms: all(old.farms),
+            fertility: all(old.fertility),
+            social: old.social,
+            taverns: all(old.taverns),
+            wildlife: old.wildlife.into(),
+            education: old.education.into(),
+            urban: old.urban.into(),
+            banking: old.banking.into(),
+            relationships: old.relationships.into(),
+            watch: Default::default(),
+            hill: old.hill.into(),
+            food_memory: Default::default(),
+            forage_memory: Default::default(),
+            work_memory: Default::default(),
+            commitments: Default::default(),
+            map: default_checkpoint_map(),
+            explored: Default::default(),
+            governance: Default::default(),
+            camp_rumours: Default::default(),
+            carcasses: Default::default(),
+            meat_trade: Default::default(),
+            market_information: Default::default(),
+            road_paths: Default::default(),
+            water: Default::default(),
+            traffic: Default::default(),
+            landmarks: Default::default(),
         }
     }
 }

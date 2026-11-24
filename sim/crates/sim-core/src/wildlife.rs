@@ -210,7 +210,7 @@ pub struct EcologyLedger {
     pub lost_pregnancies: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-enum SpawnAnchor {
+pub(super) enum SpawnAnchor {
     Grove,
     Mountain { x: f32, y: f32 },
     Shore { x: f32, y: f32 },
@@ -1985,5 +1985,83 @@ mod tests {
         );
         assert!(loaded.wildlife.ledger.births >= 2);
         w.check().unwrap();
+    }
+}
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacySpawnPoint22 {
+    pub anchor: LegacySpawnAnchor,
+    pub forest: usize,
+    pub species: u8,
+    pub vacant_since: Option<u64>,
+}
+impl From<LegacySpawnPoint22> for SpawnPoint {
+    fn from(old: LegacySpawnPoint22) -> Self {
+        Self {
+            anchor: old.anchor.into(),
+            forest: old.forest,
+            species: old.species,
+            vacant_since: old.vacant_since,
+        }
+    }
+}
+#[cfg(test)]
+impl From<SpawnPoint> for LegacySpawnPoint22 {
+    fn from(live: SpawnPoint) -> Self {
+        Self {
+            anchor: live.anchor.into(),
+            forest: live.forest,
+            species: live.species,
+            vacant_since: live.vacant_since,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct LegacyWildlifeSpawns22 {
+    pub points: Vec<LegacySpawnPoint22>,
+    pub spawned: u64,
+}
+impl From<LegacyWildlifeSpawns22> for WildlifeSpawns {
+    fn from(old: LegacyWildlifeSpawns22) -> Self {
+        Self {
+            points: old.points.into_iter().map(|x1| x1.into()).collect(),
+            spawned: old.spawned,
+        }
+    }
+}
+#[cfg(test)]
+impl From<WildlifeSpawns> for LegacyWildlifeSpawns22 {
+    fn from(live: WildlifeSpawns) -> Self {
+        Self {
+            points: live.points.into_iter().map(|x1| x1.into()).collect(),
+            spawned: live.spawned,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum LegacySpawnAnchor {
+    Grove,
+    Mountain { x: f32, y: f32 },
+    Shore { x: f32, y: f32 },
+}
+impl From<LegacySpawnAnchor> for SpawnAnchor {
+    fn from(old: LegacySpawnAnchor) -> Self {
+        match old {
+            LegacySpawnAnchor::Grove => Self::Grove,
+            LegacySpawnAnchor::Mountain { x, y } => Self::Mountain { x, y },
+            LegacySpawnAnchor::Shore { x, y } => Self::Shore { x, y },
+        }
+    }
+}
+#[cfg(test)]
+impl From<SpawnAnchor> for LegacySpawnAnchor {
+    fn from(live: SpawnAnchor) -> Self {
+        match live {
+            SpawnAnchor::Grove => Self::Grove,
+            SpawnAnchor::Mountain { x, y } => Self::Mountain { x, y },
+            SpawnAnchor::Shore { x, y } => Self::Shore { x, y },
+        }
     }
 }

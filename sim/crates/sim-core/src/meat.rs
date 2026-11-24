@@ -548,3 +548,69 @@ mod tests {
         );
     }
 }
+
+// Frozen layout of this module's save payloads in formats v15-v33 (#97).
+// Generated from the traced schema; never edit a field of a Legacy* type.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct LegacyDailySales {
+    pub day: u64,
+    pub today: u64,
+    pub yesterday: u64,
+}
+impl From<LegacyDailySales> for DailySales {
+    fn from(old: LegacyDailySales) -> Self {
+        Self {
+            day: old.day,
+            today: old.today,
+            yesterday: old.yesterday,
+        }
+    }
+}
+#[cfg(test)]
+impl From<DailySales> for LegacyDailySales {
+    fn from(live: DailySales) -> Self {
+        Self {
+            day: live.day,
+            today: live.today,
+            yesterday: live.yesterday,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct LegacyMeatTrade {
+    pub packs: BTreeMap<u32, u64>,
+    pub markets: BTreeMap<u32, u64>,
+    pub collected: u64,
+    pub sold: u64,
+    pub bought: u64,
+    pub eaten: u64,
+    pub discarded: u64,
+}
+impl From<LegacyMeatTrade> for MeatTrade {
+    fn from(old: LegacyMeatTrade) -> Self {
+        Self {
+            packs: old.packs,
+            markets: old.markets,
+            collected: old.collected,
+            sold: old.sold,
+            bought: old.bought,
+            eaten: old.eaten,
+            discarded: old.discarded,
+            demand: Default::default(),
+        }
+    }
+}
+#[cfg(test)]
+impl From<MeatTrade> for LegacyMeatTrade {
+    fn from(live: MeatTrade) -> Self {
+        Self {
+            packs: live.packs,
+            markets: live.markets,
+            collected: live.collected,
+            sold: live.sold,
+            bought: live.bought,
+            eaten: live.eaten,
+            discarded: live.discarded,
+        }
+    }
+}

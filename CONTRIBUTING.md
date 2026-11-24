@@ -4,7 +4,7 @@ Start with an observable result. For example, two villagers compete for the last
 
 ## Local development
 
-Fork the repository, clone your fork and create a branch from the latest upstream main. Follow the [setup instructions](README.md#run-from-source). To try an earlier browser prototype with Node alone, run `npm start` from its folder under labs. Run `npm test` there to check the experiment.
+Fork the repository, clone your fork and create a branch from the latest upstream main. Follow the [setup instructions](README.md#run-from-source). To try an earlier browser prototype with Node alone, run `npm start` from its folder under labs. Run `npm test` only in labs that define a test script.
 
 | If you change | Start with |
 |---|---|

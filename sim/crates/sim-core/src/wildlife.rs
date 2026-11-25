@@ -1499,15 +1499,14 @@ impl World {
 mod tests {
     #[test]
     fn unknown_species_degrade_to_the_last_known_row() {
+        // SPECIES is a const, so compare rows by name: references into a
+        // const need not share an address (they don't on Windows).
         for (i, def) in SPECIES.iter().enumerate() {
-            assert!(std::ptr::eq(SpeciesDef::of(i as u8), def));
+            assert_eq!(SpeciesDef::of(i as u8).name, def.name);
         }
-        let last = &SPECIES[SPECIES.len() - 1];
+        let last = SPECIES[SPECIES.len() - 1].name;
         for unknown in [SPECIES.len() as u8, u8::MAX] {
-            assert!(
-                std::ptr::eq(SpeciesDef::of(unknown), last),
-                "species {unknown}"
-            );
+            assert_eq!(SpeciesDef::of(unknown).name, last, "species {unknown}");
         }
     }
     use super::*;

@@ -2,7 +2,7 @@
 
 NEAT Xianxia is a playable settlement simulation where people with evolving neural networks compete for finite resources, form families, take jobs and build trading towns. Rust runs the world. A Godot observatory lets you follow a villager, inspect their choices and watch the economy develop.
 
-The native game and three earlier browser experiments are included here. For a first contribution, pick a reproducible scenario in the simulation, interface, visuals or world generation. [Contributor guide](CONTRIBUTING.md) · [Open issues](https://github.com/dashingstag/NEAT-XianXia/issues) · [Windows verification](https://github.com/dashingstag/NEAT-XianXia/actions/workflows/verify.yml)
+The native game and earlier browser experiments are included here. For a first contribution, pick a reproducible scenario in the simulation, interface, visuals or world generation. [Contributor guide](CONTRIBUTING.md) · [Open issues](https://github.com/dashingstag/NEAT-XianXia/issues) · [Windows verification](https://github.com/dashingstag/NEAT-XianXia/actions/workflows/verify.yml)
 
 ## Run from source
 
@@ -30,7 +30,7 @@ The viewer shows the latest merged PR and the running commit in its header and w
 | viewer | Godot inspector, map, camera, animation and three zoom fidelities |
 | world | Named launch and benchmark scenarios. Terrain placement rules currently live in sim-core. |
 | contracts and fixtures | Wire and save compatibility, recorded synthetic town, and historical bank-world save |
-| labs | Runnable Mind Observatory, Architecture Lab and Willow Crossing experiments |
+| labs | Runnable browser and simulation experiments, including Mind Observatory, Architecture Lab and Willow Crossing |
 | tools and .github/workflows | Shared local entry point, protocol checks and Windows CI |
 | skills | Project-owned workflows, with discovery copies for supported agent clients |
 

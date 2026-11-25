@@ -401,7 +401,11 @@ def main():
                       "viewer": lambda: viewer(run), "connection": lambda: connection_check(run),
                       "isolation": lambda: isolation(run),
                       "replay": lambda: replay(run), "protocol": lambda: protocol_suite(run)}
-            for name in suites if args.suite == "all" else [args.suite]:
+            # "world" re-runs a slice of the workspace tests "sim" already ran, so
+            # "all" skips it; "test world" still runs it on its own (#104).
+            focused_only = {"world"}
+            names = [n for n in suites if n not in focused_only] if args.suite == "all" else [args.suite]
+            for name in names:
                 suites[name]()
         elif args.command == "bench":
             scenario = SCENARIOS[args.scenario]

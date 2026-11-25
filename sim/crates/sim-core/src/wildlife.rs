@@ -103,9 +103,12 @@ pub const SPECIES: [SpeciesDef; 5] = [
 ];
 impl SpeciesDef {
     /// Traits for a species index. Unknown indices (e.g. a newer save on
-    /// an older build) degrade to the last known row rather than panic.
+    /// an older build) degrade to the last known row rather than panic,
+    /// matching the viewer, which clamps species to its last colour.
     pub fn of(species: u8) -> &'static SpeciesDef {
-        SPECIES.get(species as usize).unwrap_or(&SPECIES[0])
+        SPECIES
+            .get(species as usize)
+            .unwrap_or(&SPECIES[SPECIES.len() - 1])
     }
 }
 const NAMES: [&str; 9] = [
@@ -1494,6 +1497,19 @@ impl World {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unknown_species_degrade_to_the_last_known_row() {
+        for (i, def) in SPECIES.iter().enumerate() {
+            assert!(std::ptr::eq(SpeciesDef::of(i as u8), def));
+        }
+        let last = &SPECIES[SPECIES.len() - 1];
+        for unknown in [SPECIES.len() as u8, u8::MAX] {
+            assert!(
+                std::ptr::eq(SpeciesDef::of(unknown), last),
+                "species {unknown}"
+            );
+        }
+    }
     use super::*;
     #[test]
     fn planting_depletion_regrowth_and_clearance_control_spawn_points() {

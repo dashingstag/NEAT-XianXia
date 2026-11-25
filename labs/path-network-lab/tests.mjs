@@ -4,13 +4,15 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 const here = (rel) => new URL(rel, import.meta.url);
 let proc;
 let base;
 
 before(async () => {
-  proc = spawn(process.execPath, [here('server.mjs').pathname], {
+  // fileURLToPath, not URL.pathname: the latter yields /D:/... on Windows.
+  proc = spawn(process.execPath, [fileURLToPath(here('server.mjs'))], {
     env: { ...process.env, PORT: '0' },
     stdio: ['ignore', 'pipe', 'inherit'],
   });

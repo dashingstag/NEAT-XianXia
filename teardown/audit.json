@@ -154,8 +154,8 @@
           "metrics": {"loc": 2993, "testLines": 528, "comments": 15, "panics": 11, "todos": 0, "unsafe": 0},
           "excerpts": [
             {"file": "sim/crates/sim-core/src/urban.rs", "s": 5, "e": 10, "text": "/// Town coffers at which a council may gazette districts. Exported to the\n/// viewer as `urban.wealth_threshold`.\npub const GAZETTE_THRESHOLD: u64 = 500;\n/// Town coffers below which a council reviews shop leases. Exported to the\n/// viewer as `urban.reserve_threshold`.\npub const LEASE_REVIEW_THRESHOLD: u64 = 100;"},
-            {"file": "sim/crates/sim-core/src/urban.rs", "s": 442, "e": 443, "text": "        if !s.zoned && self.coffers(m) >= GAZETTE_THRESHOLD {\n            v.push((\"GazetteDistricts\", 0, 0.9));"},
-            {"file": "viewer/main.gd", "s": 1036, "e": 1036, "text": "\tlines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at %d copper. Lease review below %d.\\n\" % [int(urban.get(\"wealth_threshold\",500)), int(urban.get(\"reserve_threshold\",100))] + \"Town requires 3 completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\""},
+            {"file": "sim/crates/sim-core/src/urban.rs", "s": 445, "e": 446, "text": "        if !s.zoned && self.coffers(m) >= GAZETTE_THRESHOLD {\n            v.push((\"GazetteDistricts\", 0, 0.9));"},
+            {"file": "viewer/main.gd", "s": 1038, "e": 1038, "text": "\tlines += \"\\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\\nGazette at %d copper. Lease review below %d.\\n\" % [int(urban.get(\"wealth_threshold\",500)), int(urban.get(\"reserve_threshold\",100))] + \"Town requires %d completed homes, shops and workshops each.\\nMarketplace remains the centre.\\n\" % town_need"},
             {"file": "sim/crates/sim-core/src/lib.rs", "s": 1946, "e": 1950, "text": "            if c.action == Action::ShopGoods {\n                let shop = c.target as usize / 32;\n                decision[\"shop_id\"] = shop.into();\n                decision[\"product_id\"] = (c.target % 32).into();\n                decision[\"owner_id\"] ="}
           ]
         },
@@ -597,13 +597,14 @@
           "what": "991-line UI root: TCP client, snapshot header decode + animal record rebuild, person/site/animal inspector tabs, wealth leaderboard, village boards, command senders.",
           "why": "The player's window into the conduit — every snapshot field becomes text here.",
           "deps": {"viewer_tcp": "host", "snapshot_encoder": "data", "field_decoder": "data", "person_inspector": "data"},
-          "breaks": "Text that the snapshot does not export is still literal (e.g. 'Town requires 3 completed homes, shops and workshops each.'); it drifts if the promotion rule changes.",
-          "score": "yellow",
-          "whyScore": "Decode path verified (magic/version/size assertions, header layout matches); house picking reads sim-supplied positions (main.gd:656 via field._house_position); the gazette and lease thresholds render from the exported urban.wealth_threshold/reserve_threshold (main.gd:1017, #87).",
+          "breaks": "Thresholds and the town requirement now render from the snapshot; remaining risk is the snapshot header decode, which is asserted, and display-only wording.",
+          "score": "green",
+          "whyScore": "Decode path verified (magic/version/size assertions, header layout matches); house picking reads sim-supplied positions; the gazette/lease thresholds (#87) and the town promotion requirement (#99, main.gd:1034) render from exported snapshot fields, and urban_ui_check re-decodes a frame with a changed requirement to prove it.",
           "metrics": {"loc": 991, "testLines": 0, "comments": 1, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
             {"file": "viewer/main.gd", "s": 922, "e": 930, "text": "\tif magic != \"XNS1\" or data.size() < 32 or data.decode_u16(4) != 2:\n\t\treturn\n\tpaused = data.decode_u16(6) == 1\n\tvar count: int = data.decode_u32(20)\n\tvar json_length: int = data.decode_u32(24)\n\tvar animal_count: int = data.decode_u32(28)\n\tif 32+json_length+(count+animal_count)*16 != data.size():\n\t\tnotice.text = \"Snapshot size mismatch.\"\n\t\treturn"},
-            {"file": "viewer/main.gd", "s": 662, "e": 669, "text": "\tif kind==\"house\":\n\t\tvar towns: Array = state.get(\"markets\",[])\n\t\tvar market := int(site_selection.market)\n\t\tif market<0 or market>=towns.size() or id>=int(towns[market].housing_blocks):\n\t\t\treturn {}\n\t\tvar town: Dictionary = towns[market]\n\t\tvar at: Vector2 = field._house_position(town, id)\n\t\treturn {\"x\":at.x+10,\"y\":at.y+7.5,\"town\":town.name,\"capacity\":32}"}
+            {"file": "viewer/main.gd", "s": 662, "e": 669, "text": "\tif kind==\"house\":\n\t\tvar towns: Array = state.get(\"markets\",[])\n\t\tvar market := int(site_selection.market)\n\t\tif market<0 or market>=towns.size() or id>=int(towns[market].housing_blocks):\n\t\t\treturn {}\n\t\tvar town: Dictionary = towns[market]\n\t\tvar at: Vector2 = field._house_position(town, id)\n\t\treturn {\"x\":at.x+10,\"y\":at.y+7.5,\"town\":town.name,\"capacity\":32}"},
+            {"file": "viewer/main.gd", "s": 1033, "e": 1034, "text": "\t# Promotion requirement from the simulation (#99); 3 for frames that predate the field.\n\tvar town_need := int(urban.get(\"town_buildings_per_kind\", 3))"}
           ]
         },
         {
@@ -620,7 +621,7 @@
           "excerpts": [
             {"file": "viewer/field.gd", "s": 447, "e": 455, "text": "## House sites come from the simulation's `house_positions` (one per housing\n## block, rest::house_site). A missing entry means a malformed frame; it is\n## drawn at the town centre rather than re-deriving the layout here (#89).\nfunc _house_position(town: Dictionary, index: int) -> Vector2:\n\tvar positions: Array = town.get(\"house_positions\", [])\n\tif index >= 0 and index < positions.size():\n\t\tvar p: Array = positions[index]\n\t\treturn Vector2(p[0], p[1])\n\treturn Vector2(town.x, town.y)"},
             {"file": "sim/crates/sim-core/src/lib.rs", "s": 3383, "e": 3383, "text": "                serde_json::json!({\"id\":m.id,\"name\":m.name,\"x\":m.x,\"y\":m.y,\"population\":m.population,\"housing_blocks\":m.housing_blocks,\"house_positions\":houses[i],\"stable_residents\":m.stable_residents,\"stage\":self.settlement_stage(m.id as usize),\"coins\":m.coins,\"stock\":std::array::from_fn::<u64,GOODS,_>(|k|m.stock(k)),\"quotes\":m.quotes,\"sales\":m.sales,\"local_sales\":m.local_sales,\"imported_sales\":m.imported_sales,\"profile\":self.observed_market_profile(m.id as usize),\"project\":m.project})"},
-            {"file": "viewer/bench/urban_ui_check.gd", "s": 245, "e": 258, "text": "\t# Houses come only from the sim's house_positions; nothing re-derives them (#89).\n\tvar houses_checked := 0\n\tvar previous_mode: String = ui.field.pick_mode\n\tui.field.pick_mode = \"Buildings\"\n\tfor town in ui.field.world.markets:\n\t\tvar positions: Array = town.house_positions\n\t\tassert(positions.size() == int(town.housing_blocks))\n\t\tfor j in range(positions.size()):\n\t\t\tvar expected := Vector2(positions[j][0], positions[j][1])\n\t\t\tassert(ui.field._house_position(town, j) == expected)\n\t\t\tvar pick: Dictionary = ui.field._pick_site(expected + Vector2(10, 7))\n\t\t\tassert(pick.get(\"kind\") == \"house\" and int(pick.market) == int(town.id))\n\t\t\thouses_checked += 1\n\tui.field.pick_mode = previous_mode"}
+            {"file": "viewer/bench/urban_ui_check.gd", "s": 257, "e": 270, "text": "\t# Houses come only from the sim's house_positions; nothing re-derives them (#89).\n\tvar houses_checked := 0\n\tvar previous_mode: String = ui.field.pick_mode\n\tui.field.pick_mode = \"Buildings\"\n\tfor town in ui.field.world.markets:\n\t\tvar positions: Array = town.house_positions\n\t\tassert(positions.size() == int(town.housing_blocks))\n\t\tfor j in range(positions.size()):\n\t\t\tvar expected := Vector2(positions[j][0], positions[j][1])\n\t\t\tassert(ui.field._house_position(town, j) == expected)\n\t\t\tvar pick: Dictionary = ui.field._pick_site(expected + Vector2(10, 7))\n\t\t\tassert(pick.get(\"kind\") == \"house\" and int(pick.market) == int(town.id))\n\t\t\thouses_checked += 1\n\tui.field.pick_mode = previous_mode"}
           ],
           "fix": "house_origin_mirror"
         },
@@ -738,7 +739,7 @@
           "whyScore": "Real end-to-end coverage: replay SHA-256 equality, two-backend isolation with deliberate kill, bank+relationship protocol runs on the real fixture, headless Godot + live connection check — this is the loop that keeps the audit's greens honest.",
           "metrics": {"loc": 422, "testLines": 0, "comments": 2, "panics": 0, "todos": 0, "unsafe": 0},
           "excerpts": [
-            {"file": "tools/dev.py", "s": 398, "e": 405, "text": "        if args.command == \"test\":\n            suites = {\"sim\": lambda: cargo(\"test\", \"--workspace\"), \"labs\": labs,\n                      \"world\": lambda: cargo(\"test\", \"-p\", \"sim-core\", \"landscape\"),\n                      \"viewer\": lambda: viewer(run), \"connection\": lambda: connection_check(run),\n                      \"isolation\": lambda: isolation(run),\n                      \"replay\": lambda: replay(run), \"protocol\": lambda: protocol_suite(run)}\n            for name in suites if args.suite == \"all\" else [args.suite]:\n                suites[name]()"}
+            {"file": "tools/dev.py", "s": 398, "e": 409, "text": "        if args.command == \"test\":\n            suites = {\"sim\": lambda: cargo(\"test\", \"--workspace\"), \"labs\": labs,\n                      \"world\": lambda: cargo(\"test\", \"-p\", \"sim-core\", \"landscape\"),\n                      \"viewer\": lambda: viewer(run), \"connection\": lambda: connection_check(run),\n                      \"isolation\": lambda: isolation(run),\n                      \"replay\": lambda: replay(run), \"protocol\": lambda: protocol_suite(run)}\n            # \"world\" re-runs a slice of the workspace tests \"sim\" already ran, so\n            # \"all\" skips it; \"test world\" still runs it on its own (#104).\n            focused_only = {\"world\"}\n            names = [n for n in suites if n not in focused_only] if args.suite == \"all\" else [args.suite]\n            for name in names:\n                suites[name]()"}
           ]
         },
         {
@@ -809,7 +810,6 @@
     }
   },
   "fixes": {
-    "legacy_readers": "No freeze work remains. On the next save format bump, switch the replaced version to the frozen twins (take_world_base / take_as) and regenerate legacy_schema.json.",
-    "main_gd": "Export the town promotion requirement (3 homes, shops and workshops) and render it from the snapshot like the thresholds."
+    "legacy_readers": "No freeze work remains. On the next save format bump, switch the replaced version to the frozen twins (take_world_base / take_as) and regenerate legacy_schema.json."
   }
 }

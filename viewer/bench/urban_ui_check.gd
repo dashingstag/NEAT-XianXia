@@ -242,6 +242,18 @@ func check_ui() -> void:
 	if not probe.choices.is_empty():
 		probe.choices[0].action = "ForageMeal"
 		assert(ui.PersonInspector.describe(probe, world).contains("▶ ForageMeal"))
+	# The town requirement comes from the snapshot, not literal text (#99).
+	var need := int(world.urban.get("town_buildings_per_kind", 3))
+	assert(ui.markets.text.contains("Town requires %d completed" % need))
+	assert(ui.markets.text.contains("Homes %d/%d" % [int(world.urban.villages[0].completed[0]), need]))
+	var changed: Dictionary = world.duplicate(true)
+	changed.urban.town_buildings_per_kind = need + 1
+	ui.last_inspector_ms = -1000
+	ui._decode(_frame(changed))
+	assert(ui.markets.text.contains("Town requires %d completed" % (need + 1)))
+	assert(ui.markets.text.contains("Homes %d/%d" % [int(changed.urban.villages[0].completed[0]), need + 1]))
+	ui.last_inspector_ms = -1000
+	ui._decode(_frame(world))
 	# Houses come only from the sim's house_positions; nothing re-derives them (#89).
 	var houses_checked := 0
 	var previous_mode: String = ui.field.pick_mode
@@ -259,3 +271,18 @@ func check_ui() -> void:
 	assert(houses_checked > 0)
 	print(JSON.stringify({"urban_ui":"passed","houses_checked":houses_checked,"buildings_inspected":checked,"zones":world.urban.zones.size(),"fidelity_levels":3,"connected_to_live_backend":false}))
 	quit()
+
+## Builds an XNS1 frame carrying `world` as metadata and no records.
+func _frame(world: Dictionary) -> PackedByteArray:
+	var metadata := JSON.stringify(world).to_utf8_buffer()
+	var packet := PackedByteArray()
+	packet.resize(32+metadata.size())
+	for k in range(4):
+		packet[k] = "XNS1".unicode_at(k)
+	packet.encode_u16(4,2)
+	packet.encode_u16(6,1)
+	packet.encode_u32(24,metadata.size())
+	packet.encode_u32(28,0)
+	for k in range(metadata.size()):
+		packet[32+k] = metadata[k]
+	return packet

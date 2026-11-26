@@ -1030,14 +1030,16 @@ func _decode(data: PackedByteArray) -> void:
 			for choice in board.get("policy_choices",[]):
 				lines += "%s: %.3f\n" % [choice.action,float(choice.score)]
 	var urban: Dictionary = state.get("urban",{})
+	# Promotion requirement from the simulation (#99); 3 for frames that predate the field.
+	var town_need := int(urban.get("town_buildings_per_kind", 3))
 	for village_profile in urban.get("villages",[]):
 		if int(village_profile.market)==maxi(board_focus,0):
 			persona_option.select(int(village_profile.persona_id))
-	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at %d copper. Lease review below %d.\n" % [int(urban.get("wealth_threshold",500)), int(urban.get("reserve_threshold",100))] + "Town requires 3 completed homes, shops and workshops each.\nMarketplace remains the centre.\n"
+	lines += "\n[color=#e5c78e]DISTRICTS / PROPERTY / BUSINESS[/color]\nGazette at %d copper. Lease review below %d.\n" % [int(urban.get("wealth_threshold",500)), int(urban.get("reserve_threshold",100))] + "Town requires %d completed homes, shops and workshops each.\nMarketplace remains the centre.\n" % town_need
 	for village in urban.get("villages",[]):
 		if board_focus>=0 and int(village.market)!=board_focus:
 			continue
-		lines += "\n[b]%s[/b] / %s / %s profile\nHomes %s/3 / shops %s/3 / workshops %s/3\n%s / %s business vacancies\n" % [state.markets[int(village.market)].name,"Town" if village.town else "Village",village.persona,int(village.completed[0]),int(village.completed[1]),int(village.completed[2]),"Zoned" if village.zoned else "Not gazetted",int(village.lease_openings)]
+		lines += "\n[b]%s[/b] / %s / %s profile\nHomes %s/%d / shops %s/%d / workshops %s/%d\n%s / %s business vacancies\n" % [state.markets[int(village.market)].name,"Town" if village.town else "Village",village.persona,int(village.completed[0]),town_need,int(village.completed[1]),town_need,int(village.completed[2]),town_need,"Zoned" if village.zoned else "Not gazetted",int(village.lease_openings)]
 		lines += "Coffers %s / free cash %s copper\n" % [int(village.get("coffers",0)),int(village.get("free_cash",0))]
 		lines += "Vacant: %s commercial / %s industrial\nPosted operator jobs: %s\n" % [int(village.get("vacant_commercial",0)),int(village.get("vacant_industrial",0)),int(village.lease_openings)]
 	lines += "\n[color=#a8cea0]BUSINESS OPERATOR JOBS[/color]\n"

@@ -26,7 +26,7 @@ async function serve(rel, res) {
   }
 }
 
-http.createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = req.url?.split('?')[0] ?? '/';
   if (url === '/' || url === '/index.html') return serve('index.html', res);
   for (const [prefix, root] of Object.entries(roots)) {
@@ -39,4 +39,9 @@ http.createServer(async (req, res) => {
   }
   res.writeHead(404);
   res.end('Not found');
-}).listen(4177, '127.0.0.1', () => console.log('Local: http://127.0.0.1:4177'));
+});
+
+// PORT=0 picks a free port (tests use it so they never clash with a running lab).
+const server_port = Number(process.env.PORT ?? 4177);
+server.listen(server_port, '127.0.0.1', () =>
+  console.log(`Local: http://127.0.0.1:${server.address().port}`));

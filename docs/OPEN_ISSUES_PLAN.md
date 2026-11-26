@@ -1,6 +1,6 @@
 # Open issues: verification and implementation plan
 
-As of 2026-11-23, verified against `main` @ `ade4894`. There are eight open issues. Each one was checked against the source, not only against what its description says.
+Historical triage snapshot from 2026-11-23, verified against `main` at `ade4894`. The issue statuses and implementation notes below describe that revision, not current GitHub status. Each item was checked against source at that revision.
 
 ## Verification summary
 
